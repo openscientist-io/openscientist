@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
 from openscientist.job_files import read_job_file_text
 
 _AGENT_ERROR_FILE = "agent-error.txt"
@@ -21,6 +22,6 @@ def take_agent_error(job_dir: Path) -> str | None:
     cannot report it again. The job directory is agent-writable, so the error
     is only read through the symlink-safe walk, and a link planted at the name
     is removed and reported as no error."""
-    error = read_job_file_text(job_dir, _AGENT_ERROR_FILE)
+    error = read_job_file_text(job_dir, _AGENT_ERROR_FILE, max_size=MAX_ARTIFACT_FILE_SIZE_BYTES)
     (job_dir / _AGENT_ERROR_FILE).unlink(missing_ok=True)
     return error.strip() if error is not None else None

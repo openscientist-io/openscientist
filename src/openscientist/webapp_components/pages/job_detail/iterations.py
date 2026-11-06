@@ -15,8 +15,14 @@ from urllib.parse import quote
 from nicegui import ui
 from nicegui.events import ValueChangeEventArguments
 
+from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
 from openscientist.job.types import JobStatus
-from openscientist.job_files import list_job_files, read_job_file_bytes, read_job_file_text
+from openscientist.job_files import (
+    job_file_exists,
+    list_job_files,
+    read_job_file_bytes,
+    read_job_file_text,
+)
 from openscientist.webapp_components.components.badges import (
     render_pmid_badge,
     render_text_with_pmid_links,
@@ -116,7 +122,11 @@ def _collect_iteration_plots(
         if not name.endswith(".png"):
             continue
         metadata_name = Path(name).with_suffix(".json").name
-        metadata_text = read_job_file_text(job_dir, f"{iter_provenance_dir.name}/{metadata_name}")
+        metadata_text = read_job_file_text(
+            job_dir,
+            f"{iter_provenance_dir.name}/{metadata_name}",
+            max_size=MAX_ARTIFACT_FILE_SIZE_BYTES,
+        )
         if metadata_text is None:
             continue
         try:
@@ -138,9 +148,12 @@ def _job_file_url(job_dir: Path, path: Path) -> str:
 def _download_plot(job_dir: Path, relative: str) -> None:
     """Serve a plot at click time from the inode the walk opens, so a link the
     agent plants between render and click cannot redirect the download."""
-    data = read_job_file_bytes(job_dir, relative)
+    data = read_job_file_bytes(job_dir, relative, max_size=MAX_ARTIFACT_FILE_SIZE_BYTES)
     if data is None:
-        ui.notify("The plot is no longer available.", type="warning")
+        if job_file_exists(job_dir, relative):
+            ui.notify("The plot is too large to download.", type="warning")
+        else:
+            ui.notify("The plot is no longer available.", type="warning")
         return
     ui.download(data, filename=Path(relative).name)
 

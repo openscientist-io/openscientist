@@ -29,7 +29,7 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from openscientist.admin_settings import current_admin_settings
 from openscientist.api.auth import get_current_user_from_api_key
 from openscientist.api.utils import parse_uuid
-from openscientist.artifact_packager import create_artifacts_zip_file
+from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES, create_artifacts_zip_file
 from openscientist.database.models import Job, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
@@ -705,7 +705,7 @@ async def download_report(
     # The job directory is agent-writable, so every report file is read
     # through the symlink-safe walk and served from the fd it opened.
     # Serve the existing PDF if available so the WeasyPrint PDF is not overwritten.
-    pdf_file = try_open_job_file(job_dir, "final_report.pdf")
+    pdf_file = try_open_job_file(job_dir, "final_report.pdf", max_size=MAX_ARTIFACT_FILE_SIZE_BYTES)
     if pdf_file is not None:
         return serve_job_file(
             pdf_file,
@@ -713,7 +713,7 @@ async def download_report(
             filename=f"{download_label}_final_report.pdf",
         )
 
-    raw_md = read_job_file_text(job_dir, "final_report.md")
+    raw_md = read_job_file_text(job_dir, "final_report.md", max_size=MAX_ARTIFACT_FILE_SIZE_BYTES)
     if raw_md is not None:
         try:
             from openscientist.pdf_generator import markdown_to_pdf
@@ -730,7 +730,9 @@ async def download_report(
                 await asyncio.to_thread(markdown_to_pdf, stripped_path, generated_pdf)
                 install_file(job_dir, "final_report.pdf", generated_pdf)
 
-            pdf_file = try_open_job_file(job_dir, "final_report.pdf")
+            pdf_file = try_open_job_file(
+                job_dir, "final_report.pdf", max_size=MAX_ARTIFACT_FILE_SIZE_BYTES
+            )
             if pdf_file is not None:
                 return serve_job_file(
                     pdf_file,
@@ -748,7 +750,7 @@ async def download_report(
         ("report.pdf", "application/pdf"),
         ("report.md", "text/markdown"),
     ):
-        job_file = try_open_job_file(job_dir, name)
+        job_file = try_open_job_file(job_dir, name, max_size=MAX_ARTIFACT_FILE_SIZE_BYTES)
         if job_file is not None:
             return serve_job_file(
                 job_file,

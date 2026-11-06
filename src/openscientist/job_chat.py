@@ -17,12 +17,18 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
+from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
 from openscientist.database.models import Job, JobChatMessage
 from openscientist.job_container.identity import apply_job_ownership
-from openscientist.job_files import read_job_file_text, write_job_file
+from openscientist.job_files import job_file_exists, read_job_file_text, write_job_file
 from openscientist.knowledge_state import KnowledgeState
 
 logger = logging.getLogger(__name__)
+
+
+class ChatResponseTooLargeError(RuntimeError):
+    """The chat container's response file exceeds the size the web will read."""
+
 
 # The web side and the chat-turn container exchange one turn through a request
 # and a response file in the mounted job_dir, so the container needs no database
@@ -436,8 +442,12 @@ async def _send_message_via_container(
     try:
         # run_chat_turn blocks on the container, so run it off the event loop.
         await asyncio.to_thread(JobContainerRunner().run_chat_turn, str(job_id), job_dir, chat_turn)
-        response_text = read_job_file_text(job_dir, response_path.name)
+        response_text = read_job_file_text(
+            job_dir, response_path.name, max_size=MAX_ARTIFACT_FILE_SIZE_BYTES
+        )
         if response_text is None:
+            if job_file_exists(job_dir, response_path.name):
+                raise ChatResponseTooLargeError("The chat response is too large to show.")
             raise RuntimeError("Chat container produced no response")
         response = json.loads(response_text)
         error = response.get("error")

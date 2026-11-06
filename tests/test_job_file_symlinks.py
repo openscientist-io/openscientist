@@ -42,7 +42,7 @@ from openscientist.job.types import JobInfo, JobStatus
 from openscientist.webapp_components.artifact_routes import router as web_router
 from openscientist.webapp_components.components import banners
 from openscientist.webapp_components.pages.job_detail import iterations, report
-from tests.helpers import enable_rls
+from tests.helpers import bounded_peak, enable_rls, sparse_file
 
 _SECRET = b"SYMLINK-SECRET-PAYLOAD"
 
@@ -225,6 +225,33 @@ class TestJobFilePrimitives:
             open_job_file(job_dir, "big.bin", max_size=63)
         with open_job_file(job_dir, "big.bin", max_size=64) as job_file:
             assert job_file.size == 64
+
+    def test_an_oversized_sparse_file_is_refused_before_any_read(self, tmp_path: Path) -> None:
+        """The agent plants a sparse final_report.md; the capped read must
+        refuse it from the size of the pinned inode and never read it."""
+        from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
+        from openscientist.job_files import read_job_file_bytes, read_job_file_text
+
+        job_dir = tmp_path / "jobs" / "j1"
+        job_dir.mkdir(parents=True)
+        target = job_dir / "final_report.md"
+        apparent = MAX_ARTIFACT_FILE_SIZE_BYTES * 4
+        sparse_file(target, apparent)
+
+        with bounded_peak():
+            assert (
+                read_job_file_bytes(
+                    job_dir, "final_report.md", max_size=MAX_ARTIFACT_FILE_SIZE_BYTES
+                )
+                is None
+            )
+            assert (
+                read_job_file_text(
+                    job_dir, "final_report.md", max_size=MAX_ARTIFACT_FILE_SIZE_BYTES
+                )
+                is None
+            )
+        assert target.stat().st_size == apparent
 
     def test_a_missing_job_directory_is_refused(self, tmp_path: Path) -> None:
         from openscientist.job_files import JobFileError, open_job_file
@@ -577,6 +604,28 @@ class TestApiReportRoute:
         assert response.headers["content-type"] == "application/pdf"
         assert "Symlink_probe_final_report.pdf" in response.headers["content-disposition"]
 
+    @pytest.mark.asyncio
+    async def test_an_oversized_report_is_not_served(
+        self, db_session: AsyncSession, test_user: User, api_job: _ApiJob
+    ) -> None:
+        """A sparse report the agent plants is refused like an artifact over
+        the size limit and costs the web process no memory."""
+        from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
+
+        apparent = MAX_ARTIFACT_FILE_SIZE_BYTES * 4
+        for name in ("final_report.md", "final_report.html", "final_report.pdf"):
+            sparse_file(api_job.job_dir / name, apparent)
+
+        app = _api_app(db_session, test_user)
+        with (
+            patch("openscientist.api.endpoints.jobs._get_jobs_dir", return_value=api_job.jobs_dir),
+            bounded_peak(),
+        ):
+            async with _web_client(app) as client:
+                response = await client.get(f"/api/v1/jobs/{api_job.job.id}/report")
+
+        assert response.status_code == 404
+
 
 class TestWebArtifactRoutes:
     """The session routes /web/jobs/{id}/files/... and /report.html must not
@@ -701,6 +750,56 @@ class TestWebArtifactRoutes:
         assert response.status_code == 200
         assert "Saved HTML" in response.text
         assert "SYMLINK-SECRET-PAYLOAD" not in response.text
+
+    @pytest.mark.asyncio
+    async def test_an_oversized_report_is_not_served_by_the_report_route(
+        self, web_job: tuple[User, str, Job], tmp_path: Path
+    ) -> None:
+        """A sparse report the agent plants gets the same answer the artifact
+        route gives an oversized file and costs the web process no memory."""
+        from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
+
+        _, token, job = web_job
+        app, manager = _web_app(tmp_path / "jobs")
+        job_dir = tmp_path / "jobs" / str(job.id)
+        apparent = MAX_ARTIFACT_FILE_SIZE_BYTES * 4
+        sparse_file(job_dir / "final_report.md", apparent)
+        sparse_file(job_dir / "final_report.html", apparent)
+
+        with (
+            patch("openscientist.web_app.get_job_manager", return_value=manager),
+            bounded_peak(),
+        ):
+            async with _web_client(app) as client:
+                client.cookies.set("session_token", token)
+                response = await client.get(f"/web/jobs/{job.id}/report.html")
+
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_an_oversized_markdown_falls_back_to_the_saved_html(
+        self, web_job: tuple[User, str, Job], tmp_path: Path
+    ) -> None:
+        """A report whose markdown is too large to re-render still shows its
+        saved HTML, when that file fits the cap."""
+        from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
+
+        _, token, job = web_job
+        app, manager = _web_app(tmp_path / "jobs")
+        job_dir = tmp_path / "jobs" / str(job.id)
+        sparse_file(job_dir / "final_report.md", MAX_ARTIFACT_FILE_SIZE_BYTES * 4)
+        (job_dir / "final_report.html").write_text("<html><body>Saved HTML</body></html>")
+
+        with (
+            patch("openscientist.web_app.get_job_manager", return_value=manager),
+            bounded_peak(),
+        ):
+            async with _web_client(app) as client:
+                client.cookies.set("session_token", token)
+                response = await client.get(f"/web/jobs/{job.id}/report.html")
+
+        assert response.status_code == 200
+        assert "Saved HTML" in response.text
 
     @pytest.mark.asyncio
     async def test_a_symlinked_figure_is_never_embedded(
@@ -842,6 +941,69 @@ class TestUiReportPage:
 
         ui.element.assert_not_called()
 
+    async def test_an_oversized_pdf_is_not_downloaded(self, tmp_path: Path) -> None:
+        from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
+
+        job_dir = tmp_path / "jobs" / "job-1"
+        job_dir.mkdir(parents=True)
+        sparse_file(job_dir / "final_report.pdf", MAX_ARTIFACT_FILE_SIZE_BYTES * 4)
+        (job_dir / "final_report.md").write_text("# Visible\n\nBody text.\n")
+
+        with patch.object(report, "ui") as ui:
+            await report._download_pdf_report(
+                job_dir / "final_report.md", job_dir / "final_report.pdf", "job-1", None
+            )
+
+        ui.download.assert_not_called()
+        ui.notify.assert_called_once_with("The report is too large to download.", type="warning")
+
+    async def test_an_oversized_markdown_is_not_downloaded(self, tmp_path: Path) -> None:
+        from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
+
+        job_dir = tmp_path / "jobs" / "job-1"
+        job_dir.mkdir(parents=True)
+        sparse_file(job_dir / "final_report.md", MAX_ARTIFACT_FILE_SIZE_BYTES * 4)
+
+        with patch.object(report, "ui") as ui:
+            await report._download_pdf_report(
+                job_dir / "final_report.md", job_dir / "final_report.pdf", "job-1", None
+            )
+
+        ui.download.assert_not_called()
+        ui.notify.assert_called_once_with("The report is too large to download.", type="warning")
+
+    @pytest.mark.asyncio
+    async def test_the_markdown_view_shows_a_too_large_report(self, tmp_path: Path) -> None:
+        from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
+
+        job_dir = tmp_path / "jobs" / "job-1"
+        job_dir.mkdir(parents=True)
+        sparse_file(job_dir / "final_report.md", MAX_ARTIFACT_FILE_SIZE_BYTES * 4)
+
+        container = cast(report.ui.column, _ReportContainer())
+        with patch.object(report, "ui") as ui:
+            await report._render_report_markdown(container, job_dir / "final_report.md")
+
+        ui.markdown.assert_not_called()
+        labels = [
+            call.args[0]
+            for call in ui.label.call_args_list
+            if call.args and isinstance(call.args[0], str)
+        ]
+        assert "The report is too large to show." in labels
+
+    def test_the_report_iframe_is_skipped_for_an_oversized_html(self, tmp_path: Path) -> None:
+        from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
+
+        job_dir = tmp_path / "jobs" / "job-1"
+        job_dir.mkdir(parents=True)
+        sparse_file(job_dir / "final_report.html", MAX_ARTIFACT_FILE_SIZE_BYTES * 4)
+
+        with patch.object(report, "ui") as ui:
+            report._render_report_html_iframe(job_dir)
+
+        ui.element.assert_not_called()
+
 
 class TestIterationPlots:
     """The plot inventory and its Download button run in the web process."""
@@ -882,6 +1044,34 @@ class TestIterationPlots:
         plots = iterations._collect_iteration_plots(job_dir / "provenance", 1)
 
         assert [path for path, _ in plots] == [job_dir / "provenance" / "plot.png"]
+
+    def test_an_oversized_plot_is_not_downloaded(self, tmp_path: Path) -> None:
+        from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
+
+        job_dir = tmp_path / "jobs" / "j1"
+        provenance = job_dir / "provenance"
+        provenance.mkdir(parents=True)
+        sparse_file(provenance / "plot.png", MAX_ARTIFACT_FILE_SIZE_BYTES * 4)
+        (provenance / "plot.json").write_text(json.dumps({"iteration": 1}))
+
+        with patch.object(iterations, "ui") as ui:
+            iterations._download_plot(job_dir, "provenance/plot.png")
+
+        ui.download.assert_not_called()
+        ui.notify.assert_called_once_with("The plot is too large to download.", type="warning")
+
+    def test_an_oversized_metadata_file_is_not_listed(self, tmp_path: Path) -> None:
+        from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
+
+        job_dir = tmp_path / "jobs" / "j1"
+        provenance = job_dir / "provenance"
+        provenance.mkdir(parents=True)
+        (provenance / "plot.png").write_bytes(b"PNG")
+        sparse_file(provenance / "plot.json", MAX_ARTIFACT_FILE_SIZE_BYTES * 4)
+
+        plots = iterations._collect_iteration_plots(provenance, 1)
+
+        assert plots == []
 
     def test_the_download_button_refuses_a_late_symlink_swap(self, tmp_path: Path) -> None:
         """The plot is a regular file when the page renders, and a link when
@@ -974,6 +1164,34 @@ class TestChatTurnFiles:
         assert secret.read_text() == json.dumps({"output": "SECRET"})
         assert not response_name.exists()
 
+    async def test_an_oversized_response_is_refused_before_reading(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
+
+        job_dir = tmp_path / "jobs" / "j-chat"
+        job_dir.mkdir(parents=True)
+        fixed_turn = UUID(int=0xABC)
+        monkeypatch.setattr(job_chat, "uuid4", lambda: fixed_turn)
+        _, response_name = job_chat._chat_turn_files(job_dir, fixed_turn.hex)
+        sparse_file(response_name, MAX_ARTIFACT_FILE_SIZE_BYTES * 4)
+
+        class _Runner:
+            def run_chat_turn(self, job_id: str, job_dir: Path, chat_turn: str) -> None:
+                pass
+
+        async def _fake_request(session, job_id, message):
+            return {"system_prompt": "SP", "model_override": None, "prompt": message}
+
+        session = MagicMock(spec=AsyncSession)
+        with (
+            patch("openscientist.job_container.runner.JobContainerRunner", return_value=_Runner()),
+            patch.object(job_chat, "_build_chat_request", _fake_request),
+            bounded_peak(),
+        ):
+            with pytest.raises(job_chat.ChatResponseTooLargeError, match="too large"):
+                await job_chat._send_message_via_container(session, UUID(int=1), "hi", job_dir)
+
 
 class TestAgentError:
     def test_a_symlinked_error_file_is_not_read(self, tmp_path: Path) -> None:
@@ -993,6 +1211,18 @@ class TestAgentError:
         (job_dir / "agent-error.txt").write_text("boom", encoding="utf-8")
 
         assert agent_error.take_agent_error(job_dir) == "boom"
+        assert not (job_dir / "agent-error.txt").exists()
+
+    def test_an_oversized_error_file_is_refused_and_removed(self, tmp_path: Path) -> None:
+        from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
+
+        job_dir = tmp_path / "jobs" / "j1"
+        job_dir.mkdir(parents=True)
+        sparse_file(job_dir / "agent-error.txt", MAX_ARTIFACT_FILE_SIZE_BYTES * 4)
+
+        with bounded_peak():
+            assert agent_error.take_agent_error(job_dir) is None
+
         assert not (job_dir / "agent-error.txt").exists()
 
 

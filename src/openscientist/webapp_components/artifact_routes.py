@@ -12,7 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from openscientist.api.utils import parse_uuid
-from openscientist.artifact_packager import artifact_file, create_artifacts_zip_file
+from openscientist.artifact_packager import (
+    MAX_ARTIFACT_FILE_SIZE_BYTES,
+    artifact_file,
+    create_artifacts_zip_file,
+)
 from openscientist.database.models import Job, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
@@ -158,7 +162,9 @@ def _report_html(
         )
     except Exception:
         logger.warning("Failed to re-render HTML with base64 images, using on-disk version")
-        saved = read_job_file_text(job_dir, "final_report.html")
+        saved = read_job_file_text(
+            job_dir, "final_report.html", max_size=MAX_ARTIFACT_FILE_SIZE_BYTES
+        )
         if saved is None:
             return None
         html = saved
