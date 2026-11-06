@@ -10,7 +10,12 @@ from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session_ctx
 from openscientist.exceptions import BudgetExceededError
 from openscientist.job.types import JobStatus
-from openscientist.job_chat import get_chat_history, has_older_chat_message, send_chat_message
+from openscientist.job_chat import (
+    ChatResponseTooLargeError,
+    get_chat_history,
+    has_older_chat_message,
+    send_chat_message,
+)
 from openscientist.webapp_components.components.common import render_thinking_status
 from openscientist.webapp_components.pages.job_detail.common import _JobDetailContext
 from openscientist.webapp_components.utils import (
@@ -469,8 +474,9 @@ class _ChatTabController:
             self._toggle_typing_indicator(False)
             self._play_sound("sound-receive")
             await self._append_new_messages()
-        except BudgetExceededError as exc:
-            logger.warning("Chat turn refused by a budget limit: %s", exc)
+        except (BudgetExceededError, ChatResponseTooLargeError) as exc:
+            # Both carry a message meant for the user.
+            logger.warning("Chat turn refused: %s", exc)
             if guard.is_connected:
                 self._toggle_typing_indicator(False)
                 self._play_sound("sound-error")

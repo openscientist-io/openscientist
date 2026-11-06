@@ -7,6 +7,7 @@ and executor error handling.
 
 import asyncio
 import json
+import os
 import threading
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -83,6 +84,25 @@ def _chat_runner_failing(exc):
     """Chat turn against a fake container whose run_chat_turn raises."""
     runner = MagicMock()
     runner.run_chat_turn.side_effect = exc
+    with (
+        patch("openscientist.job_container.runner.JobContainerRunner", return_value=runner),
+        patch("openscientist.providers.get_provider", return_value=_ChatProvider()),
+    ):
+        yield
+
+
+@contextmanager
+def _chat_runner_writing_sparse(apparent: int):
+    """Chat turn against a fake container whose response file is a sparse
+    file of ``apparent`` bytes, past the web's read cap."""
+
+    def _run(job_id, job_dir, chat_turn, *, timeout=300):
+        response = _chat_turn_files(Path(job_dir), chat_turn)[1]
+        response.write_bytes(b"")
+        os.truncate(response, apparent)
+
+    runner = MagicMock()
+    runner.run_chat_turn.side_effect = _run
     with (
         patch("openscientist.job_container.runner.JobContainerRunner", return_value=runner),
         patch("openscientist.providers.get_provider", return_value=_ChatProvider()),
@@ -693,6 +713,35 @@ async def test_send_chat_message_raises_on_error_response(
 
     history = await get_chat_history(db_session, test_job.id)
     assert len(history) == 0
+
+
+@pytest.mark.asyncio
+async def test_send_chat_message_refuses_an_oversized_response(
+    db_session: AsyncSession,
+    test_user: User,
+    test_job: Job,
+    temp_jobs_dir: Path,
+):
+    """A response file past the size cap is refused with a clear error, not
+    read into the web's memory, and stores no messages."""
+    _ = test_user
+    from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
+    from openscientist.job_chat import ChatResponseTooLargeError
+    from tests.helpers import bounded_peak
+
+    job_dir = temp_jobs_dir / str(test_job.id)
+    job_dir.mkdir()
+
+    with (
+        _chat_runner_writing_sparse(MAX_ARTIFACT_FILE_SIZE_BYTES * 4),
+        bounded_peak(),
+    ):
+        with pytest.raises(ChatResponseTooLargeError, match="too large"):
+            await send_chat_message(db_session, test_job.id, "hi", job_dir)
+
+    history = await get_chat_history(db_session, test_job.id)
+    assert len(history) == 0
+    assert list(job_dir.iterdir()) == []
 
 
 @pytest.mark.asyncio

@@ -89,17 +89,18 @@ services:
       dockerfile: Dockerfile.launcher
     image: openscientist-launcher:latest
     restart: ${OPENSCIENTIST_RESTART_POLICY:-unless-stopped}
-    env_file:
-      - path: .env.owner
-        required: true
-      - path: .env
-        required: false
+    # The socket holder loads no env file and gets only the keys its code
+    # reads, never the .env credentials or the owner password.
     environment:
       # Docker resolves bind sources on the host, so the launcher sees the jobs
       # directory at its host path. `uv run openscientist` records that path in .env.
       JOBS_ROOT: ${OPENSCIENTIST_HOST_PROJECT_DIR:?run uv run openscientist to set OPENSCIENTIST_HOST_PROJECT_DIR in .env}/jobs
       AGENT_IMAGE: ${OPENSCIENTIST_AGENT_IMAGE:-openscientist-agent:latest}
       EXECUTOR_IMAGE: ${OPENSCIENTIST_EXECUTOR_IMAGE:-openscientist-executor:latest}
+      # Written by the wizard and by `uv run openscientist` after each build.
+      AGENT_IMAGE_DIGESTS: ${AGENT_IMAGE_DIGESTS:?run uv run openscientist to record the image digests in .env}
+      EXECUTOR_IMAGE_DIGESTS: ${EXECUTOR_IMAGE_DIGESTS:?run uv run openscientist to record the image digests in .env}
+      LAUNCHER_INSTANCE_ID: ${LAUNCHER_INSTANCE_ID:?run uv run openscientist to generate the launcher's marker label in .env}
       LAUNCHER_NETWORK: ${OPENSCIENTIST_AGENT_NETWORK:-}
       LAUNCHER_AGENT_PLATFORM: ${OPENSCIENTIST_AGENT_PLATFORM:-}
       PHENIX_HOST_PATH: ${PHENIX_HOST_PATH:-}

@@ -7,6 +7,7 @@ streams the response. Listens on an internal port, unpublished to the host.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from collections.abc import Awaitable, Callable, Mapping
@@ -22,6 +23,7 @@ from starlette.routing import Route, WebSocketRoute
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import ConnectionClosed
 
+from openscientist.budget import unpriced_model_violation
 from openscientist.job_container.secrets import RunKind, proxy_run
 from openscientist.listener import bind_listener
 from openscientist.llm_metering import (
@@ -223,6 +225,17 @@ def create_llm_proxy_app(
             return Response("provider not supported", status_code=502)
 
         body = await request.body()
+        # The fallback name of a model-less body is refused by the upstream, not by the price table.
+        model: str | None = None
+        if request.method == "POST":
+            model = _model_from_body(body) or _model_from_path(request.url.path)
+            if model != "unknown" and "count-tokens" not in request.url.path:
+                refusal = await unpriced_model_violation(provider_id=provider(), model=model)
+                if refusal is not None:
+                    logger.warning(
+                        "LLM proxy: %s for run %s (%s)", refusal.message, run.job_id, run.kind
+                    )
+                    return Response(refusal.message, status_code=403)
         logger.debug(
             "LLM proxy: %s %s for run %s (%s)",
             request.method,
@@ -259,8 +272,7 @@ def create_llm_proxy_app(
         # Only a POST to a model-call path is a metered call. A count-tokens
         # lookup and a GET catalogue answer are not, and write no row.
         decoder = None
-        if request.method == "POST":
-            model = _model_from_body(body) or _model_from_path(request.url.path)
+        if request.method == "POST" and model is not None:
             decoder = _usage_decoder(
                 request.url.path, upstream_resp.headers.get("content-type", ""), model
             )
@@ -323,11 +335,12 @@ class _ResponsesWebsocketTerminator:
     """Terminates the codex Responses websocket on the web side.
 
     Authenticates the run's placeholder, opens the upstream socket with the
-    web-side credential, and pumps frames unchanged in both directions with
-    close codes propagated. Each ``response.completed`` frame meters one call,
-    one row per completed response in a turn. Raw ASGI, so a dead run or an
-    unusable credential is refused with an HTTP status before the upstream is
-    touched.
+    web-side credential, and pumps frames in both directions with close codes
+    propagated. Each ``response.completed`` frame meters one call, one row per
+    completed response in a turn, and a frame that starts a response on an
+    unpriced model is refused before it is forwarded. Raw ASGI, so a dead run
+    or an unusable credential is refused with an HTTP status before the
+    upstream is touched.
     """
 
     def __init__(
@@ -392,7 +405,7 @@ class _ResponsesWebsocketTerminator:
         await send({"type": "websocket.accept"})
         decoder = _ResponsesDecoder("unknown")
         loop = asyncio.get_running_loop()
-        to_upstream = loop.create_task(self._container_to_upstream(connection, receive))
+        to_upstream = loop.create_task(self._container_to_upstream(connection, receive, send))
         to_container = loop.create_task(
             self._upstream_to_container(connection, send, decoder, run.job_id, run.kind)
         )
@@ -411,7 +424,7 @@ class _ResponsesWebsocketTerminator:
                 run.kind,
             )
 
-    async def _container_to_upstream(self, connection, receive) -> None:
+    async def _container_to_upstream(self, connection, receive, send) -> None:
         while True:
             message = await receive()
             if message["type"] == "websocket.disconnect":
@@ -422,9 +435,42 @@ class _ResponsesWebsocketTerminator:
                 await connection.close(code, reason)
                 return
             if message.get("text") is not None:
+                refusal = await self._unpriced_refusal(message["text"])
+                if refusal is not None:
+                    # The pinned codex client maps this pre-stream error frame to a failed turn carrying the message.
+                    with suppress(RuntimeError):
+                        await send(
+                            {
+                                "type": "websocket.send",
+                                "text": json.dumps(
+                                    {
+                                        "type": "error",
+                                        "status": 403,
+                                        "error": {"message": refusal},
+                                    }
+                                ),
+                            }
+                        )
+                    await connection.close(1008, refusal)
+                    return
                 await connection.send(message["text"])
             elif message.get("bytes") is not None:
                 await connection.send(message["bytes"])
+
+    async def _unpriced_refusal(self, text: str) -> str | None:
+        """The refusal message for a ``response.create`` that names a model
+        the deployment cannot price, or None when the frame may be forwarded."""
+        try:
+            frame = json.loads(text)
+        except ValueError:
+            return None
+        if not isinstance(frame, dict) or frame.get("type") != "response.create":
+            return None
+        model = frame.get("model")
+        if not isinstance(model, str) or not model:
+            return None
+        refusal = await unpriced_model_violation(provider_id=self._provider_id(), model=model)
+        return refusal.message if refusal is not None else None
 
     async def _upstream_to_container(
         self, connection, send, decoder: _ResponsesDecoder, job_id: str, kind: RunKind
@@ -451,7 +497,7 @@ class _ResponsesWebsocketTerminator:
                 continue
             # Meter the completed responses this frame reports, then
             # forward the frame unchanged.
-            decoder.feed(data)
+            decoder.feed_frame(data)
             for call in decoder.take_completed():
                 await record_model_call(
                     job_id=job_id,

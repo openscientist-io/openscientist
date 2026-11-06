@@ -52,6 +52,8 @@ def default_command(ctx: click.Context) -> None:
     if ctx.invoked_subcommand is not None:
         return
     root = Path.cwd()
+    # Move the launcher keys older checkouts keep in .env.owner, so a configured checkout is not sent to the wizard.
+    envfiles.migrate_owner_launcher_keys(root)
     if envfiles.is_configured(root):
         _start(root)
     else:

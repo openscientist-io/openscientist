@@ -54,6 +54,9 @@ from openscientist.webapp_components.components.common import (
 ASSETS_DIR = Path(__file__).parent / "assets"
 # Pinned Swagger UI and ReDoc bundles, served same-origin by the docs pages.
 DOCS_ASSETS_DIR = Path(__file__).parent / "docs_assets"
+# Pinned Font Awesome Free 7.3.1 solid stylesheets and webfonts, served
+# same-origin for the admin settings field icons.
+FA_ASSETS_DIR = Path(__file__).parent / "fa_assets"
 # Path to built-in skills directory at project root
 BUILTIN_SKILLS_DIR = Path(__file__).parent.parent.parent / "skills"
 JOBS_DIR_ENV = "OPENSCIENTIST_JOBS_DIR"
@@ -691,6 +694,9 @@ def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
     register_security_headers_middleware(host_app)
     register_scanner_block_middleware(host_app)
     _register_openapi_docs(host_app)
+    # The admin settings icons load the vendored Font Awesome stylesheets and
+    # webfonts same-origin, the way the docs pages load their bundles.
+    host_app.mount("/fa", StaticFiles(directory=str(FA_ASSETS_DIR)))
     _register_health_endpoint(host_app)
     _register_robots_txt(host_app)
     _register_apple_touch_icon_redirect(host_app)

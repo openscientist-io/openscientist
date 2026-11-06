@@ -14,6 +14,7 @@ checks what it renders.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
@@ -33,6 +34,7 @@ from openscientist.database.models import Job, Session, User
 from openscientist.job_manager import JobManager
 from openscientist.webapp_components.pages.job_detail import job_detail_page, report
 from tests.db_outage import Forwarder
+from tests.helpers import bounded_peak
 from tests.webapp.conftest import ServedPage
 
 # NiceGUI's deadline for the page build, in seconds.
@@ -156,6 +158,14 @@ def _markdown_elements(client: Client) -> list[ui.markdown]:
 def _placeholder_present(client: Client) -> bool:
     return any(
         "Converting the report" in str(element.text)
+        for element in client.elements.values()
+        if isinstance(element, ui.label)
+    )
+
+
+def _too_large_label_present(client: Client) -> bool:
+    return any(
+        "The report is too large to show." in str(element.text)
         for element in client.elements.values()
         if isinstance(element, ui.label)
     )
@@ -322,3 +332,57 @@ async def test_a_disconnect_during_the_conversion_raises_nothing(
     await activation  # must not raise
     assert calls == ["final_report.md"]
     assert _markdown_elements(client) == []
+
+
+@pytest.mark.asyncio
+async def test_an_oversized_report_is_shown_as_too_large(
+    database: Forwarder,
+    report_job: ReportJob,
+    report_job_manager: JobManager,
+    served_page: ServedPage,
+) -> None:
+    """The agent plants a sparse report well past the size cap, so the tab's
+    read is refused and says the report is too large, without ever reading it."""
+    from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
+
+    job_dir = report_job["jobs_root"] / report_job["job_id"]
+    os.truncate(job_dir / "final_report.md", MAX_ARTIFACT_FILE_SIZE_BYTES * 4)
+    client, _ = await served_page(
+        report_job["token"],
+        _build_report_page(report_job),
+        lambda client: None,
+    )
+    _tabs(client).set_value(_tab_names(client)["Report"])
+    with bounded_peak():
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not _too_large_label_present(client):
+            await asyncio.sleep(0.01)
+    assert _too_large_label_present(client), "the too large message did not land within 5 s"
+    assert _markdown_elements(client) == []
+
+
+def _report_frames(client: Client) -> list[ui.element]:
+    return [
+        element
+        for element in client.elements.values()
+        if element.tag == "iframe" and "report.html" in str(element.props.get("src", ""))
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_saved_html_report_is_shown_in_its_frame(
+    database: Forwarder,
+    report_job: ReportJob,
+    report_job_manager: JobManager,
+    served_page: ServedPage,
+) -> None:
+    """A job that saved its HTML report shows it framed, not the markdown view."""
+    job_dir = report_job["jobs_root"] / report_job["job_id"]
+    (job_dir / "final_report.html").write_text("<html><body>Saved</body></html>", "utf-8")
+    _, (frames, placeholder) = await served_page(
+        report_job["token"],
+        _build_report_page(report_job),
+        lambda client: (_report_frames(client), _placeholder_present(client)),
+    )
+    assert len(frames) == 1
+    assert not placeholder

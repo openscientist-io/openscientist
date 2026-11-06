@@ -6,12 +6,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.admin_settings import current_admin_settings
 from openscientist.database.models import CostRecord
@@ -118,6 +120,30 @@ async def _ledger_totals(job_id: UUID | None = None) -> tuple[float, float, floa
     )
 
 
+def format_spend(spend_usd: float) -> str:
+    """The spend figure the badges show: $0.00 for nothing, <$0.01 below one
+    cent, $1.23 otherwise."""
+    if spend_usd <= 0:
+        return "$0.00"
+    if spend_usd < 0.01:
+        return "<$0.01"
+    return f"${spend_usd:.2f}"
+
+
+async def job_spends(session: AsyncSession, job_ids: Sequence[UUID]) -> dict[UUID, float]:
+    """Each job's spend from the cost ledger the session's RLS admits, one
+    grouped query for all the ids, 0 for a job without cost rows."""
+    if not job_ids:
+        return {}
+    result = await session.execute(
+        select(CostRecord.job_id, func.sum(CostRecord.cost_usd))
+        .where(CostRecord.job_id.in_(list(job_ids)))
+        .group_by(CostRecord.job_id)
+    )
+    sums = {job_id: 0.0 if total is None else float(total) for job_id, total in result.all()}
+    return {job_id: sums.get(job_id, 0.0) for job_id in job_ids}
+
+
 async def project_spend() -> ProjectSpend:
     """The project spend the project limits compare against."""
     _, total, recent = await _ledger_totals()
@@ -128,6 +154,33 @@ def warning_limit_reached(spend_24h: float, warn: float | None, hard: float | No
     """The billing page's 24-hour warning card: at or above the warning
     threshold and below the hard 24-hour limit."""
     return warn is not None and spend_24h >= warn and (hard is None or spend_24h < hard)
+
+
+async def unpriced_model_violation(*, provider_id: str, model: str | None) -> BudgetVerdict | None:
+    """The refusal of a model the price table does not know, or None when the
+    call may go through. Applied while any spend limit is set, so the job-start
+    and chat checks and the LLM proxy share it, and self-hosted providers stay
+    exempt because their spend is the deployment's own hardware."""
+    if model is None:
+        return None
+    # The price table and the provider are checked first, so a priced call
+    # never reads the admin row.
+    if provider_id.lower() in SELF_HOSTED_PROVIDER_IDS or has_price(model):
+        return None
+    admin = await current_admin_settings()
+    any_limit = (
+        admin.max_job_cost_usd is not None
+        or admin.max_project_spend_total_usd is not None
+        or admin.max_project_spend_24h_usd is not None
+        or admin.warn_project_spend_24h_usd is not None
+    )
+    if not any_limit:
+        return None
+    return BudgetVerdict(
+        False,
+        "unpriced_model",
+        f"Model {model} has no known price, so the budget cannot be enforced.",
+    )
 
 
 async def check_budget(
@@ -143,26 +196,12 @@ async def check_budget(
     Checks in order: an unpriced cloud model while any limit is set, the
     job's own cap, the project's total spend, then its 24-hour spend.
     """
-    admin = await current_admin_settings()
-
     if include_unpriced:
-        any_limit = (
-            admin.max_job_cost_usd is not None
-            or admin.max_project_spend_total_usd is not None
-            or admin.max_project_spend_24h_usd is not None
-            or admin.warn_project_spend_24h_usd is not None
-        )
-        if (
-            any_limit
-            and model is not None
-            and provider_id.lower() not in SELF_HOSTED_PROVIDER_IDS
-            and not has_price(model)
-        ):
-            return BudgetVerdict(
-                False,
-                "unpriced_model",
-                f"Model {model} has no known price, so the budget cannot be enforced.",
-            )
+        violation = await unpriced_model_violation(provider_id=provider_id, model=model)
+        if violation is not None:
+            return violation
+
+    admin = await current_admin_settings()
 
     job_total, total, recent = await _ledger_totals(job_id)
 
