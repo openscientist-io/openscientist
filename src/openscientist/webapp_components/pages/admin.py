@@ -6,6 +6,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -35,7 +36,7 @@ from openscientist.webapp_components.components.job_table import render_job_id_s
 from openscientist.webapp_components.components.navigation import render_navigator
 from openscientist.webapp_components.pages.billing import render_billing_panel
 from openscientist.webapp_components.pages.settings_panel import render_settings_panel
-from openscientist.webapp_components.utils import guard_client
+from openscientist.webapp_components.utils import session_checked_timer
 from openscientist.webapp_components.utils.permissions import (
     refuse_stale_admin_session,
     revalidate_admin_session,
@@ -128,6 +129,8 @@ async def set_user_priority_status(user_id: UUID, is_priority: bool) -> tuple[bo
 @require_admin
 async def admin_page() -> None:
     """Admin page for managing orphaned jobs and user assignments."""
+    page_user_id = get_current_user_id()
+    assert page_user_id is not None
     render_navigator(active_page="admin")
 
     with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-6"):
@@ -161,7 +164,7 @@ async def admin_page() -> None:
 
             # Containers Panel (deferred)
             with ui.tab_panel(containers_tab):
-                ui.timer(0.1, render_containers_panel, once=True)
+                ui.timer(0.1, partial(render_containers_panel, page_user_id), once=True)
 
             # Billing Panel (deferred)
             with ui.tab_panel(billing_tab):
@@ -752,7 +755,7 @@ async def render_users_panel() -> None:
         await load_users()
 
 
-async def render_containers_panel() -> None:
+async def render_containers_panel(page_user_id: str) -> None:
     """Render the real-time container dashboard panel."""
     from openscientist.webapp_components.utils.container_dashboard import (
         collect_dashboard_data,
@@ -765,7 +768,6 @@ async def render_containers_panel() -> None:
     view = _dashboard_view(await collect_dashboard_data())
     render_dashboard(view)
 
-    @guard_client
     async def guarded_refresh() -> None:
         nonlocal view
         new_view = _dashboard_view(await collect_dashboard_data())
@@ -774,7 +776,7 @@ async def render_containers_panel() -> None:
         view = new_view
         render_dashboard.refresh(new_view)
 
-    ui.timer(3.0, guarded_refresh)
+    session_checked_timer(3.0, guarded_refresh, page_user_id)
 
 
 def _job_status_color(status: str) -> str:

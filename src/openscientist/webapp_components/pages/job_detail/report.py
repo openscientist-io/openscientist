@@ -7,6 +7,8 @@ from pathlib import Path
 
 from nicegui import ui
 from nicegui.elements.markdown import prepare_content
+from nicegui.elements.tabs import Tab, TabPanel
+from nicegui.events import ValueChangeEventArguments
 
 from openscientist.auth import is_current_user_admin
 from openscientist.job.types import JobStatus
@@ -185,12 +187,50 @@ def _transformed_report_markdown(report_path: Path) -> str | None:
     return content
 
 
-async def _render_report_markdown(report_path: Path) -> None:
-    """Render the markdown report, running its conversion off the event loop."""
+async def _render_report_markdown(container: ui.column, report_path: Path) -> None:
+    """Convert the markdown off the event loop and render it into ``container``.
+
+    The conversion warms NiceGUI's markdown content cache, so creating the
+    element stays cheap. A client that disconnected during the conversion is
+    skipped.
+    """
     content = await asyncio.to_thread(_transformed_report_markdown, report_path)
+    if container.is_deleted:
+        return
+    container.clear()
     if content is None:
         return
-    ui.markdown(content).classes("w-full")
+    with container:
+        ui.markdown(content).classes("w-full")
+
+
+def _render_lazy_markdown_report(
+    panels: ui.tab_panels, report_tab: ui.tab, report_path: Path
+) -> None:
+    """The markdown report view for jobs whose HTML report is missing.
+
+    The page build only places a loading state. The conversion runs when the
+    tab is first shown, so a large report cannot push the build past the
+    response deadline. Reopenings reuse the rendered report.
+    """
+    rendered = {"value": False}
+    container = ui.column().classes("w-full")
+    with container:
+        ui.label("Converting the report...").classes("text-sm text-gray-400 italic")
+
+    async def _activate_report_tab(
+        e: ValueChangeEventArguments[str | Tab | TabPanel | None],
+    ) -> None:
+        if e.value != report_tab.props["name"] or rendered["value"]:
+            return
+        rendered["value"] = True
+        try:
+            await _render_report_markdown(container, report_path)
+        except BaseException:
+            rendered["value"] = False
+            raise
+
+    panels.on_value_change(_activate_report_tab)
 
 
 def _render_missing_report_state(context: _JobDetailContext) -> None:
@@ -203,7 +243,9 @@ def _render_missing_report_state(context: _JobDetailContext) -> None:
     ui.label("Report will be available when job completes").classes("text-gray-500 italic")
 
 
-async def _render_report_tab(context: _JobDetailContext) -> None:
+def _render_report_tab(
+    context: _JobDetailContext, panels: ui.tab_panels, report_tab: ui.tab
+) -> None:
     report_path = context.job_dir / "final_report.md"
     html_path = context.job_dir / "final_report.html"
     pdf_path = context.job_dir / "final_report.pdf"
@@ -221,7 +263,7 @@ async def _render_report_tab(context: _JobDetailContext) -> None:
         if job_file_exists(context.job_dir, html_path.name):
             _render_report_html_iframe(context.job_dir)
         else:
-            await _render_report_markdown(report_path)
+            _render_lazy_markdown_report(panels, report_tab, report_path)
         return
 
     _render_missing_report_state(context)

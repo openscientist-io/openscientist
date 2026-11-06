@@ -13,8 +13,9 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from openscientist.database.models import Job, JobChatMessage
 from openscientist.job_container.identity import apply_job_ownership
@@ -176,30 +177,89 @@ async def load_job_context(job_id: str, session: AsyncSession) -> str:
     return "\n".join(context_parts)
 
 
+def _older_than(message: JobChatMessage) -> ColumnElement[bool]:
+    """The condition for a chat message strictly older than ``message``, the
+    id breaking the ties of rows committed in one transaction."""
+    return or_(
+        JobChatMessage.created_at < message.created_at,
+        and_(
+            JobChatMessage.created_at == message.created_at,
+            JobChatMessage.id < message.id,
+        ),
+    )
+
+
+def _newer_than(message: JobChatMessage) -> ColumnElement[bool]:
+    """The condition for a chat message strictly newer than ``message``, the
+    id breaking the ties of rows committed in one transaction."""
+    return or_(
+        JobChatMessage.created_at > message.created_at,
+        and_(
+            JobChatMessage.created_at == message.created_at,
+            JobChatMessage.id > message.id,
+        ),
+    )
+
+
 async def get_chat_history(
     session: AsyncSession,
     job_id: UUID,
     limit: int = 50,
+    before: JobChatMessage | None = None,
+    after: JobChatMessage | None = None,
 ) -> list[JobChatMessage]:
     """
-    Get chat message history for a job.
+    Get the newest chat messages of a job.
 
     Args:
         session: Database session
         job_id: Job ID
         limit: Maximum number of messages to return
+        before: When set, only messages older than this one are returned
+        after: When set, only messages strictly newer than this one are
+            returned
 
     Returns:
-        List of chat messages, ordered chronologically
+        The newest ``limit`` messages, ordered chronologically, oldest of
+        them first
     """
     stmt = (
         select(JobChatMessage)
         .where(JobChatMessage.job_id == job_id)
-        .order_by(JobChatMessage.created_at.asc())
+        .order_by(JobChatMessage.created_at.desc(), JobChatMessage.id.desc())
         .limit(limit)
     )
+    if before is not None:
+        stmt = stmt.where(_older_than(before))
+    if after is not None:
+        stmt = stmt.where(_newer_than(after))
     result = await session.execute(stmt)
-    return list(result.scalars().all())
+    return list(reversed(result.scalars().all()))
+
+
+async def has_older_chat_message(
+    session: AsyncSession,
+    job_id: UUID,
+    before: JobChatMessage,
+) -> bool:
+    """
+    Whether the job holds a chat message older than ``before``.
+
+    Args:
+        session: Database session
+        job_id: Job ID
+        before: The oldest message currently shown
+
+    Returns:
+        True when an older message exists
+    """
+    stmt = (
+        select(JobChatMessage.id)
+        .where(JobChatMessage.job_id == job_id)
+        .where(_older_than(before))
+        .limit(1)
+    )
+    return (await session.execute(stmt)).first() is not None
 
 
 async def send_chat_message(

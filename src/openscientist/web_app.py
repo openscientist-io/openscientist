@@ -847,17 +847,16 @@ def main(
     logger.info("Starting NiceGUI server on %s:%s (reload=%s)", host, port, reload)
 
     if reload:
-        # uvicorn resolves exclude directories once at startup, and refuses an
-        # absolute exclude that does not exist yet.
-        jobs_dir.mkdir(parents=True, exist_ok=True)
-        # Reload mode requires an import string application target.
+        # Reload mode requires an import string application target. The
+        # reloader watches the source tree, so job files, NiceGUI storage and
+        # whatever else sits in the working directory never restart the server.
         uvicorn.run(
             "openscientist.web_app:create_app",
             host=host,
             port=port,
             reload=True,
             factory=True,
-            reload_excludes=[".nicegui", str(jobs_dir.resolve())],
+            reload_dirs=[str(Path(__file__).resolve().parent.parent)],
             log_level="warning",
         )
         return

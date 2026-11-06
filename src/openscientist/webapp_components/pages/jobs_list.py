@@ -40,6 +40,7 @@ from openscientist.webapp_components.components.job_table import (
     render_status_cell_slot,
 )
 from openscientist.webapp_components.components.navigation import render_navigator
+from openscientist.webapp_components.utils import session_checked_timer
 
 logger = logging.getLogger(__name__)
 
@@ -403,5 +404,5 @@ async def jobs_page() -> None:
     # hung database.
     await refresh_my_jobs_table()
     await refresh_shared_jobs_table()
-    ui.timer(5.0, refresh_my_jobs_table)
-    ui.timer(5.0, refresh_shared_jobs_table)
+    session_checked_timer(5.0, refresh_my_jobs_table, current_user_id)
+    session_checked_timer(5.0, refresh_shared_jobs_table, current_user_id)

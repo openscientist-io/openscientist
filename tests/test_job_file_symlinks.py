@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Literal, cast
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -752,6 +753,22 @@ class TestWebArtifactRoutes:
         assert _SECRET not in response.content
 
 
+class _ReportContainer:
+    """The report tab's container stand-in; the real element's constructor
+    takes its client context from the page."""
+
+    is_deleted = False
+
+    def clear(self) -> None:
+        pass
+
+    def __enter__(self) -> "_ReportContainer":
+        return self
+
+    def __exit__(self, *exc_info: object) -> Literal[False]:
+        return False
+
+
 class TestUiReportPage:
     """The NiceGUI report tab reads and writes job files in the web process."""
 
@@ -808,8 +825,9 @@ class TestUiReportPage:
         secret = _plant_secret(tmp_path)
         (job_dir / "final_report.md").symlink_to(secret)
 
+        container = cast(report.ui.column, _ReportContainer())
         with patch.object(report, "ui") as ui:
-            await report._render_report_markdown(job_dir / "final_report.md")
+            await report._render_report_markdown(container, job_dir / "final_report.md")
 
         ui.markdown.assert_not_called()
 

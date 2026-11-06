@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from functools import wraps
 from typing import TYPE_CHECKING, Any
 
 from nicegui import ui
+
+from openscientist.auth.middleware import go_to_login, session_still_valid_for
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,30 @@ def guard_client[F: Callable[..., Any]](func: F) -> F:
     if asyncio.iscoroutinefunction(func):
         return async_wrapper  # type: ignore[return-value]
     return sync_wrapper  # type: ignore[return-value]
+
+
+def session_checked_timer(
+    interval: float, callback: Callable[[], Awaitable[None]], user_id: str
+) -> ui.timer:
+    """A ``ui.timer`` that re-checks the page's session before every tick.
+
+    The callback runs only while the session the page was built with is
+    still valid and still belongs to ``user_id``, the user the page was
+    built for. Once it is not, the timer deactivates itself and sends the
+    client to the login page instead of running the callback.
+    """
+
+    @wraps(callback)
+    @guard_client
+    async def checked_tick() -> None:
+        if not await session_still_valid_for(user_id):
+            timer.deactivate()
+            go_to_login()
+            return
+        await callback()
+
+    timer = ui.timer(interval, checked_tick)
+    return timer
 
 
 class ClientGuard:

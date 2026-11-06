@@ -26,14 +26,16 @@ def _next_iteration_for_feedback(ks_data: dict[str, Any] | None) -> int:
 
 async def _submit_feedback_and_continue(
     job_dir: Path, job_id: str, user_id: str, completed_iter: int, feedback_text: str
-) -> None:
+) -> bool:
+    """Save the feedback and resume the job, returning whether the job moved
+    to running. A failed feedback save is raised."""
     access = await current_job_access(job_id, user_id)
     if access is None:
         ui.notify("You no longer have access to this job.", type="negative")
-        return
+        return False
     if not access.can_edit:
         ui.notify("You no longer have edit access to this job.", type="negative")
-        return
+        return False
 
     as_user = partial(thread_safe_user_session, UUID(user_id))
     async with as_user() as session:
@@ -52,13 +54,14 @@ async def _submit_feedback_and_continue(
         )
     except Exception:
         ui.notify("Failed to continue job. Please try again.", type="negative")
-        return
+        return False
     if not resumed:
         ui.notify("This job is no longer waiting for feedback.", type="warning")
         ui.navigate.to(f"/job/{job_id}")
-        return
+        return False
     ui.notify("Continuing to next iteration", type="positive")
     ui.navigate.to(f"/job/{job_id}")
+    return True
 
 
 def _parse_awaiting_started_at(awaiting_since: str | None) -> datetime | None:
@@ -135,16 +138,34 @@ def _render_feedback_panel(
                 placeholder="e.g., Focus on metabolic pathways, or investigate the correlation with gene X...",
             ).classes("w-full")
 
-            async def submit_feedback(fi: Any = feedback_input, ci: int = completed_iter) -> None:
-                await _submit_feedback_and_continue(job_dir, job_id, user_id, ci, fi.value)
+            async def submit_feedback(
+                fi: ui.textarea = feedback_input, ci: int = completed_iter
+            ) -> None:
+                if not submit_button.enabled:
+                    return
+                submit_button.disable()
+                continue_button.disable()
+                resumed = False
+                try:
+                    resumed = await _submit_feedback_and_continue(
+                        job_dir, job_id, user_id, ci, fi.value
+                    )
+                finally:
+                    if (
+                        not resumed
+                        and not submit_button.is_deleted
+                        and not continue_button.is_deleted
+                    ):
+                        submit_button.enable()
+                        continue_button.enable()
 
             with ui.row().classes("w-full gap-2 mt-2"):
-                ui.button(
+                submit_button = ui.button(
                     "Submit & Continue",
                     on_click=submit_feedback,
                     icon="send",
                 ).props("color=primary")
-                ui.button(
+                continue_button = ui.button(
                     "Continue Without Feedback",
                     on_click=submit_feedback,
                     icon="arrow_forward",
