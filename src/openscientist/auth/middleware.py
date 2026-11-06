@@ -111,7 +111,24 @@ def _is_local_path(path: object) -> bool:
         return False
     if _contains_control_character(path):
         return False
-    return not _is_sign_in_or_sign_out_route(unquote(parts.path))
+    return not _is_sign_in_or_sign_out_route(_fold_dot_segments(unquote(parts.path)))
+
+
+def _fold_dot_segments(path: str) -> str:
+    """The absolute ``path`` with its ``.`` and ``..`` segments folded the way
+    a browser folds them when it follows a redirect. Empty segments are kept,
+    each ``..`` removes one segment, and folding stops at the root."""
+    segments: list[str] = []
+    for segment in path.split("/")[1:]:
+        if segment == "..":
+            if segments:
+                segments.pop()
+        elif segment != ".":
+            segments.append(segment)
+    folded = "/" + "/".join(segments)
+    if path.endswith(("/.", "/..")) and not folded.endswith("/"):
+        folded += "/"
+    return folded
 
 
 def _contains_control_character(path: str) -> bool:

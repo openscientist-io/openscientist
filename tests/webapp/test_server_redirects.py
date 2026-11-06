@@ -292,26 +292,56 @@ async def test_signing_in_refuses_a_next_that_names_the_admin_login(
         "/auth%2Fmock%2Fadmin-login",
         "/auth?next=/jobs",
         "/jobs\r\nSet-Cookie:evil=1",
+        "/./auth/mock/admin-login",
+        "/jobs/../auth/mock/admin-login",
+        "/../auth/mock/admin-login",
+        "/%2e/auth/mock/admin-login",
+        "/jobs/%2E%2E/auth/x",
+        "/auth//..",
+        "/auth/mock/admin-login/x////../../../..",
     ],
 )
 async def test_signing_in_refuses_an_internal_or_controlled_target(
-    database: Forwarder, browser_client: OpenBrowser, next_path: str
+    database: Forwarder,
+    test_engine: AsyncEngine,
+    browser_client: OpenBrowser,
+    next_path: str,
 ) -> None:
-    """A next that names a sign-in or sign-out route, encodes one, or carries
-    a control character lands on the home page, not the internal target."""
+    """A next that names a sign-in or sign-out route, encodes one, folds to
+    one through dot segments, or carries a control character lands on the
+    home page with the visitor's own session, not the internal target."""
     client = await browser_client(None, "/auth/mock/login?next=" + quote(next_path))
     with client:
         response = await mock_oauth_login(client.request)
         assert _location(response) == "/jobs"
+        token = _session_token(response)
+    async with AsyncSession(test_engine, expire_on_commit=False) as db:
+        email = (
+            await db.execute(
+                select(User.email)
+                .join(Session, Session.user_id == User.id)
+                .where(Session.id == UUID(token))
+            )
+        ).scalar_one()
+    assert email.startswith("dev-")
+    assert email != "admin@mock.local"
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("dev_mode", "mock_dev_cleanup")
-async def test_signing_in_keeps_a_job_page_with_a_query(
-    database: Forwarder, browser_client: OpenBrowser
+@pytest.mark.parametrize(
+    "asked",
+    [
+        "/job/01a1aaa6-74c5-7db6-9951-30b919995b65?x=1",
+        "/auth/../jobs",
+        "/jobs/./x",
+    ],
+)
+async def test_signing_in_keeps_the_page_the_visitor_asked_for(
+    database: Forwarder, browser_client: OpenBrowser, asked: str
 ) -> None:
-    """A legitimate job page with a query survives the sign-in round trip."""
-    asked = "/job/01a1aaa6-74c5-7db6-9951-30b919995b65?x=1"
+    """A legitimate page, including one whose dot segments fold to the jobs
+    list, survives the sign-in round trip with its target unchanged."""
     client = await browser_client(None, "/auth/mock/login?next=" + quote(asked))
     with client:
         response = await mock_oauth_login(client.request)
