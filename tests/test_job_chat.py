@@ -10,7 +10,7 @@ import json
 import threading
 from collections.abc import Callable
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
@@ -28,6 +28,7 @@ from openscientist.job_chat import (
     _chat_turn_files,
     _send_message_via_container,
     get_chat_history,
+    has_older_chat_message,
     load_job_context,
     run_chat_turn_async,
     send_chat_message,
@@ -208,6 +209,110 @@ async def test_chat_history_limit(
     history = await get_chat_history(db_session, test_job.id, limit=10)
 
     assert len(history) == 10
+
+
+async def _insert_numbered_messages(
+    db_session: AsyncSession, job: Job, count: int
+) -> list[JobChatMessage]:
+    """Committed messages 'Message 0' to 'Message count - 1', one per second."""
+    base = datetime.now(UTC)
+    messages = [
+        JobChatMessage(
+            job_id=job.id,
+            role="user" if i % 2 == 0 else "assistant",
+            content=f"Message {i}",
+            created_at=base + timedelta(seconds=i),
+        )
+        for i in range(count)
+    ]
+    db_session.add_all(messages)
+    await db_session.commit()
+    return messages
+
+
+@pytest.mark.asyncio
+async def test_get_chat_history_returns_the_newest_messages(
+    db_session: AsyncSession,
+    test_user: User,
+    test_job: Job,
+):
+    """With more messages than the limit, the newest ones come back,
+    oldest of them first."""
+    _ = test_user
+    await _insert_numbered_messages(db_session, test_job, 30)
+
+    history = await get_chat_history(db_session, test_job.id, limit=10)
+
+    assert [msg.content for msg in history] == [f"Message {i}" for i in range(20, 30)]
+
+
+@pytest.mark.asyncio
+async def test_get_chat_history_before_pages_older_messages(
+    db_session: AsyncSession,
+    test_user: User,
+    test_job: Job,
+):
+    """A page loaded before a message holds the messages older than it."""
+    _ = test_user
+    await _insert_numbered_messages(db_session, test_job, 30)
+
+    newest = await get_chat_history(db_session, test_job.id, limit=10)
+    older = await get_chat_history(db_session, test_job.id, limit=10, before=newest[0])
+
+    assert [msg.content for msg in older] == [f"Message {i}" for i in range(10, 20)]
+
+
+@pytest.mark.asyncio
+async def test_get_chat_history_after_holds_the_strictly_newer_messages(
+    db_session: AsyncSession,
+    test_user: User,
+    test_job: Job,
+):
+    """A page loaded after a message holds the messages strictly newer than
+    it, oldest of them first."""
+    _ = test_user
+    messages = await _insert_numbered_messages(db_session, test_job, 30)
+
+    newer = await get_chat_history(db_session, test_job.id, limit=10, after=messages[19])
+
+    assert [msg.content for msg in newer] == [f"Message {i}" for i in range(20, 30)]
+
+
+@pytest.mark.asyncio
+async def test_has_older_chat_message(
+    db_session: AsyncSession,
+    test_user: User,
+    test_job: Job,
+):
+    """The chat holds an older message when one exists before the boundary."""
+    _ = test_user
+    messages = await _insert_numbered_messages(db_session, test_job, 30)
+
+    assert await has_older_chat_message(db_session, test_job.id, messages[19])
+    assert not await has_older_chat_message(db_session, test_job.id, messages[0])
+
+
+@pytest.mark.asyncio
+async def test_build_chat_request_carries_the_recent_history(
+    db_session: AsyncSession,
+    test_user: User,
+    test_job: Job,
+):
+    """A chat turn's prompt carries the newest ten messages of a longer chat,
+    in order."""
+    _ = test_user
+    await _insert_numbered_messages(db_session, test_job, 30)
+
+    with patch("openscientist.providers.get_provider", return_value=_ChatProvider()):
+        request = await _build_chat_request(db_session, test_job.id, "What next?")
+
+    prompt = request["prompt"]
+    assert prompt is not None
+    for i in range(20, 30):
+        assert f"Message {i}" in prompt
+    assert "Message 19" not in prompt
+    assert "Message 0" not in prompt
+    assert prompt.index("Message 20") < prompt.index("Message 29")
 
 
 @pytest.mark.asyncio
