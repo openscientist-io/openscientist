@@ -70,7 +70,7 @@ async def tick_user(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str]]:
 
 
 @pytest_asyncio.fixture
-async def tick_admin(test_engine: AsyncEngine) -> AsyncIterator[str]:
+async def tick_admin(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str]]:
     """An administrator and their live session, committed."""
     async with AsyncSession(test_engine, expire_on_commit=False) as db:
         admin = User(email=f"admin-{uuid4().hex}@tick.test", name="Admin", is_approved=True)
@@ -80,8 +80,7 @@ async def tick_admin(test_engine: AsyncEngine) -> AsyncIterator[str]:
         login = Session(user_id=admin.id, expires_at=datetime.now(UTC) + timedelta(days=1))
         db.add(login)
         await db.commit()
-        token = str(login.id)
-    yield token
+    yield {"token": str(login.id), "user_id": str(admin.id)}
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(Session).where(Session.user_id == admin.id))
         await db.execute(delete(Administrator).where(Administrator.user_id == admin.id))
@@ -286,7 +285,7 @@ async def test_the_job_page_poll_sends_the_page_to_login_once_the_session_is_gon
 @pytest.mark.asyncio
 async def test_the_admin_tick_sends_the_page_to_login_once_the_session_is_gone(
     database: Forwarder,
-    tick_admin: str,
+    tick_admin: dict[str, str],
     served_page: ServedPage,
     wire_recorder: list[WireMessage],
     test_engine: AsyncEngine,
@@ -302,9 +301,9 @@ async def test_the_admin_tick_sends_the_page_to_login_once_the_session_is_gone(
 
     monkeypatch.setattr(container_dashboard, "collect_dashboard_data", collect)
     targets = _navigation_spy(monkeypatch)
-    client, _ = await served_page(tick_admin, admin_page, lambda c: None)
+    client, _ = await served_page(tick_admin["token"], admin_page, lambda c: None)
     with client:
-        await render_containers_panel()
+        await render_containers_panel(tick_admin["user_id"])
     ticks = _timer_with_interval(client, 3.0)
     assert len(ticks) == 1
     tick = ticks[0]
@@ -317,7 +316,7 @@ async def test_the_admin_tick_sends_the_page_to_login_once_the_session_is_gone(
     assert tick.active is True
     assert targets == []
 
-    await _drop_session_row(test_engine, tick_admin)
+    await _drop_session_row(test_engine, tick_admin["token"])
     with client:
         await tick_callback()
     assert tick.active is False
