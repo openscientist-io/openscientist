@@ -1,11 +1,19 @@
-"""Iteration card rendering for the job detail timeline."""
+"""Iteration card rendering for the job detail timeline.
+
+Each iteration card is built once and updated in place, so its expansion
+state, its loaded action batches and the page's scroll position survive the
+poll.
+"""
 
 import json
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 from nicegui import ui
+from nicegui.events import ValueChangeEventArguments
 
 from openscientist.job.types import JobStatus
 from openscientist.job_files import list_job_files, read_job_file_bytes, read_job_file_text
@@ -15,17 +23,22 @@ from openscientist.webapp_components.components.badges import (
 )
 from openscientist.webapp_components.components.banners import render_justified_text
 from openscientist.webapp_components.pages.job_detail.analysis_log import (
+    _ActionsState,
+    _ensure_show_more,
     _IterationLog,
     _render_analysis_log_actions,
 )
-from openscientist.webapp_components.pages.job_detail.common import ActionCounts
+from openscientist.webapp_components.pages.job_detail.common import (
+    _JobDetailContext,
+    _PageSnapshot,
+)
 from openscientist.webapp_components.utils import (
     is_client_connected,
 )
 
 
-def _show_no_timeline_activity() -> None:
-    ui.label("No investigation activity yet").classes("text-gray-500")
+def _show_no_timeline_activity() -> ui.label:
+    return ui.label("No investigation activity yet").classes("text-gray-500")
 
 
 def _timeline_iteration_summaries(timeline_ks: dict[str, Any]) -> dict[int, dict[str, str]]:
@@ -248,12 +261,33 @@ _HYPOTHESIS_STATUS_LABEL_CLASSES: dict[str, str] = {
 }
 
 
-def _render_iteration_hypotheses(iter_ks_data: dict[str, Any], iter_num: int) -> None:
-    iter_hypotheses = [
-        h
-        for h in iter_ks_data.get("hypotheses", [])
-        if h.get("iteration_proposed") == iter_num or h.get("iteration_tested") == iter_num
+def _iteration_hypotheses(iter_ks_data: dict[str, Any], iter_num: int) -> list[dict[str, Any]]:
+    """The hypotheses proposed or tested in one iteration, in knowledge-state
+    order."""
+    return [
+        hypothesis
+        for hypothesis in iter_ks_data.get("hypotheses", [])
+        if hypothesis.get("iteration_proposed") == iter_num
+        or hypothesis.get("iteration_tested") == iter_num
     ]
+
+
+def _iteration_findings(iter_ks_data: dict[str, Any], iter_num: int) -> list[dict[str, Any]]:
+    return [
+        finding
+        for finding in iter_ks_data.get("findings", [])
+        if finding.get("iteration_discovered") == iter_num
+    ]
+
+
+def _rows_without_id(rows: list[dict[str, Any]]) -> tuple[dict[str, Any], ...]:
+    """The rows for a section's model, without the ids the load assigns by
+    position, so a reload that renumbers them does not read as a change."""
+    return tuple({key: value for key, value in row.items() if key != "id"} for row in rows)
+
+
+def _render_iteration_hypotheses(iter_ks_data: dict[str, Any], iter_num: int) -> None:
+    iter_hypotheses = _iteration_hypotheses(iter_ks_data, iter_num)
     if not iter_hypotheses:
         return
 
@@ -275,11 +309,7 @@ def _render_iteration_hypotheses(iter_ks_data: dict[str, Any], iter_num: int) ->
 
 
 def _render_iteration_findings(iter_ks_data: dict[str, Any], iter_num: int) -> None:
-    iteration_findings = [
-        finding
-        for finding in iter_ks_data.get("findings", [])
-        if finding.get("iteration_discovered") == iter_num
-    ]
+    iteration_findings = _iteration_findings(iter_ks_data, iter_num)
     if not iteration_findings:
         return
 
@@ -303,44 +333,11 @@ def _render_iteration_findings(iter_ks_data: dict[str, Any], iter_num: int) -> N
                     )
 
 
-async def _load_iteration_content(
-    container: ui.column,
-    loaded_flag: dict[str, Any],
-    iter_num: int,
-    iter_summary_text: str,
-    action_total: int,
-    iter_ks_data: dict[str, Any],
-    iter_provenance_dir: Path,
-    log: _IterationLog,
-) -> None:
-    if not is_client_connected() or loaded_flag["value"]:
+def _render_summary_section(summary_text: str) -> None:
+    if not summary_text:
         return
-    loaded_flag["value"] = True
-    try:
-        first_actions = await log.actions(0)
-        searches = await log.searches()
-    except BaseException:
-        loaded_flag["value"] = False
-        raise
-    if container.is_deleted:
-        return
-    container.clear()
-
-    with container:
-        if iter_summary_text:
-            with ui.expansion("Summary", icon="summarize", value=True).classes("w-full mt-2"):
-                render_text_with_pmid_links(
-                    iter_summary_text,
-                    text_classes="text-sm text-gray-700",
-                )
-
-        _render_iteration_hypotheses(iter_ks_data, iter_num)
-        _render_iteration_findings(iter_ks_data, iter_num)
-        await _render_analysis_log_actions(action_total, first_actions, log)
-        if container.is_deleted:
-            return
-        _render_iteration_plots(iter_provenance_dir, iter_num)
-        _render_iteration_literature(searches, iter_ks_data, iter_num)
+    with ui.expansion("Summary", icon="summarize", value=True).classes("w-full mt-2"):
+        render_text_with_pmid_links(summary_text, text_classes="text-sm text-gray-700")
 
 
 def _render_iteration_header(
@@ -363,92 +360,356 @@ def _render_iteration_header(
             ui.badge(f"{finding_count} findings", color="green")
 
 
-def _render_iteration_card(
-    iteration: int,
-    action_counts: dict[str, int],
-    iter_summary: Any,
-    timeline_ks: dict[str, Any],
-    timeline_max_iter: int,
-    latest_status: JobStatus,
-    iter_provenance_dir: Path,
-    log: _IterationLog,
-) -> None:
-    is_in_progress = iteration == timeline_max_iter and latest_status == JobStatus.RUNNING
-    strapline, summary_text = _normalize_iteration_summary(iter_summary)
-    code_count, search_count, finding_count = _iteration_activity_counts(action_counts)
-    hypothesis_count = sum(
-        1
-        for h in timeline_ks.get("hypotheses", [])
-        if h.get("iteration_proposed") == iteration or h.get("iteration_tested") == iteration
+@dataclass(frozen=True)
+class _HeaderModel:
+    """What a card's header was last rendered from."""
+
+    text: str
+    hypothesis_count: int
+    code_count: int
+    search_count: int
+    finding_count: int
+    in_progress: bool
+    border_class: str
+
+
+@dataclass(frozen=True)
+class _BodyModel:
+    """What a card's body was last rendered from, one entry per section."""
+
+    summary_text: str
+    hypotheses: tuple[dict[str, Any], ...]
+    findings: tuple[dict[str, Any], ...]
+    plot_names: tuple[str, ...]
+    search_count: int
+    action_total: int
+
+
+def _header_model(iteration: int, context: _JobDetailContext) -> _HeaderModel:
+    ks = context.ks_data or {}
+    strapline, summary_text = _normalize_iteration_summary(
+        _timeline_iteration_summaries(ks).get(iteration, {})
     )
-    border_class = _timeline_border_class(code_count, search_count, finding_count)
+    code_count, search_count, finding_count = _iteration_activity_counts(
+        context.action_counts.get(iteration, {})
+    )
+    hypothesis_count = len(_iteration_hypotheses(ks, iteration))
+    is_in_progress = (
+        iteration == ks.get("iteration", 1) and context.job_info.status == JobStatus.RUNNING
+    )
     has_activity = bool(code_count or search_count or finding_count or hypothesis_count)
-    header_text = _timeline_header_text(strapline, summary_text, is_in_progress, has_activity)
-
-    with ui.expansion(icon="science").classes(f"w-full mb-2 {border_class}") as expansion:
-        with expansion.add_slot("header"):
-            _render_iteration_header(
-                iteration,
-                header_text,
-                code_count,
-                search_count,
-                finding_count,
-                hypothesis_count,
-            )
-
-        content_container = ui.column().classes("w-full")
-        content_loaded = {"value": False}
-        with content_container:
-            ui.label("Click to load details...").classes("text-sm text-gray-400 italic")
-        action_total = sum(action_counts.values())
-        expansion.on_value_change(
-            lambda e: (
-                _load_iteration_content(
-                    content_container,
-                    content_loaded,
-                    iteration,
-                    summary_text,
-                    action_total,
-                    timeline_ks,
-                    iter_provenance_dir,
-                    log,
-                )
-                if e.value
-                else None
-            )
-        )
-
-
-def _render_timeline_content(
-    timeline_ks: dict[str, Any],
-    action_counts: ActionCounts,
-    latest_job: Any,
-    job_dir: Path,
-    job_id: str,
-    user_id: str,
-) -> None:
-    timeline_iteration_summaries = _timeline_iteration_summaries(timeline_ks)
-    timeline_max_iter = timeline_ks.get("iteration", 1)
-
-    if not action_counts and not timeline_iteration_summaries:
-        _show_no_timeline_activity()
-        return
-
-    display_max = (
-        timeline_max_iter - 1
-        if latest_job.status == JobStatus.AWAITING_FEEDBACK
-        else timeline_max_iter
+    return _HeaderModel(
+        text=_timeline_header_text(strapline, summary_text, is_in_progress, has_activity),
+        hypothesis_count=hypothesis_count,
+        code_count=code_count,
+        search_count=search_count,
+        finding_count=finding_count,
+        in_progress=is_in_progress,
+        border_class=_timeline_border_class(code_count, search_count, finding_count),
     )
-    iter_provenance_dir = job_dir / "provenance"
-    with ui.scroll_area().classes("w-full h-[600px]"):
-        for iteration in range(1, display_max + 1):
-            _render_iteration_card(
-                iteration=iteration,
-                action_counts=action_counts.get(iteration, {}),
-                iter_summary=timeline_iteration_summaries.get(iteration, {}),
-                timeline_ks=timeline_ks,
-                timeline_max_iter=timeline_max_iter,
-                latest_status=latest_job.status,
-                iter_provenance_dir=iter_provenance_dir,
-                log=_IterationLog(job_id, user_id, iteration),
+
+
+def _iteration_plot_names(job_dir: Path, iteration: int) -> tuple[str, ...]:
+    """The plot files of one iteration, by name, read through the
+    symlink-safe walk as the section renders them."""
+    return tuple(
+        plot_file.name
+        for plot_file, _metadata in _collect_iteration_plots(job_dir / "provenance", iteration)
+    )
+
+
+def _body_model(
+    iteration: int,
+    context: _JobDetailContext,
+    reuse: _BodyModel | None,
+    plots_changed: bool,
+) -> _BodyModel:
+    """The body of one iteration from the page's current data. The plot names
+    come from disk only when the job's plot files changed."""
+    ks = context.ks_data or {}
+    _, summary_text = _normalize_iteration_summary(
+        _timeline_iteration_summaries(ks).get(iteration, {})
+    )
+    counts = context.action_counts.get(iteration, {})
+    plot_names = (
+        _iteration_plot_names(context.job_dir, iteration)
+        if reuse is None or plots_changed
+        else reuse.plot_names
+    )
+    return _BodyModel(
+        summary_text=summary_text,
+        hypotheses=_rows_without_id(_iteration_hypotheses(ks, iteration)),
+        findings=_rows_without_id(_iteration_findings(ks, iteration)),
+        plot_names=plot_names,
+        search_count=counts.get("search_pubmed", 0),
+        action_total=sum(counts.values()),
+    )
+
+
+class _IterationCard:
+    """One iteration's card: built once, updated in place so its expansion
+    state, its loaded batches and the page's scroll survive the poll."""
+
+    def __init__(self, iteration: int, context: _JobDetailContext) -> None:
+        self.iteration = iteration
+        self.context = context
+        self.log = _IterationLog(context.job_id, context.user_id, iteration)
+        self.expansion: ui.expansion | None = None
+        self.header_box: ui.column | None = None
+        self.content_box: ui.column | None = None
+        self.header_model: _HeaderModel | None = None
+        self.body_model: _BodyModel | None = None
+        self.body_loaded = False
+        self.body_stale = False
+        self.sections: dict[str, ui.column] = {}
+        self.actions = _ActionsState()
+        self.border_class = ""
+
+    def build(self) -> None:
+        model = _header_model(self.iteration, self.context)
+        self.header_model = model
+        self.border_class = model.border_class
+        with ui.expansion(icon="science").classes(f"w-full mb-2 {model.border_class}") as expansion:
+            with expansion.add_slot("header"):
+                self.header_box = ui.column().classes("w-full")
+                with self.header_box:
+                    _render_iteration_header(
+                        self.iteration,
+                        model.text,
+                        model.code_count,
+                        model.search_count,
+                        model.finding_count,
+                        model.hypothesis_count,
+                    )
+            self.content_box = ui.column().classes("w-full")
+            with self.content_box:
+                ui.label("Click to load details...").classes("text-sm text-gray-400 italic")
+            expansion.on_value_change(self._on_value_change)
+        self.expansion = expansion
+
+    def _on_value_change(self, e: ValueChangeEventArguments[bool]) -> Awaitable[None] | None:
+        if e.value and (not self.body_loaded or self.body_stale):
+            return self._load_body()
+        return None
+
+    async def _load_body(self) -> None:
+        """Load the body once, or again when a tick marked it stale. The
+        flags are set before the awaits so a close and reopen while the load
+        is pending does not load it twice."""
+        if self.body_loaded and not self.body_stale:
+            return
+        self.body_loaded = True
+        self.body_stale = False
+        try:
+            first_actions = await self.log.actions(0)
+            searches = await self.log.searches()
+        except BaseException:
+            self.body_loaded = False
+            raise
+        if self.content_box is None or self.content_box.is_deleted:
+            return
+        await self._fill_body(first_actions, searches)
+
+    async def _fill_body(
+        self, first_actions: list[dict[str, Any]], searches: list[dict[str, Any]]
+    ) -> None:
+        self.body_model = _body_model(self.iteration, self.context, None, True)
+        content_box = self.content_box
+        if content_box is None:
+            return
+        content_box.clear()
+        self.sections = {}
+        self.actions = _ActionsState()
+        with content_box:
+            for name in ("summary", "hypotheses", "findings", "actions", "plots", "literature"):
+                self.sections[name] = ui.column().classes("w-full")
+        ks = self.context.ks_data or {}
+        summary_box = self.sections["summary"]
+        hypotheses_box = self.sections["hypotheses"]
+        findings_box = self.sections["findings"]
+        actions_box = self.sections["actions"]
+        plots_box = self.sections["plots"]
+        literature_box = self.sections["literature"]
+        with summary_box:
+            _render_summary_section(self.body_model.summary_text)
+        with hypotheses_box:
+            _render_iteration_hypotheses(ks, self.iteration)
+        with findings_box:
+            _render_iteration_findings(ks, self.iteration)
+        await _render_analysis_log_actions(
+            actions_box, self.body_model.action_total, first_actions, self.log, self.actions
+        )
+        if content_box.is_deleted:
+            return
+        with plots_box:
+            _render_iteration_plots(self.context.job_dir / "provenance", self.iteration)
+        with literature_box:
+            _render_iteration_literature(searches, ks, self.iteration)
+
+    def update_header(self, model: _HeaderModel) -> None:
+        """Re-render the header row in place, moving the border when it
+        changes. The expansion itself is untouched, so it stays open."""
+        if self.header_box is None or self.header_box.is_deleted:
+            return
+        self.header_box.clear()
+        with self.header_box:
+            _render_iteration_header(
+                self.iteration,
+                model.text,
+                model.code_count,
+                model.search_count,
+                model.finding_count,
+                model.hypothesis_count,
             )
+        if model.border_class != self.border_class and self.expansion is not None:
+            self.expansion.classes(remove=self.border_class, add=model.border_class)
+            self.border_class = model.border_class
+        self.header_model = model
+
+    async def _update_actions(self, total: int) -> None:
+        """The Actions total and its Show more offer, without touching the
+        shown cards. A body the first load built without log rows skips the
+        section, which a tick creates from the log once actions exist."""
+        actions = self.actions
+        actions.total = total
+        if actions.expansion is None:
+            if not total:
+                return
+            box = self.sections.get("actions")
+            if box is None:
+                return
+            first_actions = await self.log.actions(0)
+            if box.is_deleted:
+                return
+            await _render_analysis_log_actions(box, total, first_actions, self.log, actions)
+            return
+        if not actions.expansion.is_deleted:
+            actions.expansion.text = f"Actions ({total})"
+        if actions.shown >= total:
+            if actions.button is not None and not actions.button.is_deleted:
+                actions.button.delete()
+                actions.button = None
+            return
+        _ensure_show_more(actions, self.log)
+
+    def _rebuild_section(self, name: str, render: Callable[[], None]) -> None:
+        """Clear one section's container and rebuild it from the new model."""
+        box = self.sections.get(name)
+        if box is None or box.is_deleted:
+            return
+        box.clear()
+        with box:
+            render()
+
+    async def refresh_changed_sections(self, new_body: _BodyModel) -> None:
+        """Update the sections of an open card whose model changed. Sections
+        whose model did not change are not touched, and the Actions list is
+        never rebuilt, only its total and its Show more offer."""
+        old_body = self.body_model
+        if old_body is None:
+            return
+        ks = self.context.ks_data or {}
+        if new_body.summary_text != old_body.summary_text:
+            self._rebuild_section("summary", lambda: _render_summary_section(new_body.summary_text))
+        if new_body.hypotheses != old_body.hypotheses:
+            self._rebuild_section(
+                "hypotheses", lambda: _render_iteration_hypotheses(ks, self.iteration)
+            )
+        if new_body.findings != old_body.findings:
+            self._rebuild_section(
+                "findings", lambda: _render_iteration_findings(ks, self.iteration)
+            )
+        if new_body.action_total != old_body.action_total:
+            await self._update_actions(new_body.action_total)
+        if new_body.plot_names != old_body.plot_names:
+            provenance = self.context.job_dir / "provenance"
+            self._rebuild_section(
+                "plots", lambda: _render_iteration_plots(provenance, self.iteration)
+            )
+        if new_body.search_count != old_body.search_count:
+            searches = await self.log.searches()
+            self._rebuild_section(
+                "literature",
+                lambda: _render_iteration_literature(searches, ks, self.iteration),
+            )
+        self.body_model = new_body
+
+
+class _Timeline:
+    """The page's investigation timeline: the cards live for the page's life
+    and the poll applies each change to the cards that own it."""
+
+    def __init__(self, context: _JobDetailContext) -> None:
+        self.context = context
+        self.cards: dict[int, _IterationCard] = {}
+        self.container: ui.scroll_area | None = None
+        self.no_activity: ui.label | None = None
+
+    def _display_max(self) -> int:
+        """The last iteration the page shows, one short while awaiting
+        feedback."""
+        display_max = int((self.context.ks_data or {}).get("iteration", 1))
+        if self.context.job_info.status == JobStatus.AWAITING_FEEDBACK:
+            display_max -= 1
+        return display_max
+
+    def build_initial(self) -> None:
+        if not is_client_connected():
+            return
+        ks = self.context.ks_data
+        if not ks or (not self.context.action_counts and not _timeline_iteration_summaries(ks)):
+            self.no_activity = _show_no_timeline_activity()
+            return
+        container = self._ensure_card_container()
+        with container:
+            for iteration in range(1, self._display_max() + 1):
+                self._ensure_card(iteration)
+
+    def _ensure_card_container(self) -> ui.scroll_area:
+        if self.container is None:
+            self.container = ui.scroll_area().classes("w-full h-[600px]")
+        return self.container
+
+    def _ensure_card(self, iteration: int) -> None:
+        if iteration in self.cards:
+            return
+        if self.no_activity is not None:
+            self.no_activity.delete()
+            self.no_activity = None
+        with self._ensure_card_container():
+            card = _IterationCard(iteration, self.context)
+            self.cards[iteration] = card
+            card.build()
+
+    async def update(self, old_snapshot: _PageSnapshot | None, snapshot: _PageSnapshot) -> None:
+        """Apply one changed tick: a card appears once its iteration has a
+        summary or a log row, headers update in place, the sections of an open
+        card update in place and a closed body is marked stale for its next
+        open."""
+        if not is_client_connected():
+            return
+        ks = self.context.ks_data
+        if not ks:
+            return
+        summaries = _timeline_iteration_summaries(ks)
+        for iteration in range(1, self._display_max() + 1):
+            if iteration not in self.cards and (
+                self.context.action_counts.get(iteration) or iteration in summaries
+            ):
+                self._ensure_card(iteration)
+        if self.container is None:
+            return
+        plots_changed = old_snapshot is None or snapshot.plot_names != old_snapshot.plot_names
+        for card in self.cards.values():
+            if card.expansion is None or card.expansion.is_deleted:
+                continue
+            new_header = _header_model(card.iteration, self.context)
+            if new_header != card.header_model:
+                card.update_header(new_header)
+            if card.body_loaded and card.body_model is not None:
+                new_body = _body_model(card.iteration, self.context, card.body_model, plots_changed)
+                if new_body != card.body_model:
+                    if card.expansion.value:
+                        await card.refresh_changed_sections(new_body)
+                    else:
+                        card.body_stale = True

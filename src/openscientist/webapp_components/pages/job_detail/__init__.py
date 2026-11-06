@@ -22,16 +22,20 @@ from openscientist.webapp_components.components.notifications import (
 from openscientist.webapp_components.error_handler import get_user_friendly_error
 from openscientist.webapp_components.pages.job_detail.chat import _render_chat_tab
 from openscientist.webapp_components.pages.job_detail.common import (
-    ActionCounts,
     _chat_tab_tooltip,
     _derive_progress_from_ks,
     _JobDetailContext,
     _load_knowledge_state,
-    _logged_actions,
+    _page_snapshot,
+    _PageSnapshot,
     _report_tab_tooltip,
 )
 from openscientist.webapp_components.pages.job_detail.report import _render_report_tab
-from openscientist.webapp_components.pages.job_detail.timeline import _render_timeline_tab
+from openscientist.webapp_components.pages.job_detail.timeline import (
+    _render_timeline_tab,
+    _stats_model,
+    _StatsModel,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -93,15 +97,15 @@ def _job_page_title(job_info: Any) -> str:
 
 
 def _initial_job_state(
-    job_info: Any, ks_data: dict[str, Any] | None, action_counts: ActionCounts
+    job_info: JobInfo, stats_model: _StatsModel, snapshot: _PageSnapshot | None
 ) -> dict[str, Any]:
+    """The per-client state of the job page, one entry per polled value the
+    page compares before redrawing. The snapshot is the tick's baseline, the
+    probe the page ran while it was built."""
     return {
         "status": job_info.status,
-        "iteration": ks_data.get("iteration", 0) if ks_data else 0,
-        "findings_count": job_info.findings_count,
-        "papers_count": len(ks_data.get("literature", [])) if ks_data else 0,
-        "log_entries": _logged_actions(action_counts),
-        "agent_status": ks_data.get("agent_status") if ks_data else None,
+        "stats_model": stats_model,
+        "snapshot": snapshot,
     }
 
 
@@ -139,6 +143,8 @@ async def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
         ks_data, db_job.status, db_job.current_iteration
     )
     job_info = JobInfo.from_db_model(db_job, iterations_completed, findings_count)
+    probe = await _page_snapshot(job_id, user_id, job_dir)
+    snapshot = probe[1] if probe is not None else None
     share_dialog, delete_dialog, notifications_dialog = _create_page_dialogs(
         job_id,
         job_manager,
@@ -151,7 +157,6 @@ async def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
         user_id=user_id,
         job_manager=job_manager,
         job_info=job_info,
-        db_job=db_job,
         is_owner=is_owner,
         can_edit=can_edit,
         owner_name=owner_name,
@@ -159,14 +164,14 @@ async def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
         ks_data=ks_data,
         action_counts=action_counts,
         ks_load_error=ks_load_error,
-        state=_initial_job_state(job_info, ks_data, action_counts),
+        state=_initial_job_state(job_info, _stats_model(job_info, ks_data), snapshot),
         share_dialog=share_dialog,
         delete_dialog=delete_dialog,
         notifications_dialog=notifications_dialog,
     )
 
 
-def _render_cancelled_notice(job_info: Any) -> None:
+def _render_cancelled_notice(job_info: JobInfo) -> None:
     with ui.card().classes("w-full bg-orange-50 border border-orange-300 mb-4 p-4"):
         ui.label("Job Cancelled").classes("text-subtitle2 font-bold text-orange-800")
         ui.label(job_info.cancellation_reason or "No reason provided").classes("text-orange-700")

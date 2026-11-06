@@ -1,4 +1,4 @@
-"""Shared context and knowledge-state loaders for the job detail page."""
+"""Shared context, knowledge-state loaders and the poll's snapshot for the job detail page."""
 
 import logging
 from dataclasses import dataclass
@@ -8,19 +8,19 @@ from uuid import UUID
 
 from nicegui import ui
 
+from openscientist.database.models.job import Job as JobModel
 from openscientist.database.session import thread_safe_user_session
 from openscientist.job.types import JobStatus, completed_iterations
+from openscientist.job_files import list_job_files
 from openscientist.knowledge_state import KnowledgeState
-from openscientist.knowledge_state_db import analysis_log_action_counts
+from openscientist.knowledge_state_db import (
+    JobPageSnapshot,
+    analysis_log_action_counts,
+    job_page_snapshot,
+)
 
 #: How many analysis log rows of each action type each iteration holds.
 ActionCounts = dict[int, dict[str, int]]
-
-
-def _logged_actions(counts: ActionCounts) -> int:
-    """How many analysis log rows the whole job holds."""
-    return sum(sum(by_action.values()) for by_action in counts.values())
-
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,31 @@ async def _load_knowledge_state(
         return None, {}, "Knowledge state is unavailable. Please refresh the page."
 
 
+@dataclass(frozen=True)
+class _PageSnapshot:
+    """What the page compares across ticks: the database's job probe plus the
+    job's plot files, which the database never sees."""
+
+    job: JobPageSnapshot
+    plot_names: tuple[str, ...]
+
+
+async def _page_snapshot(
+    job_id: str, user_id: str, job_dir: Path
+) -> tuple[JobModel, _PageSnapshot] | None:
+    """The page's per-tick change probe, read as the page's viewer, or None
+    once the caller may no longer see the job."""
+    async with thread_safe_user_session(UUID(user_id)) as session:
+        probe = await job_page_snapshot(session, UUID(job_id))
+    if probe is None:
+        return None
+    job_row, db_snapshot = probe
+    plot_names = tuple(
+        name for name in list_job_files(job_dir, "provenance") if name.endswith((".png", ".json"))
+    )
+    return job_row, _PageSnapshot(job=db_snapshot, plot_names=plot_names)
+
+
 def _render_access_lost() -> None:
     """The page body once the caller can no longer view the job."""
     with ui.column().classes("w-full items-center mt-16 gap-4"):
@@ -88,7 +113,6 @@ class _JobDetailContext:
     user_id: str
     job_manager: Any
     job_info: Any
-    db_job: Any
     is_owner: bool
     can_edit: bool
     owner_name: str | None

@@ -1,12 +1,11 @@
 """Research Log tab: stats badges, timeline content and polling."""
 
 from typing import Any
-from uuid import UUID
 
 from nicegui import ui
+from nicegui.functions.refreshable import refreshable
 
 from openscientist.agent.factory import agent_class_for_provider_id
-from openscientist.job.repository import get_job
 from openscientist.job.types import JobInfo, JobStatus
 from openscientist.run_environment import run_environment_text
 from openscientist.webapp_components.components.common import (
@@ -16,22 +15,22 @@ from openscientist.webapp_components.components.common import (
 )
 from openscientist.webapp_components.components.job_table import render_job_action_buttons
 from openscientist.webapp_components.pages.job_detail.common import (
-    ActionCounts,
     _derive_progress_from_ks,
     _JobDetailContext,
     _load_knowledge_state,
-    _logged_actions,
+    _page_snapshot,
+    _PageSnapshot,
     _render_access_lost,
 )
 from openscientist.webapp_components.pages.job_detail.feedback import _refresh_feedback_panel
-from openscientist.webapp_components.pages.job_detail.iterations import (
-    _render_timeline_content,
-    _show_no_timeline_activity,
-)
+from openscientist.webapp_components.pages.job_detail.iterations import _Timeline
 from openscientist.webapp_components.utils import (
     is_client_connected,
     session_checked_timer,
 )
+
+#: The stats card's rendered values, its badges and the live status line.
+_StatsModel = tuple[tuple[tuple[str, str | int, str], ...], str | None]
 
 
 def _provider_display_name(provider_id: str) -> str:
@@ -66,9 +65,13 @@ def _format_model_name(llm_model: str | None) -> str | None:
     return llm_model
 
 
-def _stats_badges(latest_job: Any, lit_count: int, hyp_count: int = 0) -> list[Any]:
+def _stats_badges(
+    latest_job: Any, lit_count: int, hyp_count: int = 0
+) -> list[tuple[str, str | int, str]]:
     status_color = STATUS_COLORS.get(latest_job.status, "gray")
-    badges = [("Status", latest_job.status.value.replace("_", " "), status_color)]
+    badges: list[tuple[str, str | int, str]] = [
+        ("Status", latest_job.status.value.replace("_", " "), status_color)
+    ]
     queue_reason = getattr(latest_job, "queue_reason", None)
     if latest_job.status == JobStatus.QUEUED and queue_reason:
         badges.append(("Waiting on", queue_reason, "orange"))
@@ -123,9 +126,6 @@ def _render_job_stats_content(context: _JobDetailContext) -> None:
         return
 
     latest_job = context.job_info
-    if latest_job is None:
-        return
-
     latest_ks = context.ks_data
     lit_count = len(latest_ks.get("literature", [])) if latest_ks else 0
     hyp_count = len(latest_ks.get("hypotheses", [])) if latest_ks else 0
@@ -144,6 +144,10 @@ def _render_job_stats_content(context: _JobDetailContext) -> None:
             render_thinking_status(status_line)
 
 
+def _open_dialog(dialog: ui.dialog) -> None:
+    dialog.open()
+
+
 def _render_research_question_card(context: _JobDetailContext) -> None:
     with ui.card().classes("w-full mb-4"), ui.row().classes("w-full items-start justify-between"):
         with ui.column().classes("flex-1"):
@@ -159,59 +163,27 @@ def _render_research_question_card(context: _JobDetailContext) -> None:
                     )
                     ui.label(consensus).classes("text-emerald-900 mt-1")
 
+        on_share = (
+            (lambda: _open_dialog(context.share_dialog))
+            if context.is_owner and context.share_dialog is not None
+            else None
+        )
+        on_delete = (lambda: _open_dialog(context.delete_dialog)) if context.is_owner else None
         render_job_action_buttons(
-            on_share=context.share_dialog.open if context.is_owner else None,
-            on_delete=context.delete_dialog.open if context.is_owner else None,
-            on_notifications=context.notifications_dialog.open,
+            on_share=on_share,
+            on_delete=on_delete,
+            on_notifications=lambda: _open_dialog(context.notifications_dialog),
         )
 
 
-def _render_timeline_content_for_context(context: _JobDetailContext) -> None:
-    if not is_client_connected():
-        return
-
-    timeline_ks = context.ks_data
-    latest_job = context.job_info
-    if not timeline_ks or not latest_job:
-        _show_no_timeline_activity()
-        return
-
-    _render_timeline_content(
-        timeline_ks=timeline_ks,
-        action_counts=context.action_counts,
-        latest_job=latest_job,
-        job_dir=context.job_dir,
-        job_id=context.job_id,
-        user_id=context.user_id,
+def _stats_model(latest_job: JobInfo, latest_ks: dict[str, Any] | None) -> _StatsModel:
+    """The stats card's rendered values, compared across ticks so the card
+    refreshes when a badge or the status line would actually change."""
+    lit_count = len(latest_ks.get("literature", [])) if latest_ks else 0
+    hyp_count = len(latest_ks.get("hypotheses", [])) if latest_ks else 0
+    return tuple(_stats_badges(latest_job, lit_count, hyp_count)), _status_line_for(
+        latest_job, latest_ks
     )
-
-
-def _state_snapshot(
-    latest_job: Any, latest_ks: dict[str, Any] | None, action_counts: ActionCounts
-) -> dict[str, Any]:
-    return {
-        "findings_count": latest_job.findings_count,
-        "papers_count": len(latest_ks.get("literature", [])) if latest_ks else 0,
-        "iteration": latest_ks.get("iteration", 0) if latest_ks else 0,
-        "log_entries": _logged_actions(action_counts),
-        "agent_status": latest_ks.get("agent_status") if latest_ks else None,
-    }
-
-
-def _stats_changed(state: dict[str, Any], snapshot: dict[str, Any]) -> bool:
-    return bool(
-        state["findings_count"] != snapshot["findings_count"]
-        or state["papers_count"] != snapshot["papers_count"]
-        or state["iteration"] != snapshot["iteration"]
-        or state["agent_status"] != snapshot["agent_status"]
-    )
-
-
-def _update_state_fields(state: dict[str, Any], snapshot: dict[str, Any]) -> None:
-    state["findings_count"] = snapshot["findings_count"]
-    state["papers_count"] = snapshot["papers_count"]
-    state["iteration"] = snapshot["iteration"]
-    state["agent_status"] = snapshot["agent_status"]
 
 
 def _reload_required_statuses() -> list[JobStatus]:
@@ -233,7 +205,7 @@ def _polling_statuses() -> list[JobStatus]:
     ]
 
 
-def _stop_status_poll(stats_timer_holder: dict[str, Any]) -> None:
+def _stop_status_poll(stats_timer_holder: dict[str, ui.timer | None]) -> None:
     """Deactivate the status poll's timer if it is running."""
     timer = stats_timer_holder.get("timer")
     if timer:
@@ -241,7 +213,7 @@ def _stop_status_poll(stats_timer_holder: dict[str, Any]) -> None:
 
 
 def _handle_access_lost_during_poll(
-    context: _JobDetailContext, stats_timer_holder: dict[str, Any]
+    context: _JobDetailContext, stats_timer_holder: dict[str, ui.timer | None]
 ) -> None:
     """Stop the poll and replace the page with the access-lost notice."""
     _stop_status_poll(stats_timer_holder)
@@ -251,54 +223,52 @@ def _handle_access_lost_during_poll(
     _render_access_lost()
 
 
-def _handle_status_transition(
+async def _check_and_refresh(
     context: _JobDetailContext,
-    latest_job: Any,
-    stats_timer_holder: dict[str, Any],
-    render_job_stats: Any,
+    render_job_stats: refreshable[[], None],
+    timeline: _Timeline,
+    stats_timer_holder: dict[str, ui.timer | None],
 ) -> None:
-    if latest_job.status == context.state["status"]:
+    probe = await _page_snapshot(context.job_id, context.user_id, context.job_dir)
+    if probe is None:
+        _handle_access_lost_during_poll(context, stats_timer_holder)
         return
-    context.state["status"] = latest_job.status
-    if latest_job.status in _reload_required_statuses():
+    db_job, snapshot = probe
+
+    old_snapshot: _PageSnapshot | None = context.state["snapshot"]
+    if snapshot == old_snapshot:
+        return
+
+    if snapshot.job.status in _reload_required_statuses():
+        context.state["status"] = snapshot.job.status
         _stop_status_poll(stats_timer_holder)
         ui.navigate.to(f"/job/{context.job_id}")
         return
-    render_job_stats.refresh()
 
-
-async def _check_and_refresh(
-    context: _JobDetailContext,
-    render_job_stats: Any,
-    render_timeline: Any,
-    stats_timer_holder: dict[str, Any],
-) -> None:
-    db_job = await get_job(context.job_id, user_id=UUID(context.user_id))
-    if db_job is None:
-        _handle_access_lost_during_poll(context, stats_timer_holder)
-        return
+    if snapshot.job.status != context.state["status"]:
+        context.state["status"] = snapshot.job.status
 
     latest_ks, action_counts, _ = await _load_knowledge_state(context.job_id, context.user_id)
+    if latest_ks is None:
+        return
 
-    iters, findings = _derive_progress_from_ks(latest_ks, db_job.status, db_job.current_iteration)
+    iters, findings = _derive_progress_from_ks(
+        latest_ks, snapshot.job.status, snapshot.job.current_iteration
+    )
     latest_job = JobInfo.from_db_model(db_job, iters, findings)
-
-    snapshot = _state_snapshot(latest_job, latest_ks, action_counts)
 
     # Update context before calling .refresh() so refreshables read fresh data
     context.ks_data = latest_ks
     context.action_counts = action_counts
     context.job_info = latest_job
 
-    if _stats_changed(context.state, snapshot):
-        _update_state_fields(context.state, snapshot)
+    stats_model = _stats_model(latest_job, latest_ks)
+    if stats_model != context.state["stats_model"]:
+        context.state["stats_model"] = stats_model
         render_job_stats.refresh()
 
-    if snapshot["log_entries"] > context.state["log_entries"]:
-        context.state["log_entries"] = snapshot["log_entries"]
-        render_timeline.refresh()
-
-    _handle_status_transition(context, latest_job, stats_timer_holder, render_job_stats)
+    await timeline.update(old_snapshot, snapshot)
+    context.state["snapshot"] = snapshot
 
 
 async def _render_timeline_tab(context: _JobDetailContext) -> None:
@@ -306,14 +276,11 @@ async def _render_timeline_tab(context: _JobDetailContext) -> None:
     def render_job_stats() -> None:
         _render_job_stats_content(context)
 
-    @ui.refreshable
-    def render_timeline() -> None:
-        _render_timeline_content_for_context(context)
-
     render_job_stats()
     _render_research_question_card(context)
     ui.label("Investigation Timeline").classes("text-h6 font-bold mb-2")
-    render_timeline()
+    timeline = _Timeline(context)
+    timeline.build_initial()
 
     feedback_container = ui.column().classes("w-full")
     await _refresh_feedback_panel(
@@ -326,10 +293,10 @@ async def _render_timeline_tab(context: _JobDetailContext) -> None:
         ks_data=context.ks_data,
     )
 
-    stats_timer_holder: dict[str, Any] = {"timer": None}
+    stats_timer_holder: dict[str, ui.timer | None] = {"timer": None}
 
     async def check_and_refresh() -> None:
-        await _check_and_refresh(context, render_job_stats, render_timeline, stats_timer_holder)
+        await _check_and_refresh(context, render_job_stats, timeline, stats_timer_holder)
 
     if context.job_info.status in _polling_statuses():
         stats_timer_holder["timer"] = session_checked_timer(2.0, check_and_refresh, context.user_id)
