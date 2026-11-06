@@ -1,5 +1,5 @@
-"""The Font Awesome icons the admin Settings fields show in their prepend
-slots, and the vendored stylesheets and webfont the page loads for them."""
+"""The Font Awesome icons the admin Settings fields show left of their
+inputs, and the vendored stylesheets and webfont the page loads for them."""
 
 from __future__ import annotations
 
@@ -136,30 +136,19 @@ async def settings_admin(test_engine: AsyncEngine) -> AsyncIterator[tuple[User, 
         await db.commit()
 
 
-def _switch_label_and_icon(switch: ui.switch) -> tuple[str | None, list[str]]:
-    """The switch's label and the icon names before it, in render order.
-    Icons after the label do not count, so a moved or missing icon fails the
-    test that compares against the expected table."""
-    labels: list[ui.label] = []
-    icons_before: list[str] = []
-
-    def _walk(children: list) -> None:
-        for child in children:
-            if isinstance(child, ui.icon):
-                if not labels:
-                    icons_before.append(child.name)
-            elif isinstance(child, ui.label):
-                labels.append(child)
-            elif isinstance(child, ui.row):
-                _walk(child.default_slot.children)
-
-    _walk(switch.default_slot.children)
-    return (labels[0].text if labels else None, icons_before)
+def _icons_left_of(switch: ui.switch) -> list[str]:
+    """The icon names rendered before the switch in its row, so an icon moved
+    to the right of the toggle or into its label does not count."""
+    assert switch.parent_slot is not None
+    siblings = switch.parent_slot.children
+    before = siblings[: siblings.index(switch)]
+    return [child.name for child in before if isinstance(child, ui.icon)]
 
 
-def _prepend_icons(client: Client) -> dict[str, str]:
+def _field_icons(client: Client) -> dict[str, str]:
     """The icon name of each settings field, keyed by column. Number fields
-    show it in the input's prepend slot, the switch before its label."""
+    show it in the slot before the input's border, the switch left of the
+    toggle."""
     labels: dict[str, str] = {
         (f"{label} ({unit})" if unit else label): column
         for column, label, unit, *_ in settings_panel._FIELDS
@@ -167,44 +156,35 @@ def _prepend_icons(client: Client) -> dict[str, str]:
     labels["Air-gap"] = settings_panel._AIRGAP[0]
     found: dict[str, str] = {}
     for element in client.elements.values():
-        if isinstance(element, ui.number):
-            name: str | None = element.label
-            slot_name = "prepend"
-        elif isinstance(element, ui.switch):
-            name, icon_names = _switch_label_and_icon(element)
-            if name is None or not icon_names:
+        if isinstance(element, ui.switch):
+            column = labels.get(element.text)
+            icons = _icons_left_of(element)
+            if column is not None and icons:
+                found[column] = icons[0]
+        elif isinstance(element, ui.number) and element.label is not None:
+            column = labels.get(element.label)
+            slot = element.slots.get("before")
+            if column is None or slot is None:
                 continue
-            column = labels.get(name)
-            if column is not None:
-                found[column] = icon_names[0]
-            continue
-        else:
-            continue
-        column = labels.get(name) if name is not None else None
-        if column is None:
-            continue
-        slot = element.slots.get(slot_name)
-        if slot is None:
-            continue
-        for child in slot.children:
-            if isinstance(child, ui.icon):
-                found[column] = child.name
+            for child in slot.children:
+                if isinstance(child, ui.icon):
+                    found[column] = child.name
     return found
 
 
 @pytest.mark.asyncio
-async def test_the_settings_panel_prepend_holds_every_field_icon(
+async def test_every_settings_field_shows_its_icon_left_of_the_input(
     database: Forwarder,
     test_engine: AsyncEngine,
     settings_admin: tuple[User, str],
     served_page: ServedPage,
 ) -> None:
-    """Each field shows the design's icon in the input's prepend slot, the
-    air-gap switch before its label, and no field shows an icon of its own or
-    none at all."""
+    """Each field shows the design's icon outside the input's border, the
+    air-gap switch left of its toggle, and no field shows an icon of its own
+    or none at all."""
     _, _token = settings_admin
     await set_admin_settings_row(test_engine)
-    _, sent = await served_page(_token, settings_panel.render_settings_panel, _prepend_icons)
+    _, sent = await served_page(_token, settings_panel.render_settings_panel, _field_icons)
     assert sent == _EXPECTED_ICONS
 
 

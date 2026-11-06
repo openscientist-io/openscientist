@@ -60,8 +60,8 @@ _FIELDS: tuple[tuple[str, str, str, str, str], ...] = (
 )
 _AIRGAP = ("airgapped", "Air-gap")
 
-# The Font Awesome Free solid class for each field's prepend icon. Every
-# _FIELDS column and the air-gap switch must have an entry.
+# The Font Awesome Free solid class for each field's icon, shown left of the
+# input. Every _FIELDS column and the air-gap switch must have an entry.
 _FIELD_ICONS: dict[str, str] = {
     "max_job_cost_usd": "fa-solid fa-sack-dollar",
     "max_project_spend_total_usd": "fa-solid fa-vault",
@@ -86,6 +86,12 @@ _FONTAWESOME_HEAD_HTML = (
     '<link rel="stylesheet" href="/fa/css/fontawesome.min.css">\n'
     '<link rel="stylesheet" href="/fa/css/solid.min.css">'
 )
+
+
+def _setting_icon(column: str) -> ui.icon:
+    """A field's icon, at the size and in the colour of the input's text."""
+    return ui.icon(_FIELD_ICONS[column], size="16px").style("color: rgba(0, 0, 0, 0.87)")
+
 
 _LABELS = {column: label for column, label, *_ in (*_FIELDS, _AIRGAP)}
 _INT_COLUMNS = {column for column, *_, kind in _FIELDS if kind == "int"}
@@ -182,8 +188,9 @@ def _render_setting_field(
         else:
             field = ui.number(label=name, value=value, min=0)
         field.props("outlined dense")
-        with field.add_slot("prepend"):
-            ui.icon(_FIELD_ICONS[column])
+        # The before slot sits outside the outlined border, left of the input.
+        with field.add_slot("before"):
+            _setting_icon(column)
         numbers[column] = field.classes("w-full")
         if kind == "budget":
             no_limit[column] = (
@@ -330,13 +337,9 @@ async def _render_settings(container: ui.column) -> None:
 
             ui.label("Connection").classes("text-subtitle2 font-bold text-gray-700 mt-4")
             with ui.row().classes("w-full items-start gap-4"):
-                switch = ui.switch(value=current.airgapped)
-                with switch:
-                    # The block-level label would wrap below the icon, so the
-                    # two share one inline row, centred with the toggle.
-                    with ui.row().classes("items-center gap-1"):
-                        ui.icon(_FIELD_ICONS[_AIRGAP[0]])
-                        ui.label("Air-gap")
+                with ui.row().classes("items-center gap-1"):
+                    _setting_icon(_AIRGAP[0])
+                    switch = ui.switch("Air-gap", value=current.airgapped)
                 with ui.column().classes("gap-0"):
                     ui.label(_description_for("airgapped")).classes("text-xs text-gray-500")
                     if current.airgap_locked:
