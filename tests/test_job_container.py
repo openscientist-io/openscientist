@@ -393,6 +393,50 @@ class TestTeardownWhenTheLauncherFails:
         client.remove.assert_called_once_with("u" * 64)
         agent_login.closed.assert_called_once_with(unheld)
 
+    def test_a_relaunch_goes_ahead_when_the_stale_check_fails(self, agent_login) -> None:
+        """The create call answers for the launcher, so a failed lookup of a
+        stale container does not stop the launch."""
+        runner, client = _runner_with_client()
+        client.list_containers.side_effect = _UNREACHABLE
+        a, b = TestContainerDatabaseLogin()._launch_patches()
+        with a, b:
+            handle = runner.launch("job-123", Path("/app/jobs/job-123"))
+        assert handle["short_id"] == "abc123"
+        client.remove.assert_not_called()
+
+    def test_the_exit_code_reads_as_running_when_the_lookup_fails(self) -> None:
+        runner, client = _runner_with_client()
+        client.list_containers.side_effect = _UNREACHABLE
+        assert runner.get_exit_code("job-123") is None
+        client.inspect.assert_not_called()
+
+    def test_the_reaper_leaves_everything_when_the_launcher_cannot_list(self, agent_login) -> None:
+        runner, client = _runner_with_client()
+        client.list_containers.side_effect = _UNREACHABLE
+        runner.remove_unheld_containers()
+        client.stop.assert_not_called()
+        agent_login.closed.assert_not_called()
+
+    def test_a_teardown_ends_the_run_when_logs_and_removal_fail(
+        self, agent_login, tmp_path: Path
+    ) -> None:
+        """The run's login goes even when the logs cannot be saved and the
+        container cannot be removed, so the reaper only has the container left."""
+        runner, client = _runner_with_client()
+        client.list_containers.return_value = [_listed_entry({AGENT_LOGIN_LABEL: _LOGIN.role})]
+        client.logs.side_effect = LauncherDockerError("docker", "logs failed")
+        client.remove.side_effect = LauncherDockerError("docker", "remove failed")
+        runner.cleanup("job-123", tmp_path)
+        assert not (tmp_path / "agent-container.log").exists()
+        agent_login.closed.assert_called_once_with(_LOGIN.role)
+
+    def test_a_teardown_ends_the_run_of_a_container_already_gone(self, agent_login) -> None:
+        runner, client = _runner_with_client()
+        client.list_containers.return_value = [_listed_entry({AGENT_LOGIN_LABEL: _LOGIN.role})]
+        client.remove.side_effect = LauncherNotFoundError("not_found", "container not found")
+        runner.cleanup("job-123")
+        agent_login.closed.assert_called_once_with(_LOGIN.role)
+
 
 class TestJobContainerRunner:
     """Tests for JobContainerRunner."""

@@ -62,8 +62,6 @@ _STATUS_TO_ERROR: dict[int, type[LauncherError]] = {
 
 def _failure(exc: httpx.HTTPError, timeout: float) -> str:
     """What went wrong with a request that got no answer, for the error message."""
-    if isinstance(exc, httpx.ConnectTimeout):
-        return f"could not be reached within {timeout:g}s"
     if isinstance(exc, httpx.TimeoutException):
         return f"did not answer within {timeout:g}s"
     return "could not be reached"
