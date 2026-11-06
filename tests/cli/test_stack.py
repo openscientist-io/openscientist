@@ -167,9 +167,9 @@ def test_image_tags_come_from_the_env_file(checkout: Path, monkeypatch: pytest.M
         "openscientist-executor:staging",
         "openscientist-agent:staging",
     ]
-    owner = stack.envfiles.file_values(checkout, "owner")
-    assert owner["AGENT_IMAGE_DIGESTS"] == "sha256:" + "e" * 64
-    assert owner["EXECUTOR_IMAGE_DIGESTS"] == "sha256:" + "e" * 64
+    env = stack.envfiles.file_values(checkout, "env")
+    assert env["AGENT_IMAGE_DIGESTS"] == "sha256:" + "e" * 64
+    assert env["EXECUTOR_IMAGE_DIGESTS"] == "sha256:" + "e" * 64
 
 
 def test_image_tags_fall_back_to_latest_when_unset_or_empty(
@@ -193,9 +193,9 @@ def test_image_tags_fall_back_to_latest_when_unset_or_empty(
         "openscientist-executor:latest",
         "openscientist-agent:latest",
     ]
-    owner = stack.envfiles.file_values(checkout, "owner")
-    assert owner["AGENT_IMAGE_DIGESTS"] == "sha256:" + "d" * 64
-    assert owner["EXECUTOR_IMAGE_DIGESTS"] == "sha256:" + "d" * 64
+    env = stack.envfiles.file_values(checkout, "env")
+    assert env["AGENT_IMAGE_DIGESTS"] == "sha256:" + "d" * 64
+    assert env["EXECUTOR_IMAGE_DIGESTS"] == "sha256:" + "d" * 64
 
 
 def test_start_stops_at_the_first_failing_build(checkout: Path, monkeypatch):
