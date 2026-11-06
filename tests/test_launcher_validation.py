@@ -11,6 +11,7 @@ from typing import Any, cast
 import pytest
 
 from openscientist_launcher.config import LauncherConfig
+from openscientist_launcher.host_paths import jobs_root_problem
 from openscientist_launcher.templates import agent_run_kwargs, executor_run_kwargs
 from openscientist_launcher.validation import (
     AGENT_ENV_ALLOWLIST,
@@ -514,6 +515,74 @@ class TestAgentTemplate:
         launch = validate_agent_request(_agent_request(), cfg)
         kwargs = agent_run_kwargs(cfg, launch, network="bridge")
         assert "OPENSCIENTIST_RUN_HOME" not in kwargs["environment"]
+
+
+class TestSymlinkedPathsRefused:
+    """The daemon follows a symlink it is given as a bind source, so the
+    launcher refuses to hand one to it."""
+
+    def _symlinked_job_dir(self, tmp_path: Path) -> Path:
+        jobs = _jobs(tmp_path)
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (jobs / JOB_ID).rmdir()
+        (jobs / JOB_ID).symlink_to(outside, target_is_directory=True)
+        return jobs
+
+    def test_symlinked_job_directory_refused(self, tmp_path: Path) -> None:
+        jobs = self._symlinked_job_dir(tmp_path)
+        with pytest.raises(ValidationError, match="not a real directory"):
+            validate_agent_request(_agent_request(), _config(jobs))
+
+    def test_symlinked_job_directory_refused_for_exec(self, tmp_path: Path) -> None:
+        jobs = self._symlinked_job_dir(tmp_path)
+        body = {
+            "job_id": JOB_ID,
+            "timeout_seconds": 60,
+            "memory_mib": 1024,
+            "cpu": 0.5,
+            "egress_allow": ["openscientist:8081"],
+            "input": {
+                "code": "print(1)",
+                "language": "python",
+                "output_dir": str(jobs / JOB_ID / "out"),
+                "timeout": 30,
+                "iteration": 0,
+            },
+        }
+        with pytest.raises(ValidationError, match="not a real directory"):
+            validate_exec_request(body, _config(jobs))
+
+    def test_run_home_under_a_symlinked_component_refused(self, tmp_path: Path) -> None:
+        jobs = _jobs(tmp_path)
+        job = jobs / JOB_ID
+        (job / "real" / "home").mkdir(parents=True)
+        (job / "link").symlink_to("real", target_is_directory=True)
+        cfg = _config(jobs)
+        with pytest.raises(ValidationError, match="symlink"):
+            validate_agent_request(
+                _agent_request(run_home={"path": str(job / "link" / "home")}), cfg
+            )
+
+    def test_run_home_that_is_a_symlink_refused(self, tmp_path: Path) -> None:
+        jobs = _jobs(tmp_path)
+        job = jobs / JOB_ID
+        (job / "real-home").mkdir()
+        (job / "link").symlink_to("real-home", target_is_directory=True)
+        cfg = _config(jobs)
+        with pytest.raises(ValidationError, match="symlink"):
+            validate_agent_request(_agent_request(run_home={"path": str(job / "link")}), cfg)
+
+    def test_symlinked_jobs_root_refused_at_startup(self, tmp_path: Path) -> None:
+        real = tmp_path / "jobs"
+        real.mkdir()
+        root = tmp_path / "jobs-link"
+        root.symlink_to(real, target_is_directory=True)
+        problem = jobs_root_problem(_config(root), None)
+        assert problem is not None and "symlink" in problem
+
+    def test_real_jobs_root_passes_the_startup_check(self, tmp_path: Path) -> None:
+        assert jobs_root_problem(_config(_jobs(tmp_path)), None) is None
 
 
 def _executor_body(jobs: Path) -> dict[str, object]:
