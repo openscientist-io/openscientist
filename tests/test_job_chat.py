@@ -263,6 +263,22 @@ async def test_get_chat_history_before_pages_older_messages(
 
 
 @pytest.mark.asyncio
+async def test_get_chat_history_after_holds_the_strictly_newer_messages(
+    db_session: AsyncSession,
+    test_user: User,
+    test_job: Job,
+):
+    """A page loaded after a message holds the messages strictly newer than
+    it, oldest of them first."""
+    _ = test_user
+    messages = await _insert_numbered_messages(db_session, test_job, 30)
+
+    newer = await get_chat_history(db_session, test_job.id, limit=10, after=messages[19])
+
+    assert [msg.content for msg in newer] == [f"Message {i}" for i in range(20, 30)]
+
+
+@pytest.mark.asyncio
 async def test_has_older_chat_message(
     db_session: AsyncSession,
     test_user: User,

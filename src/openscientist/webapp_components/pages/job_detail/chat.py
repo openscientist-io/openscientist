@@ -194,6 +194,8 @@ class _ChatTabController:
         self.send_btn: ui.button | None = None
         self.load_earlier_btn: ui.button | None = None
         self._oldest_shown: JobChatMessage | None = None
+        self._newest_shown: JobChatMessage | None = None
+        self._pending_bubbles: list[ui.row] = []
 
     async def render(self) -> None:
         """Build the chat tab, loading the committed history before the page is sent."""
@@ -254,19 +256,20 @@ class _ChatTabController:
             """
         )
 
-    def _render_message_bubble(self, role: str, content: str) -> None:
+    def _render_message_bubble(self, role: str, content: str) -> ui.row:
         if role == "user":
             with (
-                ui.row().classes("w-full justify-end mb-3"),
+                ui.row().classes("w-full justify-end mb-3") as bubble,
                 ui.element("div").classes("chat-bubble-user"),
             ):
                 ui.label(content).classes("text-sm")
-            return
+            return bubble
 
-        with ui.row().classes("items-start gap-2 mb-3"):
+        with ui.row().classes("items-start gap-2 mb-3") as bubble:
             ui.html(_CHAT_AVATAR_HTML)
             with ui.element("div").classes("chat-bubble-assistant"):
                 ui.markdown(content).classes("text-sm")
+        return bubble
 
     def _render_empty_state(self) -> None:
         with ui.column().classes("w-full items-center py-8"):
@@ -292,16 +295,15 @@ class _ChatTabController:
 
     async def _load_chat_messages(
         self,
-        limit: int | None,
         before: JobChatMessage | None = None,
-        since: JobChatMessage | None = None,
+        after: JobChatMessage | None = None,
     ) -> tuple[list[JobChatMessage], bool]:
-        """The newest ``limit`` messages within the window ``before`` and
-        ``since`` mark, and whether anything older than the oldest result exists."""
+        """The newest page of messages within the window ``before`` and
+        ``after`` mark, and whether anything older than the oldest result exists."""
         async with get_session_ctx() as session:
             await set_current_user(session, UUID(self.context.user_id))
             messages = await get_chat_history(
-                session, self.job_uuid, limit=limit, before=before, since=since
+                session, self.job_uuid, limit=_PAGE_SIZE, before=before, after=after
             )
             has_older = bool(messages) and await has_older_chat_message(
                 session, self.job_uuid, messages[0]
@@ -309,17 +311,14 @@ class _ChatTabController:
             return messages, has_older
 
     async def _render_messages(self) -> None:
+        """The first render. The newest page of committed messages, or the
+        empty state when the job holds none."""
         guard = ClientGuard()
         if not guard.is_connected or self.chat_scroll is None:
             return
 
         try:
-            # Once messages are shown, the reload keeps every one of them
-            # and adds whatever is newer.
-            if self._oldest_shown is None:
-                messages, has_older = await self._load_chat_messages(_PAGE_SIZE)
-            else:
-                messages, has_older = await self._load_chat_messages(None, since=self._oldest_shown)
+            messages, has_older = await self._load_chat_messages()
             if not guard.is_connected:
                 return
 
@@ -331,10 +330,41 @@ class _ChatTabController:
                     for message in messages:
                         self._render_message_bubble(message.role, message.content)
             self._oldest_shown = messages[0] if messages else None
+            self._newest_shown = messages[-1] if messages else None
             self._set_load_earlier_visible(has_older)
             self._scroll_to_bottom()
         except Exception as exc:
             logger.error("Failed to load chat history: %s", exc)
+
+    async def _append_new_messages(self) -> None:
+        """After a committed turn, append the messages newer than the newest
+        one shown. Nothing already shown is replaced."""
+        guard = ClientGuard()
+        if not guard.is_connected or self.chat_scroll is None:
+            return
+
+        try:
+            messages, _ = await self._load_chat_messages(after=self._newest_shown)
+            if not guard.is_connected or not messages:
+                return
+
+            # The bubbles a send showed before its turn was committed give way
+            # to the committed rows, which arrive in this window.
+            for bubble in self._pending_bubbles:
+                if not bubble.is_deleted:
+                    bubble.delete()
+            self._pending_bubbles = []
+            if self._newest_shown is None:
+                # The first turn replaces the empty state.
+                self.chat_scroll.clear()
+                self._oldest_shown = messages[0]
+            with self.chat_scroll:
+                for message in messages:
+                    self._render_message_bubble(message.role, message.content)
+            self._newest_shown = messages[-1]
+            self._scroll_to_bottom()
+        except Exception as exc:
+            logger.error("Failed to append new chat messages: %s", exc)
 
     async def _load_earlier(self) -> None:
         """Load the page of messages older than the oldest one shown."""
@@ -343,7 +373,7 @@ class _ChatTabController:
         self.load_earlier_btn.disable()
         guard = ClientGuard()
         try:
-            messages, has_older = await self._load_chat_messages(_PAGE_SIZE, self._oldest_shown)
+            messages, has_older = await self._load_chat_messages(before=self._oldest_shown)
         finally:
             self.load_earlier_btn.enable()
         if not guard.is_connected or self.chat_scroll is None:
@@ -428,7 +458,7 @@ class _ChatTabController:
         self._play_sound("sound-send")
         self._clear_input(guard)
         with self.chat_scroll:
-            self._render_message_bubble("user", message)
+            self._pending_bubbles.append(self._render_message_bubble("user", message))
         self._toggle_typing_indicator(True)
         self._scroll_to_bottom()
 
@@ -438,7 +468,7 @@ class _ChatTabController:
                 return
             self._toggle_typing_indicator(False)
             self._play_sound("sound-receive")
-            await self._render_messages()
+            await self._append_new_messages()
         except BudgetExceededError as exc:
             logger.warning("Chat turn refused by a budget limit: %s", exc)
             if guard.is_connected:

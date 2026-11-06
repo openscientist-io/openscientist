@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, not_, or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -189,12 +189,24 @@ def _older_than(message: JobChatMessage) -> ColumnElement[bool]:
     )
 
 
+def _newer_than(message: JobChatMessage) -> ColumnElement[bool]:
+    """The condition for a chat message strictly newer than ``message``, the
+    id breaking the ties of rows committed in one transaction."""
+    return or_(
+        JobChatMessage.created_at > message.created_at,
+        and_(
+            JobChatMessage.created_at == message.created_at,
+            JobChatMessage.id > message.id,
+        ),
+    )
+
+
 async def get_chat_history(
     session: AsyncSession,
     job_id: UUID,
-    limit: int | None = 50,
+    limit: int = 50,
     before: JobChatMessage | None = None,
-    since: JobChatMessage | None = None,
+    after: JobChatMessage | None = None,
 ) -> list[JobChatMessage]:
     """
     Get the newest chat messages of a job.
@@ -202,9 +214,10 @@ async def get_chat_history(
     Args:
         session: Database session
         job_id: Job ID
-        limit: Maximum number of messages to return, or None for all
+        limit: Maximum number of messages to return
         before: When set, only messages older than this one are returned
-        since: When set, only this message and newer ones are returned
+        after: When set, only messages strictly newer than this one are
+            returned
 
     Returns:
         The newest ``limit`` messages, ordered chronologically, oldest of
@@ -218,8 +231,8 @@ async def get_chat_history(
     )
     if before is not None:
         stmt = stmt.where(_older_than(before))
-    if since is not None:
-        stmt = stmt.where(not_(_older_than(since)))
+    if after is not None:
+        stmt = stmt.where(_newer_than(after))
     result = await session.execute(stmt)
     return list(reversed(result.scalars().all()))
 

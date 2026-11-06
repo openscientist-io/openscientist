@@ -8,11 +8,12 @@ NiceGUI sends it (see ``served_page``).
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -25,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from openscientist import web_app
 from openscientist.database.models import Job, JobChatMessage, Session, User
 from openscientist.job.types import JobStatus
+from openscientist.job_chat import get_chat_history as real_get_chat_history
 from openscientist.webapp_components.pages.job_detail import chat as chat_tab
 from openscientist.webapp_components.pages.job_detail import job_detail_page
 from tests.db_outage import Forwarder
@@ -55,6 +57,31 @@ async def chat_job(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str]]:
                     created_at=base + timedelta(seconds=i),
                 )
             )
+        owner_login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        db.add(owner_login)
+        await db.commit()
+    yield {
+        "job_id": str(job.id),
+        "owner_token": str(owner_login.id),
+    }
+    async with AsyncSession(test_engine) as db:
+        await db.execute(delete(JobChatMessage).where(JobChatMessage.job_id == job.id))
+        await db.execute(delete(Job).where(Job.id == job.id))
+        await db.execute(delete(User).where(User.id == owner.id))
+        await db.commit()
+
+
+@pytest_asyncio.fixture
+async def empty_chat_job(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str]]:
+    """A completed job with no committed chat messages and a live owner
+    session."""
+    async with AsyncSession(test_engine, expire_on_commit=False) as db:
+        owner = User(email=f"owner-{uuid4().hex}@chat-empty.test", name="Owner", is_approved=True)
+        db.add(owner)
+        await db.flush()
+        job = Job(owner_id=owner.id, research_question="Chat question", status="completed")
+        db.add(job)
+        await db.flush()
         owner_login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
         db.add(owner_login)
         await db.commit()
@@ -107,6 +134,20 @@ def _load_button(client: Client) -> ui.button:
 
 def _load_button_visible(client: Client, button: ui.button) -> bool:
     return not button.is_deleted and "hidden" not in button.classes
+
+
+def _empty_state_visible(client: Client) -> bool:
+    """Whether the message list still shows the placeholder of an empty chat."""
+    with client:
+        scroll = next(
+            element
+            for element in client.elements.values()
+            if isinstance(element, ui.scroll_area) and "chat-messages-scroll" in element.classes
+        )
+        for descendant in scroll.descendants():
+            if isinstance(descendant, ui.label) and descendant.text == "Start a conversation":
+                return True
+    return False
 
 
 async def _until(condition, what: str) -> None:
@@ -252,3 +293,98 @@ async def test_a_send_keeps_the_shown_window_and_appends_the_new_messages(
         "Reply to What next?",
     ]
     assert _load_button_visible(client, _load_button(client))
+
+
+@pytest.mark.asyncio
+async def test_a_load_earlier_click_during_a_send_reload_keeps_the_loaded_page(
+    database: Forwarder,
+    chat_job: dict[str, str],
+    served_page: ServedPage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Load earlier press whose page query overlaps the send's reload keeps
+    the loaded page and appends the new turn once, in order."""
+    monkeypatch.setattr(chat_tab, "send_chat_message", _send_and_commit_turn)
+    load_earlier_reached = asyncio.Event()
+    send_reached = asyncio.Event()
+    release_earlier = asyncio.Event()
+    release_send = asyncio.Event()
+
+    async def gated_history(
+        session: AsyncSession,
+        job_id: UUID,
+        *,
+        limit: int | None = 50,
+        before: JobChatMessage | None = None,
+        since: JobChatMessage | None = None,
+        after: JobChatMessage | None = None,
+    ) -> list[JobChatMessage]:
+        """The real query behind one gate per handler, so the two handlers'
+        writes run in the order the test releases them."""
+        real = cast(Callable[..., Awaitable[list[JobChatMessage]]], real_get_chat_history)
+        if before is not None:
+            load_earlier_reached.set()
+            await release_earlier.wait()
+        elif since is not None or after is not None:
+            send_reached.set()
+            await release_send.wait()
+        if since is not None:
+            return await real(session, job_id, limit=limit, before=before, since=since)
+        if after is not None:
+            return await real(session, job_id, limit=limit, before=before, after=after)
+        return await real(session, job_id, limit=limit, before=before)
+
+    monkeypatch.setattr(chat_tab, "get_chat_history", gated_history)
+    client, _ = await _served(database, chat_job, served_page)
+
+    load_btn = _load_button(client)
+    textarea = next(e for e in client.elements.values() if isinstance(e, ui.textarea))
+    send_btn = next(
+        e
+        for e in client.elements.values()
+        if isinstance(e, ui.button) and e.props.get("icon") == "send"
+    )
+
+    _click(client, load_btn)
+    textarea.value = "What next?"
+    _click(client, send_btn)
+    await _until(lambda: "What next?" in _bubble_texts(client), "the user bubble to appear")
+    await _until(send_reached.is_set, "the send's reload to reach its query")
+
+    release_earlier.set()
+    await _until(lambda: len(_bubble_texts(client)) >= 2 * PAGE_SIZE, "the earlier page to appear")
+    release_send.set()
+    await _until(lambda: "Reply to What next?" in _bubble_texts(client), "the reply to appear")
+
+    assert _bubble_texts(client) == [
+        f"Message {i}" for i in range(TOTAL - 2 * PAGE_SIZE, TOTAL)
+    ] + ["What next?", "Reply to What next?"]
+    assert _load_button_visible(client, load_btn)
+
+
+@pytest.mark.asyncio
+async def test_a_send_from_an_empty_chat_replaces_the_placeholder(
+    database: Forwarder,
+    empty_chat_job: dict[str, str],
+    served_page: ServedPage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The first committed turn replaces the empty state with the user and
+    assistant messages."""
+    monkeypatch.setattr(chat_tab, "send_chat_message", _send_and_commit_turn)
+    client, _ = await _served(database, empty_chat_job, served_page)
+
+    assert _empty_state_visible(client)
+
+    textarea = next(e for e in client.elements.values() if isinstance(e, ui.textarea))
+    send_btn = next(
+        e
+        for e in client.elements.values()
+        if isinstance(e, ui.button) and e.props.get("icon") == "send"
+    )
+    textarea.value = "Hello?"
+    _click(client, send_btn)
+    await _until(lambda: "Reply to Hello?" in _bubble_texts(client), "the reply to appear")
+
+    assert _bubble_texts(client) == ["Hello?", "Reply to Hello?"]
+    assert not _empty_state_visible(client)
