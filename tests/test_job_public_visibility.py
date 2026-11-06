@@ -645,7 +645,9 @@ def test_stats_content_shows_the_owner_label_to_viewers() -> None:
         is_public=True,
     )
     owner = "Dr. Ada Lovelace"
-    context = SimpleNamespace(job_info=job, ks_data=None, owner_name=owner)
+    context = SimpleNamespace(
+        job_info=job, ks_data=None, owner_name=owner, spend=0.0, spend_visible=False
+    )
     with (
         patch.object(timeline, "ui") as mock_ui,
         patch.object(timeline, "is_client_connected", return_value=True),

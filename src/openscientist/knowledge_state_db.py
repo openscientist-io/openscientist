@@ -10,6 +10,7 @@ from uuid import UUID
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from openscientist.budget import job_spends
 from openscientist.database.models.analysis_log import AnalysisLog
 from openscientist.database.models.feedback_history import FeedbackHistory
 from openscientist.database.models.finding import Finding
@@ -487,8 +488,10 @@ async def analysis_log_action_counts(
 @dataclass(frozen=True)
 class JobPageSnapshot:
     """What the job page's poll reads to tell a changed tick from an idle one:
-    the job row's live fields, the analysis log's per-iteration action counts
-    and each table's row count with its newest update."""
+    the job row's live fields, the analysis log's per-iteration action counts,
+    each table's row count with its newest update, and the job's cost-ledger
+    spend as the session's RLS admits it, 0 when the session sees no cost row
+    for the job."""
 
     status: str
     current_iteration: int
@@ -498,6 +501,7 @@ class JobPageSnapshot:
     findings: tuple[int, datetime | None]
     literature: tuple[int, datetime | None]
     summaries: tuple[int, datetime | None]
+    spend: float
 
 
 async def job_page_snapshot(
@@ -534,6 +538,7 @@ async def job_page_snapshot(
             )
         )
     ).one()
+    spend = (await job_spends(session, [job_uuid]))[job_uuid]
     return job, JobPageSnapshot(
         status=job.status,
         current_iteration=job.current_iteration,
@@ -543,6 +548,7 @@ async def job_page_snapshot(
         findings=(findings[0], findings[1]),
         literature=(literature[0], literature[1]),
         summaries=(summaries[0], summaries[1]),
+        spend=spend,
     )
 
 

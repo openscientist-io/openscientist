@@ -196,7 +196,8 @@ async def test_the_job_page_shows_the_knowledge_state_to_its_owner_only(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("share", "rights"), [(None, None), ("view", (False, False)), ("edit", (False, True))]
+    ("share", "rights"),
+    [(None, None), ("view", (False, False, True)), ("edit", (False, True, True))],
 )
 async def test_a_users_rights_on_the_job_page_follow_their_share(
     alices_job: _Fixture, test_engine: AsyncEngine, share: str | None, rights: object
@@ -220,7 +221,7 @@ async def test_a_users_rights_on_the_job_page_follow_their_share(
     own = await job_detail._load_db_job_for_user(alices_job.job_id, str(alices_job.owner))
     assert await job_detail._resolve_job_permissions(
         alices_job.job_id, str(alices_job.owner), own
-    ) == (True, True)
+    ) == (True, True, True)
 
 
 _PAGE_UI_KINDS = (

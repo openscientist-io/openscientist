@@ -120,6 +120,8 @@ class _JobDetailContext:
     ks_data: dict[str, Any] | None
     action_counts: ActionCounts
     ks_load_error: str | None
+    spend: float
+    spend_visible: bool
     state: dict[str, Any]
     share_dialog: Any
     delete_dialog: Any

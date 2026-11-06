@@ -6,6 +6,7 @@ from nicegui import ui
 from nicegui.functions.refreshable import refreshable
 
 from openscientist.agent.factory import agent_class_for_provider_id
+from openscientist.budget import format_spend
 from openscientist.job.types import JobInfo, JobStatus
 from openscientist.run_environment import run_environment_text
 from openscientist.webapp_components.components.common import (
@@ -66,7 +67,7 @@ def _format_model_name(llm_model: str | None) -> str | None:
 
 
 def _stats_badges(
-    latest_job: Any, lit_count: int, hyp_count: int = 0
+    latest_job: Any, lit_count: int, hyp_count: int = 0, spend: float | None = None
 ) -> list[tuple[str, str | int, str]]:
     status_color = STATUS_COLORS.get(latest_job.status, "gray")
     badges: list[tuple[str, str | int, str]] = [
@@ -105,6 +106,8 @@ def _stats_badges(
     model_name = _format_model_name(getattr(latest_job, "llm_model", None))
     if model_name:
         badges.append(("Model", model_name, "cyan"))
+    if spend is not None:
+        badges.append(("Spend", format_spend(spend), "green"))
     return badges
 
 
@@ -129,7 +132,11 @@ def _render_job_stats_content(context: _JobDetailContext) -> None:
     latest_ks = context.ks_data
     lit_count = len(latest_ks.get("literature", [])) if latest_ks else 0
     hyp_count = len(latest_ks.get("hypotheses", [])) if latest_ks else 0
-    badges_row = render_stat_badges(_stats_badges(latest_job, lit_count, hyp_count))
+    badges_row = render_stat_badges(
+        _stats_badges(
+            latest_job, lit_count, hyp_count, context.spend if context.spend_visible else None
+        )
+    )
     run_environment = run_environment_text(latest_job.version_info)
     if run_environment:
         with badges_row:
@@ -176,12 +183,14 @@ def _render_research_question_card(context: _JobDetailContext) -> None:
         )
 
 
-def _stats_model(latest_job: JobInfo, latest_ks: dict[str, Any] | None) -> _StatsModel:
+def _stats_model(
+    latest_job: JobInfo, latest_ks: dict[str, Any] | None, spend: float | None
+) -> _StatsModel:
     """The stats card's rendered values, compared across ticks so the card
     refreshes when a badge or the status line would actually change."""
     lit_count = len(latest_ks.get("literature", [])) if latest_ks else 0
     hyp_count = len(latest_ks.get("hypotheses", [])) if latest_ks else 0
-    return tuple(_stats_badges(latest_job, lit_count, hyp_count)), _status_line_for(
+    return tuple(_stats_badges(latest_job, lit_count, hyp_count, spend)), _status_line_for(
         latest_job, latest_ks
     )
 
@@ -261,8 +270,11 @@ async def _check_and_refresh(
     context.ks_data = latest_ks
     context.action_counts = action_counts
     context.job_info = latest_job
+    context.spend = snapshot.job.spend
 
-    stats_model = _stats_model(latest_job, latest_ks)
+    stats_model = _stats_model(
+        latest_job, latest_ks, context.spend if context.spend_visible else None
+    )
     if stats_model != context.state["stats_model"]:
         context.state["stats_model"] = stats_model
         render_job_stats.refresh()

@@ -6,12 +6,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.admin_settings import current_admin_settings
 from openscientist.database.models import CostRecord
@@ -116,6 +118,30 @@ async def _ledger_totals(job_id: UUID | None = None) -> tuple[float, float, floa
         0.0 if total is None else float(total),
         0.0 if recent is None else float(recent),
     )
+
+
+def format_spend(spend_usd: float) -> str:
+    """The spend figure the badges show: $0.00 for nothing, <$0.01 below one
+    cent, $1.23 otherwise."""
+    if spend_usd <= 0:
+        return "$0.00"
+    if spend_usd < 0.01:
+        return "<$0.01"
+    return f"${spend_usd:.2f}"
+
+
+async def job_spends(session: AsyncSession, job_ids: Sequence[UUID]) -> dict[UUID, float]:
+    """Each job's spend from the cost ledger the session's RLS admits, one
+    grouped query for all the ids, 0 for a job without cost rows."""
+    if not job_ids:
+        return {}
+    result = await session.execute(
+        select(CostRecord.job_id, func.sum(CostRecord.cost_usd))
+        .where(CostRecord.job_id.in_(list(job_ids)))
+        .group_by(CostRecord.job_id)
+    )
+    sums = {job_id: 0.0 if total is None else float(total) for job_id, total in result.all()}
+    return {job_id: sums.get(job_id, 0.0) for job_id in job_ids}
 
 
 async def project_spend() -> ProjectSpend:
