@@ -294,12 +294,15 @@ async def test_reopening_an_iteration_while_its_load_is_pending_loads_it_once(
     client = await _served(served_page, long_log_job)
     expansion = _expansion_named(client, "Iteration 1:")
     with client:
+        before = set(background_tasks.running_tasks)
         expansion.value = True
         expansion.value = False
         expansion.value = True
+    scheduled = background_tasks.running_tasks - before
     await asyncio.sleep(0.05)
     gate.set()
-    await _until(lambda: _actions_shown(client) and len(_action_titles(client)) == 50, "the load")
+    for task in scheduled:
+        await asyncio.wait_for(task, 10)
     assert loads == 1
     assert _action_titles(client) == [f"\u2705 Run {n}" for n in range(50)]
     assert _show_more(client) is not None
