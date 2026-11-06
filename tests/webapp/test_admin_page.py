@@ -4,7 +4,8 @@ moment NiceGUI sends it (see ``served_page``)."""
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
+from typing import ClassVar, Self
 from uuid import UUID, uuid4
 
 import pytest
@@ -15,7 +16,8 @@ from nicegui.functions.refreshable import RefreshableContainer
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from openscientist.database.models import Administrator, ReviewToken, Session, User
+from openscientist.database.models import Administrator, Job, ReviewToken, Session, User
+from openscientist.job_container.launcher_client import ContainerEntry
 from openscientist.webapp_components.pages.admin import admin_page, render_containers_panel
 from openscientist.webapp_components.utils import container_dashboard
 from openscientist.webapp_components.utils.container_dashboard import (
@@ -116,6 +118,146 @@ def _dashboard_payload(*, extra_group: bool = False) -> DashboardData:
             )
         )
     return DashboardData(docker_available=True, job_groups=groups)
+
+
+class _FakeNow(datetime):
+    """A datetime whose ``now`` the test moves, standing in for the tick clock."""
+
+    value: ClassVar[datetime]
+
+    @classmethod
+    def now(cls, tz: tzinfo | None = None) -> Self:
+        return cls.fromtimestamp(cls.value.timestamp(), tz)
+
+
+# Two CPUs, so cpu_percent is cpu_delta / system_delta * 200.
+_CPU_SYSTEM_DELTA = 10_000_000_000
+_CPU_NANOS_12_PERCENT = 617_000_000
+_CPU_NANOS_55_PERCENT = 2_785_000_000
+_MEMORY_BYTES_512_MB = 537_290_342
+_MEMORY_LIMIT_BYTES = 8_589_934_592
+
+
+class _FakeLauncher:
+    """A launcher client reporting one container with fresh stats per call."""
+
+    def __init__(self, entry: ContainerEntry) -> None:
+        self.entry = entry
+        self.cpu_nanos = _CPU_NANOS_12_PERCENT
+        self.stats_calls = 0
+
+    def health(self) -> dict[str, object]:
+        return {"status": "ok"}
+
+    def list_containers(self, labels: list[str]) -> list[ContainerEntry]:
+        return [self.entry]
+
+    def stats(self, ref: str) -> dict[str, object]:
+        self.stats_calls += 1
+        return {
+            "cpu_stats": {
+                "cpu_usage": {
+                    "total_usage": self.cpu_nanos + self.stats_calls,
+                    "percpu_usage": [0, 0],
+                },
+                "system_cpu_usage": _CPU_SYSTEM_DELTA,
+            },
+            "precpu_stats": {"cpu_usage": {"total_usage": 0}, "system_cpu_usage": 0},
+            "memory_stats": {
+                "usage": _MEMORY_BYTES_512_MB + self.stats_calls,
+                "stats": {"cache": 0},
+                "limit": _MEMORY_LIMIT_BYTES,
+            },
+        }
+
+
+@pytest.mark.asyncio
+async def test_a_running_container_tick_updates_only_when_displayed_values_change(
+    database: Forwarder,
+    test_engine: AsyncEngine,
+    admin_with_a_pending_user: dict[str, str],
+    served_page: ServedPage,
+    wire_recorder: list[WireMessage],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ticks of a running container whose live stats move below display
+    granularity put nothing on the wire, and a change the panel renders
+    sends exactly one update."""
+    async with AsyncSession(test_engine, expire_on_commit=False) as db:
+        job = Job(owner_id=None, research_question="Running container", status="running")
+        db.add(job)
+        await db.commit()
+        await db.refresh(job)
+        job_id = str(job.id)
+
+    try:
+        entry: ContainerEntry = {
+            "id": "fake-container-1",
+            "name": "openscientist-agent-job-7",
+            "status": "running",
+            "created": "2026-11-05T09:00:00+00:00",
+            "labels": {"openscientist.type": "agent", "openscientist.job_id": job_id},
+        }
+        fake = _FakeLauncher(entry)
+        monkeypatch.setattr(container_dashboard, "_get_launcher_client", lambda: fake)
+        _FakeNow.value = datetime(2026, 11, 5, 9, 5, 1, tzinfo=UTC)
+        monkeypatch.setattr(container_dashboard, "datetime", _FakeNow)
+
+        client, _ = await served_page(
+            admin_with_a_pending_user["token"], admin_page, lambda client: None
+        )
+        with client:
+            await render_containers_panel(admin_with_a_pending_user["admin_id"])
+
+        client.tab_id = "wire-test-socket"
+        await drain_outbox(client)
+        first = [m for m in wire_recorder if m.event == "update" and m.room == client.id]
+        assert first, "the panel's elements never reached the wire"
+
+        timer = next(
+            element
+            for element in client.elements.values()
+            if isinstance(element, ui.timer) and element.interval == 3.0
+        )
+        callback = timer.callback
+        assert callback is not None
+
+        async def tick() -> list[WireMessage]:
+            wire_recorder.clear()
+            with client:
+                await callback()
+            await drain_outbox(client)
+            return [m for m in wire_recorder if m.event == "update" and m.room == client.id]
+
+        _FakeNow.value += timedelta(seconds=0.1)
+        sent = await tick()
+        assert not sent, (
+            f"uptime and CPU below display granularity sent "
+            f"{sum(m.wire_bytes for m in sent)} wire bytes"
+        )
+
+        _FakeNow.value += timedelta(seconds=0.1)
+        sent = await tick()
+        assert not sent, (
+            f"uptime and CPU below display granularity sent "
+            f"{sum(m.wire_bytes for m in sent)} wire bytes"
+        )
+
+        _FakeNow.value += timedelta(seconds=1)
+        sent = await tick()
+        assert len(sent) == 1, f"a displayed uptime change sent {len(sent)} updates"
+
+        fake.cpu_nanos = _CPU_NANOS_55_PERCENT
+        sent = await tick()
+        assert len(sent) == 1, f"a displayed CPU change sent {len(sent)} updates"
+
+        entry["status"] = "exited"
+        sent = await tick()
+        assert len(sent) == 1, f"a status change sent {len(sent)} updates"
+    finally:
+        async with AsyncSession(test_engine) as db:
+            await db.execute(delete(Job).where(Job.id == job.id))
+            await db.commit()
 
 
 @pytest.mark.asyncio
