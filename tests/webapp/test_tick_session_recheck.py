@@ -164,6 +164,30 @@ def _timer_by_callback_name(client: Client, interval: float, name: str) -> ui.ti
     raise AssertionError(f"no {interval} s timer with a callback named {name!r}")
 
 
+async def _tick_unless_stopped(client: Client, timer: ui.timer) -> None:
+    """Fire ``timer`` once, unless its own schedule already fired it and it
+    stopped, which a slow run reaches before the test does."""
+    callback = timer.callback
+    assert callback is not None
+    if timer.active:
+        with client:
+            await callback()
+
+
+def _hold_deferred_containers_panel(client: Client) -> None:
+    """Keep the admin page's own deferred Containers render from running, so
+    the panel the test renders is the only one."""
+    for element in client.elements.values():
+        callback = getattr(element, "callback", None)
+        if (
+            isinstance(element, ui.timer)
+            and getattr(callback, "func", None) is render_containers_panel
+        ):
+            element.deactivate()
+            return
+    raise AssertionError("the admin page scheduled no timer for the Containers panel")
+
+
 def _owned_jobs_table(client: Client) -> ui.table:
     tables = [e for e in client.elements.values() if isinstance(e, ui.table)]
     return next(t for t in tables if not any(c["name"] == "owner" for c in t.columns))
@@ -209,8 +233,7 @@ async def test_the_jobs_tick_sends_the_page_to_login_once_the_session_is_gone(
     await _drop_session_row(test_engine, tick_user["token"])
     client.tab_id = "wire-test-socket"
 
-    with client:
-        await owned_callback()
+    await _tick_unless_stopped(client, owned_tick)
     assert owned_tick.active is False
     await drain_outbox(client)
     assert targets == [LOGIN_TARGET]
@@ -274,8 +297,7 @@ async def test_the_job_page_poll_sends_the_page_to_login_once_the_session_is_gon
     assert targets == []
 
     await _drop_session_row(test_engine, tick_user["token"])
-    with client:
-        await poll_callback()
+    await _tick_unless_stopped(client, poll)
     assert poll.active is False
     await drain_outbox(client)
     assert targets == [LOGIN_TARGET]
@@ -302,6 +324,7 @@ async def test_the_admin_tick_sends_the_page_to_login_once_the_session_is_gone(
     monkeypatch.setattr(container_dashboard, "collect_dashboard_data", collect)
     targets = _navigation_spy(monkeypatch)
     client, _ = await served_page(tick_admin["token"], admin_page, lambda c: None)
+    _hold_deferred_containers_panel(client)
     with client:
         await render_containers_panel(tick_admin["user_id"])
     ticks = _timer_with_interval(client, 3.0)
@@ -317,8 +340,7 @@ async def test_the_admin_tick_sends_the_page_to_login_once_the_session_is_gone(
     assert targets == []
 
     await _drop_session_row(test_engine, tick_admin["token"])
-    with client:
-        await tick_callback()
+    await _tick_unless_stopped(client, tick)
     assert tick.active is False
     await drain_outbox(client)
     assert targets == [LOGIN_TARGET]
@@ -357,8 +379,7 @@ async def test_the_job_page_poll_sends_a_view_only_viewer_to_login_once_their_se
     assert targets == []
 
     await _drop_session_row(test_engine, feedback_viewer["token"])
-    with client:
-        await poll_callback()
+    await _tick_unless_stopped(client, poll)
     assert poll.active is False
     await drain_outbox(client)
     assert targets == [LOGIN_TARGET]
