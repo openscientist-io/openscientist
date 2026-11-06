@@ -9,18 +9,17 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
-from typing import Any
 from urllib.parse import quote
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
 from nicegui import app
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
-from starlette.responses import RedirectResponse
+from starlette.responses import RedirectResponse, Response
 
-from openscientist.auth.fastapi_routes import mock_admin_oauth_login
+from openscientist.auth.fastapi_routes import mock_admin_oauth_login, mock_oauth_login
 from openscientist.auth.middleware import require_auth
 from openscientist.database.models import Session, User
 from openscientist.settings import clear_settings_cache
@@ -61,15 +60,22 @@ def dev_mode(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     clear_settings_cache()
 
 
-def _location(response: Any) -> str:
+def _location(response: Response | None) -> str:
     assert isinstance(response, RedirectResponse), response
     assert response.status_code == 303
     return response.headers["location"]
 
 
+def _session_token(response: Response) -> str:
+    """The session token a sign-in response sets on the login cookie."""
+    cookie = response.headers["set-cookie"]
+    assert "session_token=" in cookie, cookie
+    return cookie.split("session_token=", 1)[1].split(";", 1)[0]
+
+
 async def _protected_page_result(
     browser_client: OpenBrowser, token: str | None
-) -> tuple[Any, bool]:
+) -> tuple[Response | None, bool]:
     ran = False
 
     async def page() -> None:
@@ -134,6 +140,18 @@ async def test_login_sends_a_signed_in_visitor_to_the_page_they_asked_for(
 
 
 @pytest.mark.asyncio
+async def test_login_refuses_a_signed_in_visitor_next_that_names_an_auth_route(
+    database: Forwarder, logins: dict[str, str], browser_client: OpenBrowser
+) -> None:
+    """A signed-in visitor who asks for /login carrying an auth route as next
+    is sent to the home page, not the internal route that would swap their
+    session."""
+    client = await browser_client(logins["live"], "/login?next=" + quote("/auth/mock/admin-login"))
+    with client:
+        assert _location(await login_page()) == "/jobs"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "next_path",
     [None, "//evil.example/x", "https://evil.example/", "/\\evil.example", "javascript:alert(1)"],
@@ -165,6 +183,15 @@ async def mock_admin_cleanup(test_engine: AsyncEngine) -> AsyncIterator[None]:
     yield
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(User).where(User.email == "admin@mock.local"))
+        await db.commit()
+
+
+@pytest_asyncio.fixture
+async def mock_dev_cleanup(test_engine: AsyncEngine) -> AsyncIterator[None]:
+    """Remove the mock dev users a sign-in commits, with their sessions."""
+    yield
+    async with AsyncSession(test_engine) as db:
+        await db.execute(delete(User).where(User.email.like("dev-%")))
         await db.commit()
 
 
@@ -220,6 +247,105 @@ async def test_two_tabs_of_one_browser_land_on_their_own_pages(
     assert _location(response_b) == "/admin"
     assert "session_token=" in response_a.headers["set-cookie"]
     assert "session_token=" in response_b.headers["set-cookie"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("dev_mode", "mock_dev_cleanup")
+async def test_signing_in_refuses_a_next_that_names_the_admin_login(
+    database: Forwarder,
+    test_engine: AsyncEngine,
+    browser_client: OpenBrowser,
+) -> None:
+    """A next that names the admin sign-in route must not swap the visitor
+    into the admin's session. The sign-in lands on the home page with the
+    visitor's own, non-admin, session."""
+    client = await browser_client(None, "/auth/mock/login?next=" + quote("/auth/mock/admin-login"))
+    with client:
+        response = await mock_oauth_login(client.request)
+        assert _location(response) == "/jobs"
+        token = _session_token(response)
+    async with AsyncSession(test_engine, expire_on_commit=False) as db:
+        email = (
+            await db.execute(
+                select(User.email)
+                .join(Session, Session.user_id == User.id)
+                .where(Session.id == UUID(token))
+            )
+        ).scalar_one()
+    assert email.startswith("dev-")
+    assert email != "admin@mock.local"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("dev_mode", "mock_dev_cleanup")
+@pytest.mark.parametrize(
+    "next_path",
+    [
+        "/auth/mock/login",
+        "/auth/mock/admin-login",
+        "/auth/google/login",
+        "/auth/google/callback",
+        "/auth/logout",
+        "/logout",
+        "/logout/extra",
+        "/%61uth/mock/admin-login",
+        "/auth%2Fmock%2Fadmin-login",
+        "/auth?next=/jobs",
+        "/jobs\r\nSet-Cookie:evil=1",
+        "/./auth/mock/admin-login",
+        "/jobs/../auth/mock/admin-login",
+        "/../auth/mock/admin-login",
+        "/%2e/auth/mock/admin-login",
+        "/jobs/%2E%2E/auth/x",
+        "/auth//..",
+        "/auth/mock/admin-login/x////../../../..",
+    ],
+)
+async def test_signing_in_refuses_an_internal_or_controlled_target(
+    database: Forwarder,
+    test_engine: AsyncEngine,
+    browser_client: OpenBrowser,
+    next_path: str,
+) -> None:
+    """A next that names a sign-in or sign-out route, encodes one, folds to
+    one through dot segments, or carries a control character lands on the
+    home page with the visitor's own session, not the internal target."""
+    client = await browser_client(None, "/auth/mock/login?next=" + quote(next_path))
+    with client:
+        response = await mock_oauth_login(client.request)
+        assert _location(response) == "/jobs"
+        token = _session_token(response)
+    async with AsyncSession(test_engine, expire_on_commit=False) as db:
+        email = (
+            await db.execute(
+                select(User.email)
+                .join(Session, Session.user_id == User.id)
+                .where(Session.id == UUID(token))
+            )
+        ).scalar_one()
+    assert email.startswith("dev-")
+    assert email != "admin@mock.local"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("dev_mode", "mock_dev_cleanup")
+@pytest.mark.parametrize(
+    "asked",
+    [
+        "/job/01a1aaa6-74c5-7db6-9951-30b919995b65?x=1",
+        "/auth/../jobs",
+        "/jobs/./x",
+    ],
+)
+async def test_signing_in_keeps_the_page_the_visitor_asked_for(
+    database: Forwarder, browser_client: OpenBrowser, asked: str
+) -> None:
+    """A legitimate page, including one whose dot segments fold to the jobs
+    list, survives the sign-in round trip with its target unchanged."""
+    client = await browser_client(None, "/auth/mock/login?next=" + quote(asked))
+    with client:
+        response = await mock_oauth_login(client.request)
+        assert _location(response) == asked
 
 
 @pytest.mark.asyncio
