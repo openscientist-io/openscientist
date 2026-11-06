@@ -60,6 +60,33 @@ _FIELDS: tuple[tuple[str, str, str, str, str], ...] = (
 )
 _AIRGAP = ("airgapped", "Air-gap")
 
+# The Font Awesome Free solid class for each field's prepend icon. Every
+# _FIELDS column and the air-gap switch must have an entry.
+_FIELD_ICONS: dict[str, str] = {
+    "max_job_cost_usd": "fa-solid fa-sack-dollar",
+    "max_project_spend_total_usd": "fa-solid fa-vault",
+    "max_project_spend_24h_usd": "fa-solid fa-calendar-day",
+    "warn_project_spend_24h_usd": "fa-solid fa-triangle-exclamation",
+    "agent_cpu": "fa-solid fa-microchip",
+    "executor_cpu": "fa-solid fa-microchip",
+    "agent_memory_mib": "fa-solid fa-memory",
+    "executor_memory_mib": "fa-solid fa-memory",
+    "agent_timeout_seconds": "fa-solid fa-hourglass-half",
+    "executor_timeout_seconds": "fa-solid fa-hourglass-half",
+    "max_file_size_mb": "fa-solid fa-file-arrow-up",
+    "max_concurrent_jobs": "fa-solid fa-layer-group",
+    "scheduler_window_hours": "fa-solid fa-clock",
+    "session_duration_days": "fa-solid fa-user-clock",
+    "airgapped": "fa-solid fa-plug-circle-xmark",
+}
+
+# The vendored stylesheets the /admin page links, so Quasar renders the
+# fa-solid names with the vendored webfont.
+_FONTAWESOME_HEAD_HTML = (
+    '<link rel="stylesheet" href="/fa/css/fontawesome.min.css">\n'
+    '<link rel="stylesheet" href="/fa/css/solid.min.css">'
+)
+
 _LABELS = {column: label for column, label, *_ in (*_FIELDS, _AIRGAP)}
 _INT_COLUMNS = {column for column, *_, kind in _FIELDS if kind == "int"}
 _CHECK = re.compile(r"ck_admin_settings_([a-z0-9_]+)")
@@ -155,6 +182,8 @@ def _render_setting_field(
         else:
             field = ui.number(label=name, value=value, min=0)
         field.props("outlined dense")
+        with field.add_slot("prepend"):
+            ui.icon(_FIELD_ICONS[column])
         numbers[column] = field.classes("w-full")
         if kind == "budget":
             no_limit[column] = (
@@ -301,7 +330,13 @@ async def _render_settings(container: ui.column) -> None:
 
             ui.label("Connection").classes("text-subtitle2 font-bold text-gray-700 mt-4")
             with ui.row().classes("w-full items-start gap-4"):
-                switch = ui.switch("Air-gap", value=current.airgapped)
+                switch = ui.switch(value=current.airgapped)
+                with switch:
+                    # The block-level label would wrap below the icon, so the
+                    # two share one inline row, centred with the toggle.
+                    with ui.row().classes("items-center gap-1"):
+                        ui.icon(_FIELD_ICONS[_AIRGAP[0]])
+                        ui.label("Air-gap")
                 with ui.column().classes("gap-0"):
                     ui.label(_description_for("airgapped")).classes("text-xs text-gray-500")
                     if current.airgap_locked:
