@@ -5,9 +5,10 @@ when the Report tab is activated, never during the page build, so a large
 report cannot push the build past NiceGUI's response deadline. Most tests
 stub the conversion with a slow one and check that the build stays fast and
 conversion-free, that the first HTML carries only the loading state, that
-the first activation renders the report and a second one does not convert
-again, and that a client that disconnects during the conversion raises
-nothing. One test runs the real conversion and checks what it renders.
+the first activation renders the report without stalling the event loop and
+a second one does not convert again, and that a client that disconnects
+during the conversion raises nothing. One test runs the real conversion and
+checks what it renders.
 """
 
 from __future__ import annotations
@@ -39,6 +40,9 @@ _RESPONSE_TIMEOUT = 3.0
 # The stub conversion's delay, past the deadline so a conversion that ran
 # during the build cannot hide in the build-time assertion.
 _CONVERSION_DELAY = 3.5
+# The heartbeat sleeps 10 ms per beat, so a gap past this means the loop
+# stayed busy past two beats while the report converted.
+_MAX_LOOP_GAP = 0.100
 _PMID = "12345678"
 _PARAGRAPH = (
     "The corrected assay recovered the target in every replicate, and the "
@@ -181,6 +185,19 @@ async def _rendered_report(client: Client, marker: str) -> ui.markdown:
     raise AssertionError(f"the report {marker!r} did not render within 5 s")
 
 
+async def _max_loop_gap(stop: asyncio.Event) -> float:
+    """Beat every 10 ms until ``stop`` is set, returning the largest gap
+    between two beats, which is how long the loop stayed busy."""
+    last = time.monotonic()
+    max_gap = 0.0
+    while not stop.is_set():
+        await asyncio.sleep(0.01)
+        now = time.monotonic()
+        max_gap = max(max_gap, now - last)
+        last = now
+    return max_gap
+
+
 @pytest.mark.asyncio
 async def test_the_build_sends_fast_and_never_converts(
     database: Forwarder,
@@ -220,8 +237,9 @@ async def test_activating_the_report_tab_renders_it_exactly_once(
     served_page: ServedPage,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The first activation converts and renders the report, and a second
-    activation reuses the rendered report without converting again."""
+    """The first activation converts and renders the report while the event
+    loop keeps beating, and a second activation reuses the rendered report
+    without converting again."""
     marker = report_job["marker"]
     convert, calls = _slow_conversion(marker, _CONVERSION_DELAY)
     monkeypatch.setattr(report, "_transformed_report_markdown", convert)
@@ -234,11 +252,18 @@ async def test_activating_the_report_tab_renders_it_exactly_once(
     names = _tab_names(client)
     tabs = _tabs(client)
 
-    tabs.set_value(names["Report"])
-    rendered = await _rendered_report(client, marker)
+    stop = asyncio.Event()
+    beater = asyncio.create_task(_max_loop_gap(stop))
+    try:
+        tabs.set_value(names["Report"])
+        rendered = await _rendered_report(client, marker)
+    finally:
+        stop.set()
     assert calls == ["final_report.md"]
     assert f"<h1>Final report {marker}</h1>" in rendered._props["innerHTML"]
     assert not _placeholder_present(client)
+    gap = await beater
+    assert gap < _MAX_LOOP_GAP, f"the loop stayed busy for {gap * 1000:.0f} ms"
 
     tabs.set_value(names["Research Log"])
     tabs.set_value(names["Report"])
