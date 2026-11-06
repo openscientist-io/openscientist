@@ -18,7 +18,7 @@ GENERATED_SECRETS = {
     "POSTGRES_WEB_PASSWORD": "env",
     "POSTGRES_ADMIN_PASSWORD": "env",
     "OPENSCIENTIST_SECRET_KEY": "env",
-    "LAUNCHER_INSTANCE_ID": "owner",
+    "LAUNCHER_INSTANCE_ID": "env",
     "POSTGRES_PASSWORD": "db",
     "POSTGRES_OWNER_PASSWORD": "owner",
 }
@@ -91,6 +91,35 @@ def record_host_project_dir(root: Path) -> None:
         set_file_value(root, "env", HOST_PROJECT_DIR, path)
 
 
+#: The launcher keys older checkouts keep in .env.owner. Start moves a real
+#: value into .env, so the stack's marker label and digest set survive.
+LEGACY_OWNER_KEYS = ("LAUNCHER_INSTANCE_ID", "AGENT_IMAGE_DIGESTS", "EXECUTOR_IMAGE_DIGESTS")
+
+
+def migrate_owner_launcher_keys(root: Path) -> None:
+    """A real legacy launcher key in .env.owner that .env lacks moves to .env,
+    and its line leaves .env.owner."""
+    owner_path = _file_path(root, "owner")
+    if not owner_path.is_file():
+        return
+    owner_lines = owner_path.read_text(encoding="utf-8").splitlines()
+    owner_values = parse_values(owner_lines)
+    env_values = file_values(root, "env")
+    moved = {
+        key: value
+        for key in LEGACY_OWNER_KEYS
+        if (value := owner_values.get(key)) and not env_values.get(key)
+    }
+    if not moved:
+        return
+    for key, value in moved.items():
+        set_file_value(root, "env", key, value)
+    write_file(
+        owner_path,
+        [line for line in owner_lines if not any(_is_active(line, key) for key in moved)],
+    )
+
+
 def parse_values(lines: Iterable[str]) -> dict[str, str]:
     """Uncommented KEY=VALUE pairs, last one wins, with trailing comments dropped."""
     values: dict[str, str] = {}
@@ -159,6 +188,16 @@ def _is_real_secret(root: Path, file: str, key: str, value: str) -> bool:
     return bool(value) and value != _example_value(root, file, key)
 
 
+def _current_secret(root: Path, file: str, key: str) -> str:
+    """The value of a generated secret, in its file, or in .env.owner where
+    older checkouts keep the launcher's marker label."""
+    for name in dict.fromkeys((file, "owner")):
+        value = file_values(root, name).get(key, "")
+        if value:
+            return value
+    return ""
+
+
 def write_env_files(root: Path, answers: Mapping[str, Mapping[str, str]]) -> None:
     """Write the three env files, generating the missing secrets once."""
     for file in ("env", "db", "owner"):
@@ -167,7 +206,7 @@ def write_env_files(root: Path, answers: Mapping[str, Mapping[str, str]]) -> Non
         for key, target in GENERATED_SECRETS.items():
             if target != file:
                 continue
-            current = file_values(root, file).get(key, "")
+            current = _current_secret(root, file, key)
             if existed and _is_real_secret(root, file, key, current):
                 values[key] = current
             else:

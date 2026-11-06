@@ -321,7 +321,10 @@ class _ResponsesDecoder:
     """The OpenAI Responses stream, the REST SSE and the websocket alike.
     Usage is reported only at completion, so each ``response.completed``
     event meters one call (a websocket turn can carry several), and a stream
-    that ends without one writes no row."""
+    that ends without one writes no row. The REST body streams through
+    ``feed``. The websocket path feeds one upstream frame per ``feed_frame``
+    call, and a frame that is a single JSON object is a complete event, since
+    the codex wire carries no SSE framing."""
 
     def __init__(self, model: str) -> None:
         self._model = model
@@ -333,6 +336,21 @@ class _ResponsesDecoder:
     def feed(self, chunk: bytes) -> None:
         for event in self._sse.feed(chunk):
             self._handle(event)
+
+    def feed_frame(self, data: bytes) -> None:
+        """One websocket frame. A frame whose text is a single JSON object is
+        a complete Responses event and is decoded directly. Everything else,
+        SSE ``data:`` lines included, goes through the stream splitter."""
+        text = data.lstrip()
+        if text.startswith(b"{"):
+            try:
+                obj = json.loads(text)
+            except ValueError:
+                obj = None
+            if isinstance(obj, dict):
+                self._handle(data.decode("utf-8", "replace"))
+                return
+        self.feed(data)
 
     def _handle(self, data: str) -> None:
         try:

@@ -14,6 +14,8 @@ from uuid import uuid4
 
 import httpx
 import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import StreamingResponse
@@ -42,6 +44,7 @@ from openscientist.providers.bedrock import SigV4Signing
 from openscientist.providers.openai import ChatgptSigning
 from openscientist.providers.vertex import GoogleAdcSigning
 from openscientist.settings import Settings, get_settings
+from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 from tests.test_provider_bedrock import verify_sigv4
 from tests.test_provider_vertex import FakeVertexCredentials
 
@@ -862,6 +865,8 @@ class TestBedrockSigV4ProxyForwarding:
     forwards them to the bedrock-runtime endpoint; the stub stands in for it."""
 
     _PATH = "/model/us.anthropic.claude-sonnet-5-5/invoke-with-response-stream"
+    # A priced model, so the proxy's unpriced-model refusal stays out of the way.
+    _BODY = b'{"model":"us.anthropic.claude-sonnet-5-5"}'
     # A binary eventstream-like payload with non-UTF8 bytes, to prove the proxy
     # forwards the eventstream untouched (no re-encoding).
     _EVENTSTREAM = bytes(range(256)) + b"\x00\x01\xfe\xff"
@@ -895,7 +900,7 @@ class TestBedrockSigV4ProxyForwarding:
                     "authorization": f"Bearer {placeholder}",
                     "content-type": "application/json",
                 },
-                content=b'{"model":"m"}',
+                content=self._BODY,
             ) as resp:
                 chunks = list(resp.iter_raw())
         assert resp.status_code == 200
@@ -908,7 +913,7 @@ class TestBedrockSigV4ProxyForwarding:
         forwarded = recorded[0]
         assert forwarded["host"] == "bedrock-runtime.us-east-1.amazonaws.com"
         assert forwarded["path"] == self._PATH
-        assert forwarded["body"] == b'{"model":"m"}'
+        assert forwarded["body"] == self._BODY
         # The container's placeholder bearer is gone, replaced by a SigV4 signature.
         assert placeholder not in forwarded["headers"].values()
         verify_sigv4(forwarded, access_key="TESTAKID", secret="TESTSECRET", region="us-east-1")
@@ -925,7 +930,7 @@ class TestBedrockSigV4ProxyForwarding:
             resp = client.post(
                 "/model/us.anthropic.claude-sonnet-5-5/invoke",
                 headers={"authorization": f"Bearer {placeholder}"},
-                content=b'{"model":"m"}',
+                content=self._BODY,
             )
         assert resp.status_code == 200
         forwarded = recorded[0]
@@ -1740,3 +1745,179 @@ class TestChatgptResponsesWebsocket:
             )
         assert resp.status_code == 401
         assert recorded == []
+
+
+_PRICED_REFUSAL_MODEL = "stub-sonnet"
+_UNPRICED_REFUSAL_MODEL = "stub-no-rate"
+_REFUSAL_MESSAGE = (
+    f"Model {_UNPRICED_REFUSAL_MODEL} has no known price, so the budget cannot be enforced."
+)
+
+
+class TestUnpricedModelRefusal:
+    """A metered model call on a model the price table does not know is
+    refused while any spend limit is set, with the rule and message the
+    job-start check applies, and nothing reaches the upstream. A priced model,
+    a self-hosted provider and a deployment with no limit pass."""
+
+    @pytest.fixture(autouse=True)
+    def stubbed_pricing(self, monkeypatch: pytest.MonkeyPatch):
+        """The price table reads a fixed dict, so a model is priced or not the
+        way this class spells it, with no network."""
+        monkeypatch.setattr(
+            "openscientist.providers.pricing._get_litellm_pricing",
+            lambda: {_PRICED_REFUSAL_MODEL: {"input_cost_per_token": 1e-6}},
+        )
+        yield
+
+    @pytest_asyncio.fixture
+    async def limits_set(self, test_engine: AsyncEngine):
+        """One project spend limit set, the default row again afterwards."""
+        await set_admin_settings_row(test_engine, max_project_spend_total_usd=1000.0)
+        try:
+            yield
+        finally:
+            await reset_admin_settings_row(test_engine)
+
+    async def _rest_post(self, provider_id: str, model: str, placeholder: str) -> httpx.Response:
+        recorded: list[dict] = []
+        app = create_llm_proxy_app(
+            upstream=lambda: LlmUpstream(
+                "https://upstream.test",
+                StaticHeadersSigning({"x-api-key": "REAL-KEY"}),
+            ),
+            client=_recording_upstream(recorded),
+            provider_id=lambda: provider_id,
+        )
+        # A base_url gives the relative path a scheme for the ASGI scope.
+        async with httpx.AsyncClient(
+            base_url="http://testserver", transport=httpx.ASGITransport(app=app)
+        ) as client:
+            resp = await client.post(
+                "/v1/chat/completions",
+                headers={"x-api-key": placeholder},
+                content=json.dumps({"model": model}),
+            )
+        if resp.status_code == 403:
+            assert recorded == []
+        else:
+            assert len(recorded) == 1
+        return resp
+
+    async def test_a_rest_call_for_an_unpriced_model_is_refused_before_the_upstream(
+        self, limits_set, placeholder_for
+    ):
+        resp = await self._rest_post("anthropic", _UNPRICED_REFUSAL_MODEL, placeholder_for("job-1"))
+        assert resp.status_code == 403
+        assert resp.text == _REFUSAL_MESSAGE
+
+    async def test_a_rest_call_for_a_priced_model_is_forwarded(self, limits_set, placeholder_for):
+        resp = await self._rest_post("anthropic", _PRICED_REFUSAL_MODEL, placeholder_for("job-1"))
+        assert resp.status_code == 200
+
+    async def test_an_unpriced_model_passes_when_no_limit_is_set(
+        self, test_engine: AsyncEngine, placeholder_for
+    ):
+        await set_admin_settings_row(test_engine)
+        try:
+            resp = await self._rest_post(
+                "anthropic", _UNPRICED_REFUSAL_MODEL, placeholder_for("job-1")
+            )
+        finally:
+            await reset_admin_settings_row(test_engine)
+        assert resp.status_code == 200
+
+    async def test_a_self_hosted_provider_passes_with_an_unpriced_model(
+        self, limits_set, placeholder_for
+    ):
+        resp = await self._rest_post("ollama", _UNPRICED_REFUSAL_MODEL, placeholder_for("job-1"))
+        assert resp.status_code == 200
+
+    @pytest.fixture
+    async def stub_upstream(self):
+        stub = _WebsocketStub()
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            stub.port = probe.getsockname()[1]
+        async with serve(stub._handler, "127.0.0.1", stub.port):
+            yield stub
+
+    @pytest.fixture
+    async def live_proxy(self, stub_upstream):
+        """The real proxy app on a real local port, serving the stub upstream."""
+        client = httpx.AsyncClient(timeout=httpx.Timeout(None))
+        app = create_llm_proxy_app(
+            upstream=lambda: LlmUpstream(
+                f"http://127.0.0.1:{stub_upstream.port}",
+                StaticHeadersSigning({"authorization": "Bearer REAL-TOK"}),
+            ),
+            client=client,
+            provider_id=lambda: "anthropic",
+        )
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("127.0.0.1", port))
+        server = _NoSignalServer(Config(app, log_level="warning"))
+        task = asyncio.get_running_loop().create_task(server.serve(sockets=[sock]))
+        for _ in range(200):
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.05):
+                    break
+            except OSError:
+                await asyncio.sleep(0.01)
+        try:
+            yield port
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            sock.close()
+            await client.aclose()
+
+    async def test_a_websocket_turn_for_an_unpriced_model_is_refused_before_the_upstream(
+        self, limits_set, stub_upstream, live_proxy, placeholder_for
+    ):
+        placeholder = placeholder_for("job-1")
+        async with connect(
+            f"ws://127.0.0.1:{live_proxy}/responses",
+            additional_headers={"authorization": f"Bearer {placeholder}"},
+            proxy=None,
+        ) as connection:
+            await connection.send(
+                json.dumps({"type": "response.create", "model": _UNPRICED_REFUSAL_MODEL})
+            )
+            frame = json.loads(await connection.recv())
+            assert frame == {
+                "type": "error",
+                "status": 403,
+                "error": {"message": _REFUSAL_MESSAGE},
+            }
+            with pytest.raises(ConnectionClosed):
+                await connection.recv()
+        assert stub_upstream.frames == []
+        assert stub_upstream.close_from_client == (1008, _REFUSAL_MESSAGE)
+
+    async def test_a_websocket_turn_for_a_priced_model_is_forwarded(
+        self, limits_set, stub_upstream, live_proxy, placeholder_for
+    ):
+        stub_upstream.reply = "stub-reply"
+        placeholder = placeholder_for("job-1")
+        create = json.dumps({"type": "response.create", "model": _PRICED_REFUSAL_MODEL})
+        async with connect(
+            f"ws://127.0.0.1:{live_proxy}/responses",
+            additional_headers={"authorization": f"Bearer {placeholder}"},
+            proxy=None,
+        ) as connection:
+            await connection.send(create)
+            assert await connection.recv() == "stub-reply"
+            await connection.close(1000, "done")
+        for _ in range(200):
+            if stub_upstream.close_from_client is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert stub_upstream.frames == [create]

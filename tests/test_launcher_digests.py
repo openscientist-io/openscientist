@@ -44,9 +44,9 @@ def test_stack_records_digests_after_build(checkout: Path, monkeypatch: pytest.M
     monkeypatch.setattr(stack, "_image_id", _fake_inspect)
     code = stack.build_images(_fake_run, checkout)
     assert code == 0
-    owner = envfiles.file_values(checkout, "owner")
-    assert owner["AGENT_IMAGE_DIGESTS"] == FAKE_AGENT_DIGEST
-    assert owner["EXECUTOR_IMAGE_DIGESTS"] == FAKE_EXECUTOR_DIGEST
+    env = envfiles.file_values(checkout, "env")
+    assert env["AGENT_IMAGE_DIGESTS"] == FAKE_AGENT_DIGEST
+    assert env["EXECUTOR_IMAGE_DIGESTS"] == FAKE_EXECUTOR_DIGEST
 
 
 def test_stack_records_only_the_latest_build(
@@ -55,7 +55,7 @@ def test_stack_records_only_the_latest_build(
     monkeypatch.setattr(stack, "_image_id", _fake_inspect)
     code = stack.build_images(_fake_run, checkout)
     assert code == 0
-    old = envfiles.file_values(checkout, "owner")
+    old = envfiles.file_values(checkout, "env")
     new_digest = "sha256:" + "c" * 64
 
     def _rebuilt(image: str) -> str:
@@ -63,15 +63,15 @@ def test_stack_records_only_the_latest_build(
 
     code = stack.record_image_digests(checkout, image_id=_rebuilt)
     assert code == 0
-    owner = envfiles.file_values(checkout, "owner")
-    assert owner["AGENT_IMAGE_DIGESTS"] == new_digest
-    assert owner["EXECUTOR_IMAGE_DIGESTS"] == old["EXECUTOR_IMAGE_DIGESTS"]
+    env = envfiles.file_values(checkout, "env")
+    assert env["AGENT_IMAGE_DIGESTS"] == new_digest
+    assert env["EXECUTOR_IMAGE_DIGESTS"] == old["EXECUTOR_IMAGE_DIGESTS"]
 
 
 def test_stack_records_fails_when_the_image_is_missing(checkout: Path) -> None:
     code = stack.record_image_digests(checkout, image_id=lambda image: "")
     assert code == 1
-    assert "AGENT_IMAGE_DIGESTS" not in envfiles.file_values(checkout, "owner")
+    assert "AGENT_IMAGE_DIGESTS" not in envfiles.file_values(checkout, "env")
 
 
 @pytest.fixture()
@@ -107,9 +107,9 @@ def test_launcher_accepts_exactly_the_cli_recorded_digests(
     )
     code = stack.record_image_digests(checkout)
     assert code == 0
-    owner = envfiles.file_values(checkout, "owner")
-    agent_digest = owner["AGENT_IMAGE_DIGESTS"]
-    executor_digest = owner["EXECUTOR_IMAGE_DIGESTS"]
+    env = envfiles.file_values(checkout, "env")
+    agent_digest = env["AGENT_IMAGE_DIGESTS"]
+    executor_digest = env["EXECUTOR_IMAGE_DIGESTS"]
     assert agent_digest == image_digest(docker_client, test_agent_image)
     assert executor_digest == image_digest(docker_client, EXECUTOR_IMAGE)
 

@@ -43,7 +43,7 @@ def _image_id(image: str) -> str:
 
 
 def record_image_digests(root: Path, image_id: Callable[[str], str] | None = None) -> int:
-    """Record each image's digest in .env.owner after the builds.
+    """Record each image's digest in .env after the builds.
 
     The launcher accepts only the digests recorded here, so a rebuilt image is
     trusted again only through a build that re-records it.
@@ -60,7 +60,7 @@ def record_image_digests(root: Path, image_id: Callable[[str], str] | None = Non
         if not digest:
             console.print(f"[red]Could not read the digest of {tag}.[/red]")
             return 1
-        envfiles.set_file_value(root, "owner", key, digest)
+        envfiles.set_file_value(root, "env", key, digest)
     return 0
 
 

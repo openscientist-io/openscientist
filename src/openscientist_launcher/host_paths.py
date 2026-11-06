@@ -20,6 +20,8 @@ def jobs_root_problem(cfg: LauncherConfig, mounts: list[dict[str, Any]] | None) 
     root = cfg.jobs_root
     if not root.is_absolute():
         return f"JOBS_ROOT {root} must be an absolute path"
+    if os.path.islink(root):
+        return f"JOBS_ROOT {root} is a symlink, not a real directory"
     if not root.is_dir():
         return f"JOBS_ROOT {root} is not a directory"
     if mounts is None:

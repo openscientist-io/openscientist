@@ -16,6 +16,7 @@ from sqlalchemy import delete, func, select, update
 from openscientist.admin.orphan_jobs import assign_orphaned_job, list_orphaned_jobs
 from openscientist.auth.fastapi_routes import _hash_token, generate_review_token
 from openscientist.auth.middleware import get_current_user_id, require_admin, require_auth
+from openscientist.budget import format_spend
 from openscientist.database.models import Job, ReviewToken, Session, User
 from openscientist.database.session import get_admin_session
 from openscientist.job.types import JobStatus
@@ -35,7 +36,10 @@ from openscientist.webapp_components.components.common import (
 from openscientist.webapp_components.components.job_table import render_job_id_slot
 from openscientist.webapp_components.components.navigation import render_navigator
 from openscientist.webapp_components.pages.billing import render_billing_panel
-from openscientist.webapp_components.pages.settings_panel import render_settings_panel
+from openscientist.webapp_components.pages.settings_panel import (
+    _FONTAWESOME_HEAD_HTML,
+    render_settings_panel,
+)
 from openscientist.webapp_components.utils import session_checked_timer
 from openscientist.webapp_components.utils.permissions import (
     refuse_stale_admin_session,
@@ -129,6 +133,9 @@ async def set_user_priority_status(user_id: UUID, is_priority: bool) -> tuple[bo
 @require_admin
 async def admin_page() -> None:
     """Admin page for managing orphaned jobs and user assignments."""
+    # Before the page is sent, so the links go into the first HTML the
+    # browser receives and the settings icons render without a flash.
+    ui.add_head_html(_FONTAWESOME_HEAD_HTML)
     page_user_id = get_current_user_id()
     assert page_user_id is not None
     render_navigator(active_page="admin")
@@ -831,6 +838,9 @@ def _render_dashboard_job_groups(view: DashboardView) -> None:
                 render_job_id_badge(card.job_id)
                 ui.label(card.title_label).classes("font-medium text-sm flex-grow")
                 ui.badge(card.status, color=_job_status_color(card.status)).classes("px-2")
+                ui.badge(card.spend_label, color="green").props("text-color=white").classes(
+                    "px-1.5 py-0.5"
+                )
                 ui.label(card.iteration).classes("text-xs text-gray-500")
                 ui.label(card.owner).classes("text-xs text-gray-400")
 
@@ -936,6 +946,7 @@ class JobCardView:
     status: str
     iteration: str
     owner: str
+    spend_label: str
     agent_row: ContainerRowView | None
     executor_rows: tuple[ContainerRowView, ...]
 
@@ -993,6 +1004,7 @@ def _job_card_view(group: JobContainerGroup) -> JobCardView:
         status=group.status,
         iteration=f"Iteration {group.current_iteration}/{group.max_iterations}",
         owner=group.owner_email,
+        spend_label=format_spend(group.spend_usd),
         agent_row=_container_row_view(group.agent_container) if group.agent_container else None,
         executor_rows=tuple(_container_row_view(ec) for ec in group.executor_containers),
     )

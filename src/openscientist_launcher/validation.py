@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -198,8 +199,15 @@ def _job_id(body: dict[str, object], cfg: LauncherConfig) -> str:
         raise ValidationError("job_id is required")
     if not JOB_ID.match(job_id):
         raise ValidationError("job_id is not a job id")
-    if not (cfg.jobs_root / job_id).is_dir():
-        raise ValidationError("job_id names no job directory")
+    # lstat, not is_dir: the daemon follows a symlinked bind source, so a
+    # symlink named like a job id must not reach it.
+    job_dir = cfg.jobs_root / job_id
+    try:
+        st = os.lstat(job_dir)
+    except OSError as exc:
+        raise ValidationError("job_id names no job directory") from exc
+    if not stat.S_ISDIR(st.st_mode):
+        raise ValidationError("job_id is not a real directory")
     return job_id
 
 
@@ -225,7 +233,25 @@ def _under_jobs_root(path_str: str, cfg: LauncherConfig, *, what: str) -> Path:
         raise ValidationError(f"{what} is outside the jobs root") from exc
     if not resolved.is_dir():
         raise ValidationError(f"{what} is not a directory")
+    _refuse_symlinked_components(cfg.jobs_root, path_str, what=what)
     return resolved
+
+
+def _refuse_symlinked_components(jobs_root: Path, path_str: str, *, what: str) -> None:
+    """Each component of the requested path below the jobs root, lstat'ed in
+    turn. The daemon follows a symlink it is given as a bind source, so a
+    symlink pointing back inside the jobs root is refused as much as one
+    pointing out of it."""
+    literal = Path(os.path.normpath(path_str))
+    try:
+        relative = literal.relative_to(jobs_root)
+    except ValueError:
+        return
+    prefix = jobs_root
+    for part in relative.parts:
+        prefix = prefix / part
+        if os.path.islink(prefix):
+            raise ValidationError(f"{what} crosses a symlink below the jobs root")
 
 
 def _run_home(body: dict[str, object], cfg: LauncherConfig) -> Path | None:
