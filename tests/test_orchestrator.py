@@ -23,6 +23,17 @@ from openscientist.orchestrator import (
 )
 from openscientist.settings import clear_settings_cache
 
+
+@pytest.fixture(autouse=True)
+def _no_prompt_format_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests drive the discovery loop with a fake agent and no job row.
+    The formatting turn reads the job row from the database, and
+    tests/test_prompt_format.py covers it on a real one."""
+    from openscientist.orchestrator import discovery
+
+    monkeypatch.setattr(discovery, "format_research_prompt", AsyncMock())
+
+
 # ─── get_version_metadata ─────────────────────────────────────────────
 
 
