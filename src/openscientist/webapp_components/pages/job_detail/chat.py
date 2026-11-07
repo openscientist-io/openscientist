@@ -512,10 +512,9 @@ class _ChatTabController:
             )
 
         self.send_btn.on_click(self._send_message)
-        self.chat_input.on(
-            "keydown.enter",
-            lambda e: self._send_message() if not e.args.get("shiftKey") else None,
-        )
+        # Enter alone sends, and the browser never inserts its newline. Enter
+        # with Shift or any other modifier keeps the textarea's own behaviour.
+        self.chat_input.on("keydown.enter.exact.prevent", self._send_message)
 
 
 async def _render_chat_tab(context: _JobDetailContext) -> None:
