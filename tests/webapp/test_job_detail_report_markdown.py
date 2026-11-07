@@ -361,28 +361,40 @@ async def test_an_oversized_report_is_shown_as_too_large(
     assert _markdown_elements(client) == []
 
 
-def _report_frames(client: Client) -> list[ui.element]:
-    return [
-        element
-        for element in client.elements.values()
-        if element.tag == "iframe" and "report.html" in str(element.props.get("src", ""))
-    ]
+def _frames(client: Client) -> list[ui.element]:
+    return [element for element in client.elements.values() if element.tag == "iframe"]
 
 
 @pytest.mark.asyncio
-async def test_a_saved_html_report_is_shown_in_its_frame(
+async def test_a_saved_html_report_loads_in_its_frame_on_the_first_visit_only(
     database: Forwarder,
     report_job: ReportJob,
     report_job_manager: JobManager,
     served_page: ServedPage,
 ) -> None:
-    """A job that saved its HTML report shows it framed, not the markdown view."""
+    """A job that saved its HTML report frames it instead of the markdown
+    view. The frame fetches nothing until the Report tab first opens, so a
+    visit to the log does not render the report, and later visits keep the
+    loaded frame instead of fetching the report again."""
     job_dir = report_job["jobs_root"] / report_job["job_id"]
     (job_dir / "final_report.html").write_text("<html><body>Saved</body></html>", "utf-8")
-    _, (frames, placeholder) = await served_page(
+    client, (frames, placeholder) = await served_page(
         report_job["token"],
         _build_report_page(report_job),
-        lambda client: (_report_frames(client), _placeholder_present(client)),
+        lambda client: (_frames(client), _placeholder_present(client)),
     )
     assert len(frames) == 1
     assert not placeholder
+    [frame] = frames
+    assert "src" not in frame.props, "the frame fetched the report before the tab opened"
+
+    names = _tab_names(client)
+    tabs = _tabs(client)
+    tabs.set_value(names["Report"])
+    src = frame.props.get("src")
+    assert src == f"/web/jobs/{report_job['job_id']}/report.html"
+
+    tabs.set_value(names["Chat"])
+    tabs.set_value(names["Report"])
+    assert _frames(client) == [frame]
+    assert frame.props["src"] == src

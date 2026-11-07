@@ -202,6 +202,21 @@ def _render_job_status_notices(context: _JobDetailContext) -> None:
         _render_ks_loading_notice(context.ks_load_error)
 
 
+def _tab_pane(tabs: ui.tabs, tab: ui.tab) -> ui.element:
+    """The content of ``tab``, hidden while another tab is selected.
+
+    Quasar's tab panels detach a hidden panel from the document, and a
+    detached iframe reloads when it returns, so the report would be fetched
+    and rendered again on every visit. A hidden pane stays in the document.
+    """
+    name = tab.props["name"]
+    return (
+        ui.element("div")
+        .classes("w-full p-4")
+        .bind_visibility_from(tabs, "value", backward=lambda value: value in (tab, name))
+    )
+
+
 async def _render_job_tabs(context: _JobDetailContext) -> None:
     # Computed once at render: the page reloads on every status that unlocks a
     # tab, so a tab never has to be re-enabled by the pollers.
@@ -220,13 +235,14 @@ async def _render_job_tabs(context: _JobDetailContext) -> None:
             with chat_tab:
                 ui.tooltip(chat_tooltip)
 
-    with ui.tab_panels(tabs, value=timeline_tab).classes("w-full") as panels:
-        with ui.tab_panel(timeline_tab):
-            await _render_timeline_tab(context)
-        with ui.tab_panel(report_tab):
-            _render_report_tab(context, panels, report_tab)
-        with ui.tab_panel(chat_tab):
-            await _render_chat_tab(context)
+    tabs.set_value(timeline_tab)
+
+    with _tab_pane(tabs, timeline_tab):
+        await _render_timeline_tab(context)
+    with _tab_pane(tabs, report_tab):
+        _render_report_tab(context, tabs, report_tab)
+    with _tab_pane(tabs, chat_tab):
+        await _render_chat_tab(context)
 
 
 @ui.page("/job/{job_id}")

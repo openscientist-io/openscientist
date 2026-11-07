@@ -9,7 +9,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -341,9 +342,16 @@ async def test_the_report_the_page_frames_reaches_its_owner(
 ) -> None:
     from openscientist.webapp_components.pages.job_detail import report
 
+    tabs = MagicMock()
     with patch.object(report, "ui") as ui:
-        report._render_report_html_iframe(shared_job.job_dir)
-    [props] = [c.args[0] for c in ui.element.return_value.props.call_args_list]
+        report._render_report_html_iframe(
+            shared_job.job_dir,
+            tabs,
+            SimpleNamespace(props={"name": "Report"}),  # type: ignore[arg-type]
+        )
+        [load] = [c.args[0] for c in tabs.on_value_change.call_args_list]
+        load(SimpleNamespace(value="Report"))
+    [props] = [a for c in ui.mock_calls for a in c.args if isinstance(a, str) and 'src="' in a]
     url = props.split('src="', 1)[1].split('"', 1)[0]
 
     response = await request_as(shared_job.owner, url)
@@ -359,7 +367,7 @@ async def test_a_job_without_a_report_frames_nothing_and_serves_nothing(
 
     (shared_job.job_dir / "final_report.html").unlink()
     with patch.object(report, "ui") as ui:
-        report._render_report_html_iframe(shared_job.job_dir)
+        report._render_report_html_iframe(shared_job.job_dir, MagicMock(), MagicMock())
     ui.element.assert_not_called()
 
     response = await request_as(shared_job.owner, f"/web/jobs/{shared_job.job_id}/report.html")
