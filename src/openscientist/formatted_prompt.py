@@ -67,9 +67,14 @@ ALLOWED_TAGS: frozenset[str] = frozenset(
     }
 )
 
-#: Attributes kept per tag. ``class`` is kept on every tag, filtered to
-#: ``LAYOUT_CLASSES``. ``href`` takes an http, https or mailto URL or an
-#: attachment path, and ``src`` only an attachment path.
+#: Attributes kept on every tag. ``class`` keeps only ``LAYOUT_CLASSES``, and
+#: ``lang`` only a well-formed language tag, which justified text needs for
+#: the browser to hyphenate it.
+GLOBAL_ATTRIBUTES: frozenset[str] = frozenset({"class", "lang"})
+
+#: Attributes kept per tag besides ``GLOBAL_ATTRIBUTES``. ``href`` takes an
+#: http, https or mailto URL or an attachment path, and ``src`` only an
+#: attachment path.
 ALLOWED_ATTRIBUTES: dict[str, frozenset[str]] = {
     "a": frozenset({"href", "title"}),
     "abbr": frozenset({"title"}),

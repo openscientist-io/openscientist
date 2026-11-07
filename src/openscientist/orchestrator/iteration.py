@@ -19,7 +19,12 @@ from sqlalchemy import select
 from openscientist.database.models.job import Job as JobModel
 from openscientist.database.retry import CONTAINER_DB_RETRY_SECONDS, retry_async
 from openscientist.database.session import SessionOpener, async_session_local
-from openscientist.formatted_prompt import ALLOWED_ATTRIBUTES, ALLOWED_TAGS, LAYOUT_CLASSES
+from openscientist.formatted_prompt import (
+    ALLOWED_ATTRIBUTES,
+    ALLOWED_TAGS,
+    GLOBAL_ATTRIBUTES,
+    LAYOUT_CLASSES,
+)
 from openscientist.job.status import status_update_statement
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.prompts.common import WRITING_STYLE, namespace_tool_mentions
@@ -321,11 +326,13 @@ def _prompt_format_vocabulary() -> str:
         f"`{tag}`: {', '.join(sorted(attrs))}" for tag, attrs in sorted(ALLOWED_ATTRIBUTES.items())
     )
     classes = "\n".join(f"| `{name}` | {effect} |" for name, effect in LAYOUT_CLASSES.items())
+    global_attributes = " and ".join(f"`{name}`" for name in sorted(GLOBAL_ATTRIBUTES))
     return (
         "Vocabulary\n----------\n"
         f"Allowed tags: {tags}.\n"
-        f"Allowed attributes (class is allowed on every tag and keeps only the "
-        f"layout classes below): {attributes}.\n"
+        f"Allowed on every tag: {global_attributes} (`class` keeps only the layout classes "
+        "below, `lang` only a language tag such as `en` or `it`).\n"
+        f"Allowed per tag: {attributes}.\n"
         "Layout classes:\n\n"
         "| class | what it does |\n"
         "|-------|--------------|\n"
@@ -340,6 +347,9 @@ tables, blockquotes, emphasis and code wherever they make it easier to read.
 - Justify running paragraphs with `fp-justify`, float an image with `fp-float-left` or \
 `fp-float-right` at `fp-small` or `fp-medium` width so the text wraps around it, and put a \
 key constraint or caveat in an `fp-note` call-out.
+- Wrap the whole fragment in <div lang="..."> carrying the language tag of the question, \
+such as <div lang="en"> or <div lang="it">, so the page hyphenates justified text in the \
+right language. Mark a passage in another language with its own `lang`.
 - Turn bare URLs into links, a DOI 10.1234/abcd into \
 <a href="https://doi.org/10.1234/abcd">10.1234/abcd</a>, a PMID 12345678 into \
 <a href="https://pubmed.ncbi.nlm.nih.gov/12345678/">PMID 12345678</a>, a PMCID PMC12345 into \

@@ -68,16 +68,27 @@ def test_the_prompt_format_prompt_renders_the_vocabulary_from_the_sanitizer() ->
     """The allowed tags, attributes and layout classes are rendered from the
     lists the job page's sanitizer keeps, so the prompt and the sanitizer
     cannot drift apart."""
-    from openscientist.formatted_prompt import ALLOWED_ATTRIBUTES, ALLOWED_TAGS, LAYOUT_CLASSES
+    from openscientist.formatted_prompt import (
+        ALLOWED_ATTRIBUTES,
+        ALLOWED_TAGS,
+        GLOBAL_ATTRIBUTES,
+        LAYOUT_CLASSES,
+    )
 
     prompt = build_prompt_format_prompt(_QUESTION, image_files=[], other_files=[], tool_prefix="")
     for tag in sorted(ALLOWED_TAGS):
         assert tag in prompt
-    for attributes in ALLOWED_ATTRIBUTES.values():
+    for attributes in [*ALLOWED_ATTRIBUTES.values(), GLOBAL_ATTRIBUTES]:
         for attribute in sorted(attributes):
             assert attribute in prompt
     for name in LAYOUT_CLASSES:
         assert name in prompt
+
+
+def test_the_prompt_format_prompt_asks_for_the_language_of_the_question() -> None:
+    """Justified text hyphenates only in a declared language."""
+    prompt = build_prompt_format_prompt(_QUESTION, image_files=[], other_files=[], tool_prefix="")
+    assert '<div lang="' in prompt
 
 
 def test_the_prompt_format_retry_prompt_restates_the_task() -> None:

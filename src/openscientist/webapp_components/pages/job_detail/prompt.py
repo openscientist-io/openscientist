@@ -10,6 +10,7 @@ job's file route. The original text stays one click away.
 from __future__ import annotations
 
 import html
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -22,12 +23,25 @@ from openscientist.formatted_prompt import (
     ALLOWED_ATTRIBUTES,
     ALLOWED_TAGS,
     ATTACHMENT_DIR,
+    GLOBAL_ATTRIBUTES,
     LAYOUT_CLASSES,
     is_inline_image,
 )
 from openscientist.webapp_components.components.common import FONTAWESOME_HEAD_HTML
 
 _LINK_SCHEMES = frozenset({"http", "https", "mailto"})
+
+#: A BCP 47 language tag such as ``en``, ``en-GB`` or ``zh-Hant-TW``.
+_LANGUAGE_TAG = re.compile(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*")
+
+#: The language the browser hyphenates justified text in when the fragment
+#: declares none.
+_DEFAULT_LANGUAGE = "en"
+
+#: A link whose content is text only, in the sanitizer's normalized output.
+_PLAIN_LINK = re.compile(r"(<a\b[^>]*>)([^<]+)(</a>)")
+#: A separator inside a DOI or URL that a line may wrap after.
+_LINK_SEPARATOR = re.compile(r"([/:._=?-])(?=\w)")
 
 #: Above this weight the prompt starts collapsed behind Show more. The weight
 #: is the visible text length plus ``_IMAGE_WEIGHT`` per image, which stands
@@ -108,7 +122,8 @@ _PROMPT_CSS = """
 .os-prompt .fp-small { width: 25%; min-width: 8rem; }
 .os-prompt .fp-medium { width: 50%; min-width: 12rem; }
 .os-prompt .fp-large { width: 100%; max-width: 100%; float: none; margin-left: 0; margin-right: 0; }
-.os-prompt .fp-justify { text-align: justify; hyphens: auto; }
+.os-prompt .fp-justify { text-align: justify; text-wrap: pretty; -webkit-hyphens: auto;
+  hyphens: auto; hyphenate-limit-chars: 6 3 3; }
 .os-prompt .fp-text-center { text-align: center; }
 .os-prompt .fp-text-right { text-align: right; }
 .os-prompt .fp-lead { font-size: 1.1rem; color: #374151; }
@@ -191,6 +206,8 @@ def sanitize_formatted_prompt(
         if attribute == "class":
             kept = [token for token in value.split() if token in LAYOUT_CLASSES]
             return " ".join(kept) or None
+        if attribute == "lang":
+            return value if _LANGUAGE_TAG.fullmatch(value) else None
         if tag == "img" and attribute == "src":
             name = _attachment_name(value)
             if name is None or name not in attachment_urls or not is_inline_image(name):
@@ -205,7 +222,7 @@ def sanitize_formatted_prompt(
         return value
 
     attributes = {tag: set(names) for tag, names in ALLOWED_ATTRIBUTES.items()}
-    attributes["*"] = {"class"}
+    attributes["*"] = set(GLOBAL_ATTRIBUTES)
     cleaned = nh3.clean(
         fragment,
         tags=set(ALLOWED_TAGS),
@@ -216,7 +233,20 @@ def sanitize_formatted_prompt(
         link_rel="noopener noreferrer nofollow",
         set_tag_attribute_values={"a": {"target": "_blank"}},
     )
-    return SanitizedPrompt(html=cleaned, placed_images=frozenset(placed))
+    return SanitizedPrompt(html=_with_link_breaks(cleaned), placed_images=frozenset(placed))
+
+
+def _with_link_breaks(cleaned: str) -> str:
+    """Let a DOI or URL wrap after its separators, the way a hyphen lets a
+    word wrap, so it does not leave wide gaps in a justified line."""
+
+    def add_breaks(match: re.Match[str]) -> str:
+        opening, text, closing = match.groups()
+        if any(c.isspace() for c in text):
+            return match.group(0)
+        return opening + _LINK_SEPARATOR.sub(r"\1<wbr>", text) + closing
+
+    return _PLAIN_LINK.sub(add_breaks, cleaned)
 
 
 def _file_icon(name: str) -> str:
@@ -303,7 +333,9 @@ def render_research_prompt(
         with ui.element("div").classes("os-prompt-body w-full") as body:
             if sanitized is not None:
                 # Sanitized above against the formatted-prompt vocabulary.
-                ui.html(sanitized.html, sanitize=False).classes("os-prompt")
+                ui.html(sanitized.html, sanitize=False).classes("os-prompt").props(
+                    f"lang={_DEFAULT_LANGUAGE}"
+                )
             else:
                 ui.label(research_question).classes(
                     "os-prompt-original text-lg whitespace-pre-wrap"

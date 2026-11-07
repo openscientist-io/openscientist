@@ -122,6 +122,19 @@ def test_only_layout_classes_survive() -> None:
     assert "bg-red-500" not in sanitized.html
 
 
+def test_a_long_link_text_offers_line_breaks_after_its_separators() -> None:
+    """A DOI or URL is one unbreakable word, which leaves a justified line
+    with wide gaps unless it can wrap at its separators."""
+    sanitized = sanitize_formatted_prompt(
+        '<p><a href="https://doi.org/10.1038/nature11949">doi:10.1038/nature11949</a> and '
+        '<a href="https://www.ebi.ac.uk/gxa">Expression Atlas</a></p>',
+        attachment_urls=_URLS,
+    )
+    assert ">doi:<wbr>10.<wbr>1038/<wbr>nature11949</a>" in sanitized.html
+    assert ">Expression Atlas</a>" in sanitized.html
+    assert 'href="https://doi.org/10.1038/nature11949"' in sanitized.html
+
+
 def test_lists_tables_and_headings_are_kept() -> None:
     fragment = (
         '<h2>Aims</h2><ol start="2"><li>One</li></ol><ul><li>Two</li></ul>'
@@ -130,6 +143,20 @@ def test_lists_tables_and_headings_are_kept() -> None:
     )
     sanitized = sanitize_formatted_prompt(fragment, attachment_urls=_URLS)
     assert sanitized.html == fragment
+
+
+@pytest.mark.parametrize("lang", ["it", "en-GB", "zh-Hant-TW"])
+def test_a_language_tag_is_kept_for_hyphenation(lang: str) -> None:
+    sanitized = sanitize_formatted_prompt(
+        f'<div lang="{lang}"><p class="fp-justify">Testo</p></div>', attachment_urls=_URLS
+    )
+    assert f'<div lang="{lang}">' in sanitized.html
+
+
+@pytest.mark.parametrize("lang", ["", "english language", "e", "en_US", 'en" onclick="x'])
+def test_a_malformed_language_tag_is_dropped(lang: str) -> None:
+    sanitized = sanitize_formatted_prompt(f"<p lang='{lang}'>Text</p>", attachment_urls=_URLS)
+    assert sanitized.html == "<p>Text</p>"
 
 
 _FORMATTED = (
@@ -306,6 +333,7 @@ async def test_the_owner_sees_the_sanitized_formatted_prompt(
     assert f'src="{attachment_url(job_id, "data/fig 1.png")}"' in html.content
     assert f'href="{attachment_url(job_id, "data/counts.csv")}"' in html.content
     assert "steal" not in html.content
+    assert html.props["lang"] == "en", "justified text hyphenates only in a declared language"
     original = _original(client)
     assert original.text == "Aims: compare the bands in counts.csv, see fig 1.png"
     assert not original.visible
