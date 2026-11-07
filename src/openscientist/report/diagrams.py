@@ -107,10 +107,9 @@ def render_dot(source: str) -> str | None:
     if len(source) > MAX_DOT_CHARS:
         logger.warning("Diagram of %d characters is over the %d cap", len(source), MAX_DOT_CHARS)
         return None
-    # SERVER_NAME makes Graphviz refuse image files outside GV_FILE_PATH, which
-    # points nowhere, so an image attribute cannot pull a local file in.
+    # SERVER_NAME makes Graphviz refuse to load any file, so an image attribute
+    # cannot pull a local file in. Graphviz 14 exits when GV_FILE_PATH is set.
     env = {"PATH": os.environ.get("PATH", ""), "SERVER_NAME": "openscientist"}
-    env["GV_FILE_PATH"] = "/nonexistent"
     try:
         with tempfile.TemporaryDirectory() as scratch:
             result = subprocess.run(
