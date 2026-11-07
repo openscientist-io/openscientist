@@ -213,12 +213,13 @@ def _tab_pane(tabs: ui.tabs, tab: ui.tab) -> ui.element:
 
     Quasar's tab panels detach a hidden panel from the document, and a
     detached iframe reloads when it returns, so the report would be fetched
-    and rendered again on every visit. A hidden pane stays in the document.
+    and rendered again on every visit. A hidden pane stays in the document,
+    and NiceGUI's tab panel class gives it the same padding and section gap.
     """
     name = tab.props["name"]
     return (
         ui.element("div")
-        .classes("w-full p-4")
+        .classes("nicegui-tab-panel w-full")
         .bind_visibility_from(tabs, "value", backward=lambda value: value in (tab, name))
     )
 
