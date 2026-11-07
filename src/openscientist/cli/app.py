@@ -8,7 +8,7 @@ import click
 import typer
 from rich.console import Console
 
-from openscientist.cli import envfiles, stack, wizard
+from openscientist.cli import envfiles, preflight, stack, wizard
 
 app = typer.Typer(help="Set up and run OpenScientist.", no_args_is_help=False, add_completion=False)
 console = Console()
@@ -41,6 +41,7 @@ def setup(
 @app.command()
 def stop() -> None:
     """Stop the stack, keeping the data volume."""
+    _require(preflight.docker_findings(preflight.HOST))
     exit_code = stack.stop(Path.cwd(), stack.run_command)
     if exit_code:
         raise typer.Exit(exit_code)
@@ -52,6 +53,8 @@ def default_command(ctx: click.Context) -> None:
     if ctx.invoked_subcommand is not None:
         return
     root = Path.cwd()
+    # Before the wizard, so a host without Docker learns it before answering every question.
+    _require(preflight.docker_findings(preflight.HOST))
     # Move the launcher keys older checkouts keep in .env.owner, so a configured checkout is not sent to the wizard.
     envfiles.migrate_owner_launcher_keys(root)
     if envfiles.is_configured(root):
@@ -63,9 +66,16 @@ def default_command(ctx: click.Context) -> None:
 
 
 def _start(root: Path) -> None:
+    _require(preflight.start_findings(root, preflight.HOST))
     exit_code = stack.start(root, stack.run_command)
     if exit_code:
         raise typer.Exit(exit_code)
+
+
+def _require(findings: list[preflight.Finding]) -> None:
+    """Print the host findings and stop when one of them blocks."""
+    if not preflight.report(findings, console):
+        raise typer.Exit(1)
 
 
 def main() -> None:

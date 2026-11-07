@@ -31,6 +31,45 @@ def fake_live_check(monkeypatch):
     )
 
 
+def ready_host():
+    """A host whose Docker is ready and whose stack already holds its ports,
+    so the host checks pass without a real Docker."""
+    import json
+
+    from openscientist.cli.preflight import CommandResult, Host
+
+    info = {
+        "ServerVersion": "29.0.1",
+        "SecurityOptions": ["name=seccomp,profile=builtin"],
+        "MemTotal": 64 * 1024**3,
+        "DockerRootDir": "/var/lib/docker",
+        "OperatingSystem": "Ubuntu 24.04 LTS",
+    }
+
+    def run(argv: tuple[str, ...], cwd: Path | None) -> CommandResult:
+        if argv[:2] == ("docker", "info"):
+            return CommandResult(0, json.dumps(info), "")
+        if "ps" in argv:
+            return CommandResult(0, "3f2a1b\n", "")
+        return CommandResult(0, "ok\n", "")
+
+    return Host(
+        which=lambda name: f"/usr/bin/{name}",
+        run=run,
+        machine=lambda: "x86_64",
+        system=lambda: "Linux",
+        disk_free=lambda path: 500 * 1024**3,
+    )
+
+
+@pytest.fixture(autouse=True)
+def fake_host(monkeypatch):
+    """No test reaches the real Docker; the host checks pass unless a test overrides it."""
+    from openscientist.cli import preflight
+
+    monkeypatch.setattr(preflight, "HOST", ready_host())
+
+
 def env_value(checkout: Path, file: str, key: str) -> str:
     from openscientist.cli import envfiles
 
