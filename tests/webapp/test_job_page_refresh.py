@@ -961,6 +961,7 @@ def _body_fragment(card: ui.expansion) -> str:
     return f'<div id="body" class="{" ".join(content_box.classes)}">{sections}</div>'
 
 
+@pytest.mark.requires_weasyprint
 @pytest.mark.asyncio
 async def test_a_card_with_only_actions_starts_with_them(
     database: Forwarder,
@@ -984,6 +985,7 @@ async def test_a_card_with_only_actions_starts_with_them(
     assert actions.position_y == pytest.approx(body.position_y)
 
 
+@pytest.mark.requires_weasyprint
 @pytest.mark.asyncio
 async def test_sections_of_a_card_sit_a_small_gap_apart(
     database: Forwarder,

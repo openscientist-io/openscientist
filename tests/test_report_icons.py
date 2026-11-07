@@ -60,6 +60,7 @@ def test_a_report_without_icons_carries_no_icon_font(tmp_path: Path) -> None:
     assert "data:font/woff2" not in html
 
 
+@pytest.mark.requires_weasyprint
 def test_the_weasyprint_pdf_draws_the_icons_from_the_font(tmp_path: Path) -> None:
     from weasyprint import HTML  # type: ignore[import-untyped]
 

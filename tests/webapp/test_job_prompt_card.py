@@ -544,6 +544,7 @@ def _prompt_boxes(fragment: str) -> list[Any]:
     return layout(f'<div id="prompt" class="os-prompt">{fragment}</div>', _PROMPT_CSS)
 
 
+@pytest.mark.requires_weasyprint
 def test_the_first_heading_starts_the_prompt_even_inside_its_language_wrapper() -> None:
     from tests.webapp.css_layout import box_by_id
 
@@ -553,6 +554,7 @@ def test_the_first_heading_starts_the_prompt_even_inside_its_language_wrapper() 
     )
 
 
+@pytest.mark.requires_weasyprint
 def test_prompt_headings_stay_close_to_the_text_size() -> None:
     """The card's own label is small, so a heading may only step a little above
     the prompt's text, with modest space around it."""

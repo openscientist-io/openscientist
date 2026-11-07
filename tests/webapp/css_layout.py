@@ -3,7 +3,8 @@
 WeasyPrint resolves the cascade and the flex layout the way a browser does
 for these rules, so a test can read the font sizes and vertical offsets the
 browser would compute. Tailwind's utilities are generated in the browser and
-take no part.
+take no part. WeasyPrint loads Pango when imported, so the import waits for
+a layout and a test using one carries the ``requires_weasyprint`` marker.
 """
 
 from __future__ import annotations
@@ -13,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 import nicegui
-import weasyprint  # type: ignore[import-untyped]
 
 NICEGUI_CSS = Path(nicegui.__file__).parent / "static" / "nicegui.css"
 
@@ -34,6 +34,8 @@ def layout(body: str, *styles: str) -> list[Any]:
         f"<html><head><style>{NICEGUI_CSS.read_text(encoding='utf-8')}</style>{sheets}</head>"
         f"<body>{body}</body></html>"
     )
+    import weasyprint  # type: ignore[import-untyped]
+
     page = weasyprint.HTML(string=html).render().pages[0]
     return list(_boxes(page._page_box))
 

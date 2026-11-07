@@ -3,8 +3,12 @@ text, against NiceGUI's own markdown stylesheet, which sizes them for a page."""
 
 from __future__ import annotations
 
+import pytest
+
 from openscientist.webapp_components.pages.job_detail.chat import _CHAT_STYLES
 from tests.webapp.css_layout import layout
+
+pytestmark = pytest.mark.requires_weasyprint
 
 _BODY_PX = 16.0
 _HEADINGS = frozenset(f"h{level}" for level in range(1, 7))
