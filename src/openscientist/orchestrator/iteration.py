@@ -219,6 +219,12 @@ def build_report_prompt(
         cards = build_figure_inventory(job_dir)
         figure_section = format_figure_inventory_prompt(cards)
 
+    from openscientist.report.icons import REPORT_ICONS
+
+    icon_lines = "\n".join(
+        f"     - `fa-{name}`: {meaning}" for name, meaning in REPORT_ICONS.items()
+    )
+
     return f"""All iterations are complete. Write the final report for this research question:
 
 {research_question}
@@ -271,6 +277,11 @@ and iteration summaries.
    - Lead with the answer, then provide evidence (inverted pyramid)
    - Quantify findings (e.g., "3 of 5 studies found...")
    - Acknowledge limitations and uncertainty clearly
+   - You may mark a status or a topic with a Font Awesome icon, written as raw HTML at
+     the start of a heading, list item or table cell, such as
+     `<i class="fa-solid fa-circle-check"></i> H1 is supported`. Use at most one icon
+     in each of those places, never one inside a sentence, and only these icons:
+{icon_lines}
 
 4. **Embedding figures (required):**
    - You MUST embed every available figure that supports a finding, using this syntax: `{{{{figure:filename.png|caption=Your caption here}}}}`
