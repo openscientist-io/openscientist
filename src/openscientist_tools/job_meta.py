@@ -1,5 +1,5 @@
 """Standalone job-metadata tools (`set_status`, `set_job_title`,
-`save_iteration_summary`, `set_consensus_answer`)."""
+`save_iteration_summary`, `set_consensus_answer`, `set_formatted_prompt`)."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 _MAX_TITLE_LENGTH = 100
 _MIN_TITLE_LENGTH = 3
+_MAX_FORMATTED_PROMPT_LENGTH = 200_000
 
 
 def _validate_title(title: str) -> str | None:
@@ -71,6 +72,43 @@ async def set_job_title(title: str) -> str:
         logger.warning("Failed to persist job title to database: %s", e)
         return "❌ Failed to persist job title."
     return f"✅ Job title set: {title}"
+
+
+@mcp.tool()
+async def set_formatted_prompt(html: str) -> str:
+    """Record the research question reformatted as a display-ready HTML fragment.
+
+    Call this once during the prompt-formatting step with the complete fragment.
+
+    Args:
+        html: The HTML fragment (the research question's content, reformatted for display)
+
+    Returns:
+        Confirmation
+    """
+    fragment = html.strip()
+    if not fragment:
+        return "❌ Formatted prompt is empty. Provide the HTML fragment of the research question."
+    if len(fragment) > _MAX_FORMATTED_PROMPT_LENGTH:
+        return (
+            f"❌ Formatted prompt too long ({len(fragment)} chars). "
+            "Please keep it under 200000 characters."
+        )
+    try:
+        job_uuid = UUID(STATE.job_id)
+    except ValueError:
+        return f"❌ Invalid job id: {STATE.job_id}"
+    try:
+        async with async_session_local() as session:
+            job = await session.get(JobModel, job_uuid)
+            if job is None:
+                return "❌ Job not found in database."
+            job.formatted_prompt = fragment
+            await session.commit()
+    except Exception as e:
+        logger.warning("Failed to persist formatted prompt to database: %s", e)
+        return "❌ Failed to persist formatted prompt."
+    return "✅ Formatted prompt recorded"
 
 
 @mcp.tool()

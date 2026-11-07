@@ -496,6 +496,7 @@ class JobPageSnapshot:
     status: str
     current_iteration: int
     agent_status: str | None
+    formatted_prompt: str | None
     action_counts: dict[int, dict[str, int]]
     hypotheses: tuple[int, datetime | None]
     findings: tuple[int, datetime | None]
@@ -543,6 +544,7 @@ async def job_page_snapshot(
         status=job.status,
         current_iteration=job.current_iteration,
         agent_status=job.agent_status,
+        formatted_prompt=job.formatted_prompt,
         action_counts=await analysis_log_action_counts(session, job_uuid),
         hypotheses=(hypotheses[0], hypotheses[1]),
         findings=(findings[0], findings[1]),

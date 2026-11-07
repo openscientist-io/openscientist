@@ -80,13 +80,6 @@ _FIELD_ICONS: dict[str, str] = {
     "airgapped": "fa-solid fa-plug-circle-xmark",
 }
 
-# The vendored stylesheets the /admin page links, so Quasar renders the
-# fa-solid names with the vendored webfont.
-_FONTAWESOME_HEAD_HTML = (
-    '<link rel="stylesheet" href="/fa/css/fontawesome.min.css">\n'
-    '<link rel="stylesheet" href="/fa/css/solid.min.css">'
-)
-
 
 def _setting_icon(column: str) -> ui.icon:
     """A field's icon, at the size and in the colour of the input's text."""

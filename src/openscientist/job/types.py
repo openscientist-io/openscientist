@@ -72,6 +72,7 @@ class JobInfo:
     investigation_mode: str = "autonomous"
     owner_id: str | None = None
     short_title: str | None = None
+    formatted_prompt: str | None = None
     llm_provider: str | None = None
     llm_model: str | None = None
     is_public: bool = False
@@ -119,6 +120,7 @@ class JobInfo:
             investigation_mode=getattr(job, "investigation_mode", "autonomous"),
             owner_id=str(job.owner_id) if job.owner_id else None,
             short_title=getattr(job, "short_title", None),
+            formatted_prompt=getattr(job, "formatted_prompt", None),
             llm_provider=getattr(job, "llm_provider", None),
             llm_model=(job.llm_config or {}).get("model") if hasattr(job, "llm_config") else None,
             version_info=getattr(job, "version_info", None),

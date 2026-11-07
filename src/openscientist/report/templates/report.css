@@ -1,4 +1,4 @@
-/* OpenScientist Report — print-ready CSS */
+/* OpenScientist Report: print-ready CSS */
 
 /* Page setup */
 @page {
@@ -123,7 +123,7 @@ li {
   margin-bottom: 0.3em;
 }
 
-/* Figures — auto-numbered */
+/* Figures, auto-numbered */
 figure {
   margin: 1.5em auto;
   text-align: center;

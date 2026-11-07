@@ -19,9 +19,15 @@ from sqlalchemy import select
 from openscientist.database.models.job import Job as JobModel
 from openscientist.database.retry import CONTAINER_DB_RETRY_SECONDS, retry_async
 from openscientist.database.session import SessionOpener, async_session_local
+from openscientist.formatted_prompt import (
+    ALLOWED_ATTRIBUTES,
+    ALLOWED_TAGS,
+    GLOBAL_ATTRIBUTES,
+    LAYOUT_CLASSES,
+)
 from openscientist.job.status import status_update_statement
 from openscientist.knowledge_state import KnowledgeState
-from openscientist.prompts.common import namespace_tool_mentions
+from openscientist.prompts.common import WRITING_STYLE, namespace_tool_mentions
 
 logger = logging.getLogger(__name__)
 
@@ -249,19 +255,19 @@ Use the provided knowledge summary below for findings, hypotheses, literature,
 and iteration summaries.
 
 1. **Write the full report** to `{report_path}`.
-   The report should be comprehensive and detailed — typically 2,000+ words for
+   The report should be complete and detailed, typically 2,000+ words for
    a multi-iteration investigation.  Every section must contain its actual content.
 
 2. **Report structure:**
-   - **Summary** (2-3 paragraphs) — key takeaways for busy readers
-   - **Key Findings** — each finding with its statistical evidence, expanded into
+   - **Summary** (2-3 paragraphs): the main results for busy readers
+   - **Key Findings**: each finding with its statistical evidence, expanded into
      full prose paragraphs (not just bullet points from the knowledge state)
-   - **Mechanistic Model/Interpretation** — synthesize findings into a coherent
+   - **Mechanistic Model/Interpretation**: synthesize findings into a coherent
      narrative; use ASCII diagrams or tables where helpful
-   - **Evidence Base** — key literature with PMID links and how each paper
-     supports or challenges your findings
+   - **Evidence Base**: the literature behind the findings, with PMID links and how
+     each paper supports or challenges your findings
    - **Limitations and Knowledge Gaps**
-   - **Proposed Follow-up Experiments/Actions** — concrete, actionable next steps
+   - **Proposed Follow-up Experiments/Actions**: concrete next steps
 
 3. **Formatting:**
    - Use markdown tables for comparative data and study results
@@ -279,13 +285,140 @@ and iteration summaries.
    - Only reference figures listed in the "Available Figures" section above
 
 5. **Citation integrity:**
-   - For each finding, use the provided citation snippets as the basis for your references — do not re-derive which papers support which claims from the literature list
-   - Only attribute claims to papers based on the abstracts or citation snippets provided in the knowledge outline above — do not infer paper content from titles alone
+   - For each finding, use the provided citation snippets as the basis for your references, and do not re-derive which papers support which claims from the literature list
+   - Only attribute claims to papers based on the abstracts or citation snippets provided in the knowledge outline above, and do not infer paper content from titles alone
+
+{WRITING_STYLE}
 
 **Remember:** The content of `{report_path}` IS the deliverable the user receives.
 It must be a complete, self-contained document, not a summary or index. Writing this
 report is the only task for this step. The consensus answer comes as a separate step.
 """
+
+
+def _prompt_format_attachments(image_files: list[str], other_files: list[str]) -> str:
+    """The attachment guidance for the formatting turn, empty when the job has none."""
+    parts: list[str] = []
+    if image_files:
+        names = ", ".join(f"`data/{name}`" for name in image_files)
+        parts.append(
+            f'- Images (as <img src="data/<file name>" alt="...">): {names}. '
+            "Place each where the question refers to it, optionally inside a <figure> "
+            "with a <figcaption>; if the question does not place one, collect the "
+            "unplaced images in a figures section at the end."
+        )
+    if other_files:
+        names = ", ".join(f"`data/{name}`" for name in other_files)
+        parts.append(
+            f'- Other files (link as <a href="data/<file name>">): {names}. '
+            "Where the question mentions one, link it there; never add a list of "
+            "attachments, because the job page shows the files itself."
+        )
+    if not parts:
+        return ""
+    return "Attachments\n-----------\n" + "\n".join(parts)
+
+
+def _prompt_format_vocabulary() -> str:
+    """The HTML vocabulary the fragment may use, rendered from the sanitizer's lists."""
+    tags = ", ".join(sorted(ALLOWED_TAGS))
+    attributes = ", ".join(
+        f"`{tag}`: {', '.join(sorted(attrs))}" for tag, attrs in sorted(ALLOWED_ATTRIBUTES.items())
+    )
+    classes = "\n".join(f"| `{name}` | {effect} |" for name, effect in LAYOUT_CLASSES.items())
+    global_attributes = " and ".join(f"`{name}`" for name in sorted(GLOBAL_ATTRIBUTES))
+    return (
+        "Vocabulary\n----------\n"
+        f"Allowed tags: {tags}.\n"
+        f"Allowed on every tag: {global_attributes} (`class` keeps only the layout classes "
+        "below, `lang` only a language tag such as `en` or `it`).\n"
+        f"Allowed per tag: {attributes}.\n"
+        "Layout classes:\n\n"
+        "| class | what it does |\n"
+        "|-------|--------------|\n"
+        f"{classes}"
+    )
+
+
+_PROMPT_FORMAT_GUIDE = """How to format it
+----------------
+- Structure the text with headings, paragraphs, ordered, unordered and definition lists, \
+tables, blockquotes, emphasis and code wherever they make it easier to read.
+- Justify running paragraphs with `fp-justify`, float an image with `fp-float-left` or \
+`fp-float-right` at `fp-small` or `fp-medium` width so the text wraps around it, and put a \
+key constraint or caveat in an `fp-note` call-out.
+- Wrap the whole fragment in <div lang="..."> carrying the language tag of the question, \
+such as <div lang="en"> or <div lang="it">, so the page hyphenates justified text in the \
+right language. Mark a passage in another language with its own `lang`.
+- Turn bare URLs into links, a DOI 10.1234/abcd into \
+<a href="https://doi.org/10.1234/abcd">10.1234/abcd</a>, a PMID 12345678 into \
+<a href="https://pubmed.ncbi.nlm.nih.gov/12345678/">PMID 12345678</a>, a PMCID PMC12345 into \
+<a href="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12345/">PMC12345</a>, and an arXiv id \
+2301.12345 into <a href="https://arxiv.org/abs/2301.12345">arXiv:2301.12345</a>.
+- Replace every em dash (U+2014) in the question with a comma, a colon, parentheses or a full \
+stop, whichever keeps the meaning. Apart from that, keep the scientist's sentences word for word. \
+The writing rules below govern the headings, captions and alt text you write yourself."""
+
+
+def build_prompt_format_prompt(
+    research_question: str,
+    *,
+    image_files: list[str],
+    other_files: list[str],
+    tool_prefix: str,
+) -> str:
+    """Prompt for the dedicated prompt-formatting turn.
+
+    The model reformats the research question into the display fragment the job
+    page renders. Its instructions are namespaced before the scientist's
+    question is interpolated, so a tool name inside the question stays verbatim.
+    """
+    attachments = _prompt_format_attachments(image_files, other_files)
+    instruction = namespace_tool_mentions(
+        "Call the `set_formatted_prompt` tool once with the complete HTML fragment. "
+        "Do not call any other tool, read any file, run any code, or answer the "
+        "question: calling that tool is the only action for this step.",
+        tool_prefix,
+    )
+    sections = [
+        f"""Reformat the research question below for display as an HTML fragment. You are only \
+changing how it reads. Do not add, remove, answer or interpret any of its content.
+
+Research question
+-----------------
+{research_question}""",
+        _PROMPT_FORMAT_GUIDE,
+        WRITING_STYLE,
+        *([attachments] if attachments else []),
+        _prompt_format_vocabulary(),
+        "The fragment uses only the vocabulary above: no other tags, attributes or classes, "
+        "no `style` attributes, no scripts and no inline event handlers.",
+        instruction,
+    ]
+    return "\n\n".join(sections)
+
+
+def build_prompt_format_retry_prompt(
+    research_question: str,
+    *,
+    image_files: list[str],
+    other_files: list[str],
+    tool_prefix: str,
+) -> str:
+    """Focused re-ask when the formatting turn did not record a fragment."""
+    correction = namespace_tool_mentions(
+        "You did NOT record the formatted prompt. Call the `set_formatted_prompt` "
+        "tool now with the complete HTML fragment. Calling that tool is the only "
+        "action for this step.\n\nThe full task is restated below so nothing is "
+        "missing. Follow it exactly.\n\n---\n",
+        tool_prefix,
+    )
+    return correction + build_prompt_format_prompt(
+        research_question,
+        image_files=image_files,
+        other_files=other_files,
+        tool_prefix=tool_prefix,
+    )
 
 
 def build_consensus_prompt(research_question: str, *, tool_prefix: str) -> str:

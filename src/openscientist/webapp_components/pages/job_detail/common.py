@@ -7,8 +7,10 @@ from typing import Any
 from uuid import UUID
 
 from nicegui import ui
+from sqlalchemy import select
 
 from openscientist.database.models.job import Job as JobModel
+from openscientist.database.models.job_data_file import JobDataFile
 from openscientist.database.session import thread_safe_user_session
 from openscientist.job.types import JobStatus, completed_iterations
 from openscientist.job_files import list_job_files
@@ -18,6 +20,7 @@ from openscientist.knowledge_state_db import (
     analysis_log_action_counts,
     job_page_snapshot,
 )
+from openscientist.webapp_components.pages.job_detail.prompt import Attachment, attachment_url
 
 #: How many analysis log rows of each action type each iteration holds.
 ActionCounts = dict[int, dict[str, int]]
@@ -100,6 +103,20 @@ async def _page_snapshot(
     return job_row, _PageSnapshot(job=db_snapshot, plot_names=plot_names)
 
 
+async def _load_attachments(job_id: str, user_id: str) -> list[Attachment]:
+    """The job's attached files in upload order, read as the page's viewer."""
+    async with thread_safe_user_session(UUID(user_id)) as session:
+        rows = await session.execute(
+            select(JobDataFile.filename, JobDataFile.file_path, JobDataFile.file_size)
+            .where(JobDataFile.job_id == UUID(job_id))
+            .order_by(JobDataFile.created_at, JobDataFile.id)
+        )
+    return [
+        Attachment(name=name, url=attachment_url(job_id, path), size=size)
+        for name, path, size in rows.all()
+    ]
+
+
 def _render_access_lost() -> None:
     """The page body once the caller can no longer view the job."""
     with ui.column().classes("w-full items-center mt-16 gap-4"):
@@ -126,3 +143,6 @@ class _JobDetailContext:
     share_dialog: Any
     delete_dialog: Any
     notifications_dialog: Any
+    #: The attached files the viewer may open, none for a reader who sees the
+    #: job only because it is public.
+    attachments: list[Attachment]

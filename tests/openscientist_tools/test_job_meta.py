@@ -20,6 +20,7 @@ from openscientist.knowledge_state import KnowledgeState
 from openscientist_tools.job_meta import (
     save_iteration_summary,
     set_consensus_answer,
+    set_formatted_prompt,
     set_job_title,
     set_status,
 )
@@ -176,6 +177,33 @@ async def test_set_job_title_job_not_found(
     assert result.startswith("❌")
 
 
+async def test_set_formatted_prompt_rejects_empty() -> None:
+    result = await set_formatted_prompt("")
+    assert result.startswith("❌")
+
+
+async def test_set_formatted_prompt_rejects_whitespace_only() -> None:
+    result = await set_formatted_prompt(" \n\t ")
+    assert result.startswith("❌")
+
+
+async def test_set_formatted_prompt_rejects_one_over_the_maximum() -> None:
+    """A fragment one character over the 200000-char maximum is rejected."""
+    result = await set_formatted_prompt("<p>" + "x" * 200_000 + "</p>")
+    assert result.startswith("❌")
+
+
+async def test_set_formatted_prompt_job_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+    test_database_url: str,
+    _apply_migrations_once: None,
+) -> None:
+    """A valid UUID with no matching job is rejected, not silently dropped."""
+    monkeypatch.setattr(STATE, "job_id", str(uuid4()))
+    result = await set_formatted_prompt("<p>Why do cold cells accumulate carnosine?</p>")
+    assert result.startswith("❌")
+
+
 # ----- Full-call subprocess + real-DB tests, one per tool -----
 
 
@@ -259,3 +287,45 @@ async def test_set_consensus_answer_via_subprocess(
 
         reloaded = await KnowledgeState.load_from_database(str(job_id))
         assert reloaded.data["consensus_answer"] == "The answer is carnosine."
+
+
+async def test_set_formatted_prompt_via_subprocess(
+    tmp_path: Path,
+    server_env: Callable[..., dict[str, str]],
+    server_params: Callable[[dict[str, str]], StdioServerParameters],
+    test_database_url: str,
+    _apply_migrations_once: None,
+) -> None:
+    job_id = uuid4()
+    fragment = '<p class="fp-lead">Why do cold-adapted cells accumulate carnosine?</p>'
+    async with _spawned_for_job(
+        server_env, server_params, tmp_path, test_database_url, job_id
+    ) as mcp:
+        response = await mcp.call_tool("set_formatted_prompt", {"html": f"  {fragment}  "})
+        assert _text(response) == "✅ Formatted prompt recorded"
+
+        async with async_session_local() as session:
+            row = (await session.execute(select(Job).where(Job.id == job_id))).scalar_one()
+            assert row.formatted_prompt == fragment
+
+
+async def test_set_formatted_prompt_max_boundary(
+    tmp_path: Path,
+    server_env: Callable[..., dict[str, str]],
+    server_params: Callable[[dict[str, str]], StdioServerParameters],
+    test_database_url: str,
+    _apply_migrations_once: None,
+) -> None:
+    """A fragment at the inclusive 200000-char maximum is recorded."""
+    job_id = uuid4()
+    fragment = "<p>" + "x" * 199_993 + "</p>"
+    assert len(fragment) == 200_000
+    async with _spawned_for_job(
+        server_env, server_params, tmp_path, test_database_url, job_id
+    ) as mcp:
+        response = await mcp.call_tool("set_formatted_prompt", {"html": fragment})
+        assert _text(response) == "✅ Formatted prompt recorded"
+
+        async with async_session_local() as session:
+            row = (await session.execute(select(Job).where(Job.id == job_id))).scalar_one()
+            assert row.formatted_prompt == fragment
