@@ -119,3 +119,30 @@ def test_a_finished_job_shows_no_live_status_line() -> None:
     labels = _rendered_labels(job, {"agent_status": "leftover"})
     assert "Status: completed" in labels
     assert "leftover" not in labels
+
+
+@pytest.mark.asyncio
+async def test_a_tab_pane_spaces_its_sections_like_a_tab_panel(served_page) -> None:
+    """The status line, the research question card and the timeline sit a gap
+    apart, as they did inside Quasar's tab panel."""
+    from nicegui import ui
+
+    from openscientist.webapp_components.pages.job_detail import _tab_pane
+    from tests.webapp.css_layout import box_by_id, layout
+
+    panes: list[ui.element] = []
+
+    async def build() -> None:
+        with ui.tabs() as tabs:
+            log = ui.tab("Research Log")
+        tabs.set_value(log)
+        panes.append(_tab_pane(tabs, log))
+
+    await served_page("unused", build, lambda client: None)
+    classes = " ".join(panes[0].classes)
+    boxes = layout(
+        f'<div class="{classes}"><div id="first" style="height:10px"></div>'
+        '<div id="second" style="height:10px"></div></div>'
+    )
+    first, second = box_by_id(boxes, "first"), box_by_id(boxes, "second")
+    assert second.position_y - (first.position_y + first.height) == pytest.approx(16)

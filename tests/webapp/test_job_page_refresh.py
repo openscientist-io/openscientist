@@ -946,3 +946,61 @@ async def test_a_deleted_client_skips_its_tick(
     await drain_outbox(client)
     assert not [m for m in wire_recorder if m.event == "update" and m.room == client.id]
     assert not rec, "a deleted client's tick ran statements"
+
+
+def _body_fragment(card: ui.expansion) -> str:
+    """The card body's boxes as plain divs with their classes, each section's
+    content a 40px block, so a layout engine can place the sections."""
+    [content_box] = card.default_slot.children
+    sections = "".join(
+        f'<div id="section-{index}" class="{" ".join(section.classes)}">'
+        + ("".join('<div style="height:40px"></div>' for _ in section.default_slot.children))
+        + "</div>"
+        for index, section in enumerate(content_box.default_slot.children)
+    )
+    return f'<div id="body" class="{" ".join(content_box.classes)}">{sections}</div>'
+
+
+@pytest.mark.asyncio
+async def test_a_card_with_only_actions_starts_with_them(
+    database: Forwarder,
+    running_job: dict[str, str],
+    served_page: ServedPage,
+) -> None:
+    """Iteration 3 has neither a summary nor findings yet, so its Actions
+    section sits at the top of the body with no space held for the others."""
+    from openscientist.webapp_components.pages.job_detail.iterations import ITERATION_STYLES
+    from tests.webapp.css_layout import box_by_id, layout
+
+    client = await _build(served_page, running_job)
+    card = _card(client, 3)
+    await _open_card(client, card)
+    [content_box] = card.default_slot.children
+    sections = content_box.default_slot.children
+    actions_index = next(i for i, s in enumerate(sections) if s.default_slot.children)
+    boxes = layout(_body_fragment(card), ITERATION_STYLES)
+    body = box_by_id(boxes, "body")
+    actions = box_by_id(boxes, f"section-{actions_index}")
+    assert actions.position_y == pytest.approx(body.position_y)
+
+
+@pytest.mark.asyncio
+async def test_sections_of_a_card_sit_a_small_gap_apart(
+    database: Forwarder,
+    running_job: dict[str, str],
+    served_page: ServedPage,
+) -> None:
+    """Iteration 1 shows its summary and its actions, half a rem apart."""
+    from openscientist.webapp_components.pages.job_detail.iterations import ITERATION_STYLES
+    from tests.webapp.css_layout import box_by_id, layout
+
+    client = await _build(served_page, running_job)
+    card = _card(client, 1)
+    await _open_card(client, card)
+    [content_box] = card.default_slot.children
+    filled = [i for i, s in enumerate(content_box.default_slot.children) if s.default_slot.children]
+    assert len(filled) >= 2
+    boxes = layout(_body_fragment(card), ITERATION_STYLES)
+    first = box_by_id(boxes, f"section-{filled[0]}")
+    second = box_by_id(boxes, f"section-{filled[1]}")
+    assert second.position_y - (first.position_y + first.height) == pytest.approx(8)

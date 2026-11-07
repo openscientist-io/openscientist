@@ -202,7 +202,7 @@ async def _render_analysis_log_actions(
     if not total:
         return
     with box:
-        with ui.expansion(f"Actions ({total})", icon="build").classes("w-full mt-2") as expansion:
+        with ui.expansion(f"Actions ({total})", icon="build").classes("w-full") as expansion:
             with ui.column().classes("w-full gap-0") as cards:
                 await _render_action_cards(cards, first)
     state.expansion = expansion

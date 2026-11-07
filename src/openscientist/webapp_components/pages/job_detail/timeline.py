@@ -24,7 +24,7 @@ from openscientist.webapp_components.pages.job_detail.common import (
     _render_access_lost,
 )
 from openscientist.webapp_components.pages.job_detail.feedback import _refresh_feedback_panel
-from openscientist.webapp_components.pages.job_detail.iterations import _Timeline
+from openscientist.webapp_components.pages.job_detail.iterations import ITERATION_STYLES, _Timeline
 from openscientist.webapp_components.pages.job_detail.prompt import render_research_prompt
 from openscientist.webapp_components.utils import (
     is_client_connected,
@@ -292,6 +292,8 @@ async def _check_and_refresh(
 
 
 async def _render_timeline_tab(context: _JobDetailContext) -> None:
+    ui.add_head_html(ITERATION_STYLES)
+
     @ui.refreshable
     def render_job_stats() -> None:
         _render_job_stats_content(context)
