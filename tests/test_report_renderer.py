@@ -178,3 +178,10 @@ def test_the_run_environment_is_escaped(tmp_path: Path) -> None:
     html = render_report_html(md_path, tmp_path, run_environment="<script>alert(1)</script>")
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+
+
+def test_the_report_adds_no_em_dash_of_its_own(tmp_path: Path) -> None:
+    """The writing rules forbid the em dash, so the template's own text uses none."""
+    html = _render(tmp_path, "# Report\n\nPlain text.\n")
+    assert "\u2014" not in html
+    assert "&mdash;" not in html
