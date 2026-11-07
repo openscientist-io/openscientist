@@ -179,8 +179,6 @@ def _attachment_name(value: str) -> str | None:
     if parts.scheme or parts.netloc or parts.query or parts.fragment:
         return None
     path = PurePosixPath(unquote(parts.path))
-    if path.parts[:1] == (".",):
-        path = PurePosixPath(*path.parts[1:])
     if len(path.parts) != 2 or path.parts[0] != ATTACHMENT_DIR:
         return None
     return path.name
