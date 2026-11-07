@@ -124,3 +124,29 @@ async def test_a_view_only_viewer_sees_the_chat_messages_in_the_first_html(
     assert ("user", USER_MESSAGE) in sent
     assert ("assistant", ASSISTANT_MESSAGE) in sent
     assert not any(isinstance(e, ui.textarea) for e in client.elements.values())
+
+
+@pytest.mark.asyncio
+async def test_enter_alone_sends_without_the_browsers_newline(
+    database: Forwarder,
+    chat_job: dict[str, str],
+    served_page: ServedPage,
+) -> None:
+    """The browser applies the listener's key and modifiers. Enter alone sends
+    and blocks the textarea's own newline, so no stray line flashes in the
+    input, and Enter with Shift keeps the newline because ``exact`` skips it."""
+    client, _ = await served_page(
+        chat_job["owner_token"],
+        lambda: job_detail_page(chat_job["job_id"]),
+        lambda client: None,
+    )
+    textarea = next(e for e in client.elements.values() if isinstance(e, ui.textarea))
+    keydowns = [
+        listener.to_dict()
+        for listener in textarea._event_listeners.values()
+        if listener.type.split(".")[0] == "keydown"
+    ]
+    assert len(keydowns) == 1
+    [keydown] = keydowns
+    assert keydown["keys"] == ["enter"]
+    assert {"exact", "prevent"} <= set(keydown["modifiers"])
