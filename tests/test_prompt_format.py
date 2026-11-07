@@ -44,14 +44,20 @@ def _completed() -> IterationResult:
 
 
 def _executor(turn: object) -> SimpleNamespace:
-    """A fake agent that records nothing but its turns' prompts."""
+    """A fake agent whose turn returns ``turn`` when it is a result, and
+    otherwise calls or raises it."""
+    run_iteration = (
+        AsyncMock(return_value=turn)
+        if isinstance(turn, IterationResult)
+        else AsyncMock(side_effect=turn)
+    )
     return SimpleNamespace(
         prompt_fragments=lambda: SimpleNamespace(mcp_tool_prefix=""),
         shutdown=AsyncMock(),
         apply_runtime_environment=lambda: None,
         prepare_job_workspace=AsyncMock(),
         warm_model_profile=AsyncMock(),
-        run_iteration=AsyncMock(side_effect=turn),
+        run_iteration=run_iteration,
     )
 
 
