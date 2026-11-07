@@ -91,6 +91,21 @@ def test_the_prompt_format_prompt_asks_for_the_language_of_the_question() -> Non
     assert '<div lang="' in prompt
 
 
+def test_the_prompt_format_prompt_carries_the_writing_rules() -> None:
+    """Headings and captions the model writes follow the writing rules, the
+    em dashes in the question are re-punctuated, and the prompt itself shows
+    no em dash."""
+    from openscientist.prompts.common import WRITING_STYLE
+
+    for prompt in (
+        build_prompt_format_prompt(_QUESTION, image_files=[], other_files=[], tool_prefix=""),
+        build_prompt_format_retry_prompt(_QUESTION, image_files=[], other_files=[], tool_prefix=""),
+    ):
+        assert WRITING_STYLE in prompt
+        assert "Replace every em dash" in prompt
+        assert "\u2014" not in prompt
+
+
 def test_the_prompt_format_retry_prompt_restates_the_task() -> None:
     prompt = build_prompt_format_retry_prompt(
         _QUESTION, image_files=["figure.png"], other_files=[], tool_prefix=_PREFIX

@@ -266,6 +266,24 @@ def _is_long(text_chars: int, images: int) -> bool:
     return text_chars + _IMAGE_WEIGHT * images > _COLLAPSE_WEIGHT
 
 
+#: A tag that starts or ends a block, so the text on either side reads as
+#: separate words.
+_BLOCK_TAG = re.compile(
+    r"</?(?:blockquote|br|caption|dd|div|dl|dt|figcaption|figure|h[1-6]|hr|li|ol|p|pre"
+    r"|section|table|tbody|td|tfoot|th|thead|tr|ul)\b[^>]*>"
+)
+
+
+def _collapse_space(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _plain_text(fragment: str) -> str:
+    """The words a sanitized fragment shows, with whitespace collapsed."""
+    spaced = _BLOCK_TAG.sub(" ", fragment)
+    return _collapse_space(html.unescape(nh3.clean(spaced, tags=set())))
+
+
 def _render_gallery(images: list[Attachment]) -> None:
     figures = "".join(
         f'<a href="{html.escape(image.url)}" target="_blank" rel="noopener noreferrer">'
@@ -327,7 +345,9 @@ def render_research_prompt(
     )
     placed = sanitized.placed_images if sanitized is not None else frozenset()
     unplaced = [image for image in images if image.name not in placed]
-    text_chars = len(nh3.clean(sanitized.html, tags=set())) if sanitized else len(research_question)
+    text = _plain_text(sanitized.html) if sanitized else _collapse_space(research_question)
+    # The original adds nothing when the formatting changed only markup.
+    offers_original = sanitized is not None and text != _collapse_space(research_question)
 
     with ui.column().classes("w-full gap-1"):
         with ui.element("div").classes("os-prompt-body w-full") as body:
@@ -342,11 +362,11 @@ def render_research_prompt(
                 )
             if unplaced:
                 _render_gallery(unplaced)
-        if _is_long(text_chars, len(placed) + len(unplaced)):
+        if _is_long(len(text), len(placed) + len(unplaced)):
             body.classes(add="os-prompt-collapsed")
             more = ui.button("Show more").props("flat dense no-caps color=primary")
             more.on_click(lambda: _toggle_collapsed(body, more))
-        if sanitized is not None:
+        if offers_original:
             show = ui.button("Show original prompt").props("flat dense no-caps color=grey")
             show.classes("self-start text-xs")
             original = ui.label(research_question).classes(

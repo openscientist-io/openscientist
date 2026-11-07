@@ -392,6 +392,39 @@ async def test_a_public_reader_gets_neither_images_nor_attachments(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("question", "formatted"),
+    [
+        ("Does X bind Y?", "<p>Does <strong>X</strong> bind <em>Y</em>?</p>"),
+        (
+            "Aims\n\nCompare A &  B  in   counts.csv",
+            '<div lang="en"><h2>Aims</h2><p class="fp-justify">Compare A &amp; B in '
+            '<a href="data/counts.csv">counts.csv</a></p></div>',
+        ),
+    ],
+)
+async def test_a_formatted_prompt_with_the_original_words_offers_no_original(
+    database: Forwarder,
+    test_engine: AsyncEngine,
+    served_page: ServedPage,
+    question: str,
+    formatted: str,
+) -> None:
+    """Markup, links and line breaks alone leave nothing the original would
+    add, so the page offers no toggle for it."""
+    seeded = await _seed(
+        test_engine, formatted_prompt=formatted, question=question, is_public=False
+    )
+    try:
+        client = await _build(served_page, seeded["owner_token"], seeded["job_id"])
+        assert _prompt_html(client) is not None
+        assert _button(client, "Show original prompt") is None
+        assert not any("os-prompt-original" in e.classes for e in _elements(client, ui.label))
+    finally:
+        await _cleanup(test_engine, seeded)
+
+
+@pytest.mark.asyncio
 async def test_without_a_formatted_prompt_the_raw_text_is_the_prompt(
     database: Forwarder, unformatted_job: dict[str, Any], served_page: ServedPage
 ) -> None:
@@ -456,7 +489,7 @@ async def test_a_formatted_prompt_written_while_running_appears_on_the_next_tick
     async with AsyncSession(test_engine) as db:
         job = await db.get(Job, UUID(job_id))
         assert job is not None
-        job.formatted_prompt = "<p>Does <em>X</em> bind <strong>Y</strong>?</p>"
+        job.formatted_prompt = "<h2>Question</h2><p>Does <em>X</em> bind <strong>Y</strong>?</p>"
         await db.commit()
     assert timer.callback is not None
     with client:

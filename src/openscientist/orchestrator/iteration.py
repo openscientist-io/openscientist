@@ -354,7 +354,10 @@ right language. Mark a passage in another language with its own `lang`.
 <a href="https://doi.org/10.1234/abcd">10.1234/abcd</a>, a PMID 12345678 into \
 <a href="https://pubmed.ncbi.nlm.nih.gov/12345678/">PMID 12345678</a>, a PMCID PMC12345 into \
 <a href="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12345/">PMC12345</a>, and an arXiv id \
-2301.12345 into <a href="https://arxiv.org/abs/2301.12345">arXiv:2301.12345</a>."""
+2301.12345 into <a href="https://arxiv.org/abs/2301.12345">arXiv:2301.12345</a>.
+- Replace every em dash (U+2014) in the question with a comma, a colon, parentheses or a full \
+stop, whichever keeps the meaning. Apart from that, keep the scientist's sentences word for word. \
+The writing rules below govern the headings, captions and alt text you write yourself."""
 
 
 def build_prompt_format_prompt(
@@ -385,6 +388,7 @@ Research question
 -----------------
 {research_question}""",
         _PROMPT_FORMAT_GUIDE,
+        WRITING_STYLE,
         *([attachments] if attachments else []),
         _prompt_format_vocabulary(),
         "The fragment uses only the vocabulary above: no other tags, attributes or classes, "
