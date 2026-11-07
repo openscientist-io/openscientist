@@ -38,6 +38,29 @@ class BackendFragments:
     ``mcp__<server>_<tool>``, so it sets the prefix."""
 
 
+#: How every text the scientist reads is written, from chat answers and
+#: findings to the report and the text drawn into figures. Each rule names a
+#: pattern readers take for machine writing (Wikipedia:Signs of AI writing
+#: collects them) and says what to write instead, because a model follows what
+#: it is told to do more reliably than what it is told to avoid.
+WRITING_STYLE = """\
+## Writing Style
+
+These rules apply to everything the scientist reads: chat answers, findings, iteration summaries, the final report, figure captions, and the text inside figures (titles, axis labels, legends, annotations).
+
+- Punctuate with commas, colons, parentheses and full stops. Never use the em dash character (U+2014), and never use an en dash or a double hyphen in its place. An en dash may only join the two ends of a numeric range.
+- Say what a thing is or what the data shows. Do not frame a statement against a claim nobody made ("it's not X, it's Y", "not just X, but also Y", "X rather than Y").
+- Prefer plain verbs: "is", "has", "shows", "uses". Write "is" where you might write "serves as", "stands as", "represents" or "boasts".
+- Choose the exact word over the impressive one. Avoid delve, crucial, pivotal, key (as an adjective), intricate, multifaceted, nuanced, robust, comprehensive, seamless, landscape and realm (as abstract nouns), tapestry, testament, underscore, highlight and showcase (as verbs), foster, leverage, harness, enhance, garner, notably, and "plays a role in".
+- Be specific. Give numbers, effect sizes, sample sizes, gene and compound names, and PMIDs in place of "various", "several studies", "a growing body of evidence" or "recent years".
+- Report significance only as far as the evidence goes. Skip "sheds light on", "paves the way", "a pivotal step", "broader implications" and similar phrases unless the sentence then states the concrete implication.
+- Use a list only for items that are genuinely separate. Do not group things in threes by habit, and do not start every bullet with a bold label.
+- Start with the answer and stop when it is complete. No openers or closers such as "Great question", "Certainly", "It's worth noting that", "In conclusion", "Overall", "I hope this helps" or offers to elaborate.
+- State uncertainty once, where it applies, with its reason. Do not stack "may", "might", "could" and "potentially" on one claim.
+- Connect sentences by their content. Do not open them with "Additionally", "Moreover" or "Furthermore".
+- Keep sentences short and vary their length. Write headings in sentence case."""
+
+
 #: Every tool the ``openscientist-tools`` MCP server can expose. The prompt
 #: bodies name these in backticks, so a backend that namespaces MCP tools
 #: rewrites the mentions through ``mcp_tool_prefix``. Kept explicit rather than
@@ -105,17 +128,17 @@ def build_system_prompt(frags: BackendFragments) -> str:
 **Your Capabilities:**
 
 You have access to tools:
-- `execute_code`: Run code to analyze data. Supports `language="python"` (default, with pandas, polars, numpy, scipy, matplotlib, seaborn, plotly, statsmodels, pingouin, sklearn, umap-learn, leidenalg, networkx, biopython, scanpy, pydeseq2, and more), `language="rust"` (compiled via cargo; pre-seeded crates: rayon, ndarray, ndarray-stats, statrs, rand, serde_json, csv, anyhow, itertools, num-traits — only use pre-seeded crates, adding others will fail; only reach for Rust when Python is genuinely too slow, compilation overhead is significant), or `language="sparql"` (query a remote SPARQL endpoint — include `# ENDPOINT: <url>` in the query; always add a LIMIT clause; prefer simple targeted queries over complex multi-join ones)
+- `execute_code`: Run code to analyze data. Supports `language="python"` (default, with pandas, polars, numpy, scipy, matplotlib, seaborn, plotly, statsmodels, pingouin, sklearn, umap-learn, leidenalg, networkx, biopython, scanpy, pydeseq2, and more), `language="rust"` (compiled via cargo; pre-seeded crates: rayon, ndarray, ndarray-stats, statrs, rand, serde_json, csv, anyhow, itertools, num-traits. Only use pre-seeded crates, adding others will fail; only reach for Rust when Python is genuinely too slow, compilation overhead is significant), or `language="sparql"` (query a remote SPARQL endpoint. Include `# ENDPOINT: <url>` in the query; always add a LIMIT clause; prefer simple targeted queries over complex multi-join ones)
 - `search_pubmed`: Search scientific literature for relevant papers
 - `update_knowledge_state`: Record a confirmed finding
-- `set_status`: Update your current status message — keep it short, a brief phrase (e.g., "Analyzing correlation between X and Y")
-- `set_job_title`: Set a short, descriptive title for this job — a concise noun phrase, not a sentence (e.g., "Kinase inhibitor binding analysis")
+- `set_status`: Update your current status message. Keep it short, a brief phrase (e.g., "Analyzing correlation between X and Y")
+- `set_job_title`: Set a short, descriptive title for this job, a concise noun phrase rather than a sentence (e.g., "Kinase inhibitor binding analysis")
 
 IMPORTANT:
-- Call `set_job_title` early (iteration 1) to give the job a meaningful, concise title — a short noun phrase
+- Call `set_job_title` early (iteration 1) to give the job a meaningful, concise title, a short noun phrase
 - Call `set_status` at the START of each significant action to let users know what you're working on
 
-Domain-specific analysis skills are in {frags.skills_location}. Read ALL workflow skills (category `workflow`) in iteration 1 and follow them throughout your investigation. Read domain skills that match your data type. These skills are mandatory methodology — not optional references.
+Domain-specific analysis skills are in {frags.skills_location}. Read ALL workflow skills (category `workflow`) in iteration 1 and follow them throughout your investigation. Read domain skills that match your data type. These skills are mandatory methodology, not optional references.
 
 **Your Approach:**
 
@@ -260,14 +283,14 @@ You are running in an **autonomous discovery loop**. Each iteration, you will:
 4. If supported → update_knowledge_state(title="...", evidence="...")
 ```
 
-Always use hypothesis tracking — even for literature-only investigations.""")
+Always use hypothesis tracking, even for literature-only investigations.""")
 
     # Structural Biology Tools (only when Phenix is available)
     if phenix_available:
         parts.append("""
 ### Structural Biology Tools (Phenix is available)
 
-**IMPORTANT:** For structural biology tasks (validation, comparison, refinement, map analysis), **always use `run_phenix_tool`** instead of `execute_code`. Phenix is installed and available. Do NOT write custom Python to parse PDB files or compute validation metrics — use Phenix, which is the gold standard. Read the bundled `domain--phenix-tools-reference.md` skill in `.claude/skills/` for the full list of available commands.
+**IMPORTANT:** For structural biology tasks (validation, comparison, refinement, map analysis), **always use `run_phenix_tool`** instead of `execute_code`. Phenix is installed and available. Do NOT write custom Python to parse PDB files or compute validation metrics. Use Phenix, which is the gold standard. Read the bundled `domain--phenix-tools-reference.md` skill in `.claude/skills/` for the full list of available commands.
 
 **run_phenix_tool** - Execute any Phenix command-line tool
 
@@ -310,7 +333,7 @@ Use the correct tool for each file type:
 ### Skills (MUST USE)
 
 Your `.claude/skills/` directory contains **workflow** and **domain** skills.
-These are not optional references — they encode the project's methodology.
+These skills encode the project's methodology, so follow them as requirements.
 
 **Workflow skills** (category `workflow`) govern how you work at each phase:
 
@@ -370,11 +393,11 @@ types you may encounter (genomics, metabolomics, data-science, etc.).
     if use_hypotheses:
         parts.append("""\
 - **Positive**: Update hypothesis to `"supported"`, then record to knowledge state
-- **Negative**: Update hypothesis to `"refuted"` — also valuable, rules out possibilities""")
+- **Negative**: Update hypothesis to `"refuted"`. This is also valuable, because it rules out possibilities""")
     else:
         parts.append("""\
 - **Positive**: Record confirmed findings to the knowledge state
-- **Negative**: Negative results are also valuable — they rule out possibilities""")
+- **Negative**: Negative results are also valuable, because they rule out possibilities""")
 
     parts.append("""\
 - Consider biological/mechanistic interpretation
@@ -429,7 +452,7 @@ types you may encounter (genomics, metabolomics, data-science, etc.).
 
 ## Final Report
 
-Write the report to `./final_report.md` (relative path — do NOT use absolute paths) with:
+Write the report to `./final_report.md` (a relative path, do NOT use absolute paths) with:
 
 1. Summary (answer to the research question)
 2. Key findings (with statistical evidence)
@@ -437,6 +460,8 @@ Write the report to `./final_report.md` (relative path — do NOT use absolute p
 4. Limitations and future directions
 
 Then call `set_consensus_answer` with a 1–3 sentence direct answer.
+
+{{WRITING_STYLE}}
 
 ---
 
@@ -458,7 +483,7 @@ def _airgap_search_note() -> str:
         return ""
     return (
         "- This run is air-gapped: search goes to a local MEDLINE mirror, not live PubMed.\n"
-        "  Every term is required (AND), and only titles and abstracts are indexed -- there is\n"
+        "  Every term is required (AND), and only titles and abstracts are indexed, so there is\n"
         "  no MeSH expansion or synonym matching. Long queries therefore often return nothing.\n"
         "  Use 2-4 specific terms. If a search returns no papers, retry with fewer terms rather\n"
         "  than concluding the literature does not exist.\n"
@@ -470,6 +495,7 @@ def substitute_fragments(doc: str, frags: BackendFragments) -> str:
 
     Shared by the discovery job doc and the chat context so they cannot diverge.
     """
+    doc = doc.replace("{{WRITING_STYLE}}", WRITING_STYLE)
     doc = doc.replace("{{AIRGAP_SEARCH_NOTE}}", _airgap_search_note())
     doc = doc.replace("`.claude/skills/`", frags.skills_location)
     doc = doc.replace("Claude's built-in `Read` tool", frags.builtin_read_tool)

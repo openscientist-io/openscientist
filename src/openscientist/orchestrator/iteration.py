@@ -21,7 +21,7 @@ from openscientist.database.retry import CONTAINER_DB_RETRY_SECONDS, retry_async
 from openscientist.database.session import SessionOpener, async_session_local
 from openscientist.job.status import status_update_statement
 from openscientist.knowledge_state import KnowledgeState
-from openscientist.prompts.common import namespace_tool_mentions
+from openscientist.prompts.common import WRITING_STYLE, namespace_tool_mentions
 
 logger = logging.getLogger(__name__)
 
@@ -249,19 +249,19 @@ Use the provided knowledge summary below for findings, hypotheses, literature,
 and iteration summaries.
 
 1. **Write the full report** to `{report_path}`.
-   The report should be comprehensive and detailed — typically 2,000+ words for
+   The report should be complete and detailed, typically 2,000+ words for
    a multi-iteration investigation.  Every section must contain its actual content.
 
 2. **Report structure:**
-   - **Summary** (2-3 paragraphs) — key takeaways for busy readers
-   - **Key Findings** — each finding with its statistical evidence, expanded into
+   - **Summary** (2-3 paragraphs): the main results for busy readers
+   - **Key Findings**: each finding with its statistical evidence, expanded into
      full prose paragraphs (not just bullet points from the knowledge state)
-   - **Mechanistic Model/Interpretation** — synthesize findings into a coherent
+   - **Mechanistic Model/Interpretation**: synthesize findings into a coherent
      narrative; use ASCII diagrams or tables where helpful
-   - **Evidence Base** — key literature with PMID links and how each paper
-     supports or challenges your findings
+   - **Evidence Base**: the literature behind the findings, with PMID links and how
+     each paper supports or challenges your findings
    - **Limitations and Knowledge Gaps**
-   - **Proposed Follow-up Experiments/Actions** — concrete, actionable next steps
+   - **Proposed Follow-up Experiments/Actions**: concrete next steps
 
 3. **Formatting:**
    - Use markdown tables for comparative data and study results
@@ -279,8 +279,10 @@ and iteration summaries.
    - Only reference figures listed in the "Available Figures" section above
 
 5. **Citation integrity:**
-   - For each finding, use the provided citation snippets as the basis for your references — do not re-derive which papers support which claims from the literature list
-   - Only attribute claims to papers based on the abstracts or citation snippets provided in the knowledge outline above — do not infer paper content from titles alone
+   - For each finding, use the provided citation snippets as the basis for your references, and do not re-derive which papers support which claims from the literature list
+   - Only attribute claims to papers based on the abstracts or citation snippets provided in the knowledge outline above, and do not infer paper content from titles alone
+
+{WRITING_STYLE}
 
 **Remember:** The content of `{report_path}` IS the deliverable the user receives.
 It must be a complete, self-contained document, not a summary or index. Writing this

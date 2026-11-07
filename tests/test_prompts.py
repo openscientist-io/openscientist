@@ -150,17 +150,79 @@ class TestRenderChatContext:
     substitution path so the chat agent is never told about tools/paths its
     backend lacks."""
 
-    def test_claude_chat_context_is_identity(self):
-        from openscientist.prompts.claude import CLAUDE_FRAGMENTS
-        from openscientist.prompts.common import read_chat_template, render_chat_context
-
-        # Claude fragments are identity substitutions: the rendered context is
-        # the packaged template verbatim.
-        assert render_chat_context(CLAUDE_FRAGMENTS) == read_chat_template()
-
     def test_codex_chat_context_drops_claude_vocabulary(self):
         ctx = CodexAgent.chat_doc()
         assert "Claude's" not in ctx
         assert "`.claude/skills/`" not in ctx
         # The guidance itself is preserved.
         assert "execute_code" in ctx
+
+
+_AGENTS = (ClaudeCodeAgent, CodexAgent, OmpAgent)
+_EM_DASH = "\u2014"
+
+
+def _report_prompt() -> str:
+    from openscientist.knowledge_state import KnowledgeState
+    from openscientist.orchestrator.iteration import build_report_prompt
+
+    return build_report_prompt(
+        "Does X bind Y?", KnowledgeState("job", "Does X bind Y?", 3), context_window_tokens=131072
+    )
+
+
+class TestWritingStyle:
+    """Every model turn that writes text for the scientist carries the writing
+    rules, and no prompt models the em dash the rules forbid."""
+
+    @pytest.mark.parametrize("agent", _AGENTS)
+    def test_the_discovery_doc_carries_the_rules(self, agent) -> None:
+        from openscientist.prompts.common import WRITING_STYLE
+
+        doc = agent.job_doc(use_hypotheses=True, phenix_available=True)
+        assert WRITING_STYLE in doc
+        assert "{{WRITING_STYLE}}" not in doc
+
+    @pytest.mark.parametrize("agent", _AGENTS)
+    def test_the_chat_doc_carries_the_rules(self, agent) -> None:
+        from openscientist.prompts.common import WRITING_STYLE
+
+        doc = agent.chat_doc()
+        assert WRITING_STYLE in doc
+        assert "{{WRITING_STYLE}}" not in doc
+
+    def test_the_report_prompt_carries_the_rules(self) -> None:
+        from openscientist.prompts.common import WRITING_STYLE
+
+        assert WRITING_STYLE in _report_prompt()
+
+    def test_the_rules_cover_text_figures_and_the_em_dash(self) -> None:
+        from openscientist.prompts.common import WRITING_STYLE
+
+        assert "U+2014" in WRITING_STYLE
+        for figure_text in ("titles", "axis labels", "legends"):
+            assert figure_text in WRITING_STYLE
+
+    @pytest.mark.parametrize("agent", _AGENTS)
+    def test_no_prompt_uses_an_em_dash(self, agent) -> None:
+        from openscientist.knowledge_state import KnowledgeState
+        from openscientist.orchestrator.iteration import (
+            build_consensus_prompt,
+            build_initial_prompt,
+            build_iteration_prompt,
+            build_report_retry_prompt,
+        )
+
+        ks = KnowledgeState("job", "Does X bind Y?", 3)
+        prompts = {
+            "system": agent.system_prompt(),
+            "discovery doc": agent.job_doc(use_hypotheses=True, phenix_available=True),
+            "chat doc": agent.chat_doc(),
+            "initial": build_initial_prompt("Q", 3, ["d.csv"], ks, tool_prefix=""),
+            "iteration": build_iteration_prompt(2, 3, ks, "More on Y", tool_prefix=""),
+            "report": _report_prompt(),
+            "report retry": build_report_retry_prompt("Q", ks, context_window_tokens=131072),
+            "consensus": build_consensus_prompt("Q", tool_prefix=""),
+        }
+        for name, prompt in prompts.items():
+            assert _EM_DASH not in prompt, f"the {name} prompt uses an em dash"
