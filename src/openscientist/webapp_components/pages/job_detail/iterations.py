@@ -42,6 +42,15 @@ from openscientist.webapp_components.utils import (
     is_client_connected,
 )
 
+#: A card body keeps one column per section, so a section that has nothing
+#: yet takes neither room nor a gap, and the shown ones sit half a rem apart.
+ITERATION_STYLES = """
+<style>
+.os-iteration-body { gap: 0.5rem; }
+.os-iteration-body > .nicegui-column:empty { display: none; }
+</style>
+"""
+
 
 def _show_no_timeline_activity() -> ui.label:
     return ui.label("No investigation activity yet").classes("text-gray-500")
@@ -167,7 +176,7 @@ def _render_iteration_plots(iter_provenance_dir: Path, iter_num: int) -> None:
         ui.expansion(
             f"Visualizations ({len(iteration_plots)})",
             icon="insert_chart",
-        ).classes("w-full mt-2"),
+        ).classes("w-full"),
         ui.grid(columns=2).classes("w-full gap-2"),
     ):
         for plot_file, metadata in iteration_plots:
@@ -231,7 +240,7 @@ def _render_iteration_literature(
     with ui.expansion(
         f"Literature searched ({total_papers or len(all_iter_papers)} papers)",
         icon="article",
-    ).classes("w-full mt-2"):
+    ).classes("w-full"):
         for entry in literature_entries:
             query = entry.get("query", "")
             if not query:
@@ -304,9 +313,7 @@ def _render_iteration_hypotheses(iter_ks_data: dict[str, Any], iter_num: int) ->
     if not iter_hypotheses:
         return
 
-    with ui.expansion(f"Hypotheses ({len(iter_hypotheses)})", icon="science").classes(
-        "w-full mt-2"
-    ):
+    with ui.expansion(f"Hypotheses ({len(iter_hypotheses)})", icon="science").classes("w-full"):
         for hyp in iter_hypotheses:
             status = hyp.get("status", "pending")
             card_class = _HYPOTHESIS_STATUS_CLASSES.get(status, "bg-gray-50")
@@ -326,9 +333,7 @@ def _render_iteration_findings(iter_ks_data: dict[str, Any], iter_num: int) -> N
     if not iteration_findings:
         return
 
-    with ui.expansion(f"Findings ({len(iteration_findings)})", icon="lightbulb").classes(
-        "w-full mt-2"
-    ):
+    with ui.expansion(f"Findings ({len(iteration_findings)})", icon="lightbulb").classes("w-full"):
         for finding in iteration_findings:
             with ui.card().classes("w-full mb-2 bg-green-50"):
                 ui.label(finding["title"]).classes("font-bold text-green-800")
@@ -349,7 +354,7 @@ def _render_iteration_findings(iter_ks_data: dict[str, Any], iter_num: int) -> N
 def _render_summary_section(summary_text: str) -> None:
     if not summary_text:
         return
-    with ui.expansion("Summary", icon="summarize", value=True).classes("w-full mt-2"):
+    with ui.expansion("Summary", icon="summarize", value=True).classes("w-full"):
         render_text_with_pmid_links(summary_text, text_classes="text-sm text-gray-700")
 
 
@@ -494,7 +499,7 @@ class _IterationCard:
                         model.finding_count,
                         model.hypothesis_count,
                     )
-            self.content_box = ui.column().classes("w-full")
+            self.content_box = ui.column().classes("w-full os-iteration-body")
             with self.content_box:
                 ui.label("Click to load details...").classes("text-sm text-gray-400 italic")
             expansion.on_value_change(self._on_value_change)
