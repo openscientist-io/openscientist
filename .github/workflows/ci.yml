@@ -102,6 +102,9 @@ jobs:
 
       - run: uv sync --locked
 
+      # The report renderer draws ```dot diagrams with Graphviz, as the images do.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends graphviz
+
       - name: Unit & Integration Tests
         # Live third-party APIs are deselected: NCBI rate limits by IP and the
         # shared runner egress makes those tests fail unrelated to the change.

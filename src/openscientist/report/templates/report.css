@@ -132,6 +132,20 @@ figure {
   counter-increment: figure;
 }
 
+/* Graphviz diagrams carry no caption, so they take no figure number. */
+figure.diagram {
+  counter-increment: none;
+}
+
+figure.diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+figure.diagram-failed pre {
+  text-align: left;
+}
+
 figure img {
   max-width: 100%;
   height: auto;

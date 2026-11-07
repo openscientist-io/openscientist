@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
     libgdk-pixbuf-2.0-0 \
     shared-mime-info \
+    graphviz \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for fast Python package management, from the digest-pinned

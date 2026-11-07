@@ -269,7 +269,7 @@ and iteration summaries.
    - **Key Findings**: each finding with its statistical evidence, expanded into
      full prose paragraphs (not just bullet points from the knowledge state)
    - **Mechanistic Model/Interpretation**: synthesize findings into a coherent
-     narrative; use ASCII diagrams or tables where helpful
+     narrative; use a Graphviz diagram or a table where helpful
    - **Evidence Base**: the literature behind the findings, with PMID links and how
      each paper supports or challenges your findings
    - **Limitations and Knowledge Gaps**
@@ -277,6 +277,18 @@ and iteration summaries.
 
 3. **Formatting:**
    - Use markdown tables for comparative data and study results
+   - Draw a pathway, mechanism, causal chain or study flow as a Graphviz diagram in a
+     fenced ```dot block, never as ASCII art. Write a `digraph` with short node labels
+     (`\\n` breaks a long one) and arrows for effects. Use `rankdir=LR` when a node
+     branches into several, `rankdir=TB` for a single chain, and `style=dashed` for an
+     uncertain link. The page styles the boxes. For example:
+     ```dot
+     digraph model {{
+       rankdir=LR;
+       "Energy deficit" -> "Marrow hypoplasia" -> "WBC 3.9\\nALC 0.6";
+       "Energy deficit" -> "Micronutrient depletion" -> "Folate 3.1";
+     }}
+     ```
    - Include PMID links as `[PMID: 12345678](https://pubmed.ncbi.nlm.nih.gov/12345678/)`
    - Use proper heading hierarchy (h2 for sections, h3 for subsections)
    - Use **bold** for key terms, *italic* for paper titles

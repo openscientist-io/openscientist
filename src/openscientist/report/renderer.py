@@ -16,6 +16,7 @@ import markdown as md  # type: ignore[import-untyped]
 
 from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
 from openscientist.job_files import read_job_file_text
+from openscientist.report.diagrams import DiagramExtension
 from openscientist.report.icons import icon_css, uses_icons
 from openscientist.report.md_figure_ext import FigureExtension
 from openscientist.report.processor import isolate_figure_tags
@@ -94,6 +95,7 @@ def render_report_html(
                 use_base64=embed_images,
                 excluded_top_level_dirs=excluded_top_level_dirs,
             ),
+            DiagramExtension(),
         ],
     )
 
