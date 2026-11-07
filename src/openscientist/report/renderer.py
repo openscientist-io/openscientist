@@ -16,6 +16,7 @@ import markdown as md  # type: ignore[import-untyped]
 
 from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
 from openscientist.job_files import read_job_file_text
+from openscientist.report.icons import icon_css, uses_icons
 from openscientist.report.md_figure_ext import FigureExtension
 from openscientist.report.processor import isolate_figure_tags
 from openscientist.webapp_components.components.badges import transform_pmid_references
@@ -97,7 +98,7 @@ def render_report_html(
     )
 
     # 4. Wrap in styled template
-    css = _load_css()
+    css = _load_css() + (f"\n{icon_css()}" if uses_icons(body_html) else "")
     template = _load_template()
     return template.render(
         body=body_html,

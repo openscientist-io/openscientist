@@ -13,6 +13,7 @@ from pathlib import Path
 from fpdf import FPDF, XPos, YPos
 
 from openscientist.exceptions import PDFGenerationError
+from openscientist.report.icons import strip_icon_tags
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +212,8 @@ def markdown_to_pdf(
     logger.info("Converting %s to PDF...", markdown_path)
 
     try:
-        markdown_content = _read_markdown_content(markdown_path)
+        # fpdf2 has no icon font, so the agent's icon elements would print as markup.
+        markdown_content = strip_icon_tags(_read_markdown_content(markdown_path))
         pdf = ReportPDF()
         state = _MarkdownRenderState()
         for line in markdown_content.split("\n"):
