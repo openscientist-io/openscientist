@@ -85,12 +85,14 @@ _PROMPT_CSS = """
 <style>
 .os-prompt { font-size: 1rem; line-height: 1.6; color: #1f2937; overflow-wrap: anywhere; }
 .os-prompt::after { content: ""; display: table; clear: both; }
-.os-prompt > :first-child { margin-top: 0; }
-.os-prompt h1, .os-prompt h2 { font-size: 1.2rem; font-weight: 700; margin: 1rem 0 .5rem; }
-.os-prompt h3 { font-size: 1.05rem; font-weight: 700; margin: .9rem 0 .4rem; }
-.os-prompt h4 { font-size: 1rem; font-weight: 600; margin: .8rem 0 .3rem; }
-.os-prompt p { margin: 0 0 .75rem; }
-.os-prompt ul, .os-prompt ol { margin: 0 0 .75rem; padding-left: 1.5rem; }
+.os-prompt > :first-child,
+.os-prompt :is(h1, h2, h3, h4):first-child { margin-top: 0; }
+.os-prompt h1, .os-prompt h2 { font-size: 1.05rem; font-weight: 700; margin: .75rem 0 .25rem; }
+.os-prompt h3 { font-size: 1rem; font-weight: 700; margin: .6rem 0 .2rem; }
+.os-prompt h4 { font-size: .95rem; font-weight: 600; margin: .5rem 0 .2rem; }
+.os-prompt p { margin: 0 0 .5rem; }
+.os-prompt ul, .os-prompt ol { margin: 0 0 .5rem; padding-left: 1.5rem; }
+.os-prompt-refining { color: #0e7490; font-style: italic; font-size: .875rem; }
 .os-prompt ul { list-style: disc; }
 .os-prompt ol { list-style: decimal; }
 .os-prompt li { margin: .15rem 0; }
@@ -328,10 +330,13 @@ def render_research_prompt(
     research_question: str,
     formatted_prompt: str | None,
     attachments: list[Attachment],
+    *,
+    refining: bool,
 ) -> None:
     """The formatted prompt, or the original text while there is none, then
     the images it does not show, a Show more for a long prompt, the original
-    text behind a toggle and the other attachments."""
+    text behind a toggle and the other attachments. ``refining`` marks the
+    original text as waiting for its formatted version."""
     images = [a for a in attachments if is_inline_image(a.name)]
     files = [a for a in attachments if not is_inline_image(a.name)]
     sanitized = (
@@ -348,6 +353,10 @@ def render_research_prompt(
     offers_original = sanitized is not None and text != _collapse_space(research_question)
 
     with ui.column().classes("w-full gap-1"):
+        if refining and sanitized is None:
+            with ui.row().classes("items-center gap-2 os-prompt-refining"):
+                ui.spinner(size="1em", color="cyan-7")
+                ui.label("Refining the research question...")
         with ui.element("div").classes("os-prompt-body w-full") as body:
             if sanitized is not None:
                 # Sanitized above against the formatted-prompt vocabulary.
@@ -356,7 +365,7 @@ def render_research_prompt(
                 )
             else:
                 ui.label(research_question).classes(
-                    "os-prompt-original text-lg whitespace-pre-wrap"
+                    "os-prompt-original text-base whitespace-pre-wrap"
                 )
             if unplaced:
                 _render_gallery(unplaced)
