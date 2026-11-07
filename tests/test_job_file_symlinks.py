@@ -937,7 +937,7 @@ class TestUiReportPage:
         (job_dir / "final_report.html").symlink_to(secret)
 
         with patch.object(report, "ui") as ui:
-            report._render_report_html_iframe(job_dir)
+            report._render_report_html_iframe(job_dir, MagicMock(), MagicMock())
 
         ui.element.assert_not_called()
 
@@ -1000,7 +1000,7 @@ class TestUiReportPage:
         sparse_file(job_dir / "final_report.html", MAX_ARTIFACT_FILE_SIZE_BYTES * 4)
 
         with patch.object(report, "ui") as ui:
-            report._render_report_html_iframe(job_dir)
+            report._render_report_html_iframe(job_dir, MagicMock(), MagicMock())
 
         ui.element.assert_not_called()
 

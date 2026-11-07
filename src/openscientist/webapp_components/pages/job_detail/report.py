@@ -185,13 +185,26 @@ def _report_html_available(job_dir: Path) -> bool:
     return True
 
 
-def _render_report_html_iframe(job_dir: Path) -> None:
-    """Render HTML report in an iframe to avoid CSS leakage."""
+def _render_report_html_iframe(job_dir: Path, tabs: ui.tabs, report_tab: ui.tab) -> None:
+    """Render HTML report in an iframe to avoid CSS leakage.
+
+    The frame stays in the page across tab switches, so it gets its source
+    when the Report tab first opens and keeps it, and a page that never shows
+    the report never has the route render it.
+    """
     if not _report_html_available(job_dir):
         return
-    ui.element("iframe").props(f'src="/web/jobs/{job_dir.name}/report.html" frameborder="0"').style(
-        "width: 100%; height: 80vh; border: 1px solid #ddd; border-radius: 8px;"
+    frame = (
+        ui.element("iframe")
+        .props('frameborder="0"')
+        .style("width: 100%; height: 80vh; border: 1px solid #ddd; border-radius: 8px;")
     )
+
+    def _load_on_first_visit(e: ValueChangeEventArguments[str | Tab | TabPanel | None]) -> None:
+        if e.value == report_tab.props["name"] and "src" not in frame.props:
+            frame.props(f'src="/web/jobs/{job_dir.name}/report.html"')
+
+    tabs.on_value_change(_load_on_first_visit)
 
 
 def _transformed_report_markdown(report_path: Path) -> str | None:
@@ -232,9 +245,7 @@ async def _render_report_markdown(container: ui.column, report_path: Path) -> No
         ui.markdown(content).classes("w-full")
 
 
-def _render_lazy_markdown_report(
-    panels: ui.tab_panels, report_tab: ui.tab, report_path: Path
-) -> None:
+def _render_lazy_markdown_report(tabs: ui.tabs, report_tab: ui.tab, report_path: Path) -> None:
     """The markdown report view for jobs whose HTML report is missing.
 
     The page build only places a loading state. The conversion runs when the
@@ -258,7 +269,7 @@ def _render_lazy_markdown_report(
             rendered["value"] = False
             raise
 
-    panels.on_value_change(_activate_report_tab)
+    tabs.on_value_change(_activate_report_tab)
 
 
 def _render_missing_report_state(context: _JobDetailContext) -> None:
@@ -271,9 +282,7 @@ def _render_missing_report_state(context: _JobDetailContext) -> None:
     ui.label("Report will be available when job completes").classes("text-gray-500 italic")
 
 
-def _render_report_tab(
-    context: _JobDetailContext, panels: ui.tab_panels, report_tab: ui.tab
-) -> None:
+def _render_report_tab(context: _JobDetailContext, tabs: ui.tabs, report_tab: ui.tab) -> None:
     report_path = context.job_dir / "final_report.md"
     pdf_path = context.job_dir / "final_report.pdf"
 
@@ -289,9 +298,9 @@ def _render_report_tab(
         # Prefer HTML report (with embedded figures) over raw markdown, when
         # the report route can serve it.
         if _report_html_available(context.job_dir):
-            _render_report_html_iframe(context.job_dir)
+            _render_report_html_iframe(context.job_dir, tabs, report_tab)
         else:
-            _render_lazy_markdown_report(panels, report_tab, report_path)
+            _render_lazy_markdown_report(tabs, report_tab, report_path)
         return
 
     _render_missing_report_state(context)
