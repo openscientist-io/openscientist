@@ -53,6 +53,23 @@ _CHAT_STYLES = """
     .chat-bubble-assistant .markdown-body {
         background: transparent !important;
     }
+    /* NiceGUI sizes markdown for a page (h1 is 3rem, lists indent 2.5rem), and
+       a bubble holds text-sm text, so headings step up from the bubble's own
+       size and lists indent only as far as their markers need. */
+    .chat-bubble-assistant .nicegui-markdown :is(h1, h2, h3, h4, h5, h6) {
+        line-height: 1.4;
+        margin: 0.9em 0 0.35em;
+        font-weight: 600;
+    }
+    .chat-bubble-assistant .nicegui-markdown :is(h1, h2, h3, h4, h5, h6):first-child {
+        margin-top: 0;
+    }
+    .chat-bubble-assistant .nicegui-markdown h1 { font-size: 1.125rem; font-weight: 700; }
+    .chat-bubble-assistant .nicegui-markdown h2 { font-size: 1rem; font-weight: 700; }
+    .chat-bubble-assistant .nicegui-markdown h3 { font-size: 0.9375rem; }
+    .chat-bubble-assistant .nicegui-markdown :is(h4, h5, h6) { font-size: 0.875rem; }
+    .chat-bubble-assistant .nicegui-markdown ul { padding-inline-start: 1.25rem; }
+    .chat-bubble-assistant .nicegui-markdown ol { padding-inline-start: 1.5rem; }
     .chat-container {
         background: linear-gradient(180deg, #fafbfc 0%, #f0f2f5 100%);
         border-radius: 12px;
