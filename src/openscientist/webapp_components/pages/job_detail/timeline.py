@@ -156,6 +156,21 @@ def _open_dialog(dialog: ui.dialog) -> None:
     dialog.open()
 
 
+def _prompt_refining(context: _JobDetailContext) -> bool:
+    """Whether the formatting turn may still be running. It runs before the
+    first analysis, so a logged action means it ended, recorded or not."""
+    return (
+        context.job_info.status == JobStatus.RUNNING
+        and not context.job_info.formatted_prompt
+        and not context.action_counts
+    )
+
+
+def _prompt_model(context: _JobDetailContext) -> tuple[str | None, bool]:
+    """What the prompt card shows, compared across ticks before a redraw."""
+    return context.job_info.formatted_prompt, _prompt_refining(context)
+
+
 def _render_research_question_card(
     context: _JobDetailContext, render_prompt: refreshable[[], None]
 ) -> None:
@@ -270,7 +285,7 @@ async def _check_and_refresh(
     )
     latest_job = JobInfo.from_db_model(db_job, iters, findings)
 
-    prompt_changed = latest_job.formatted_prompt != context.job_info.formatted_prompt
+    prompt_before = _prompt_model(context)
 
     # Update context before calling .refresh() so refreshables read fresh data
     context.ks_data = latest_ks
@@ -284,7 +299,7 @@ async def _check_and_refresh(
     if stats_model != context.state["stats_model"]:
         context.state["stats_model"] = stats_model
         render_job_stats.refresh()
-    if prompt_changed:
+    if _prompt_model(context) != prompt_before:
         render_prompt.refresh()
 
     await timeline.update(old_snapshot, snapshot)
@@ -304,6 +319,7 @@ async def _render_timeline_tab(context: _JobDetailContext) -> None:
             context.job_info.research_question,
             context.job_info.formatted_prompt,
             context.attachments,
+            refining=_prompt_refining(context),
         )
 
     render_job_stats()
