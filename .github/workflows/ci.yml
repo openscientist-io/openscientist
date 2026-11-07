@@ -86,6 +86,8 @@ jobs:
 
     env:
       DATABASE_URL: postgresql+asyncpg://openscientist:openscientist_dev_password@localhost:5434/openscientist
+      # A requires_weasyprint test fails here instead of skipping when Pango is missing.
+      OPENSCIENTIST_REQUIRE_PDF_TESTS: "1"
 
     steps:
       - uses: actions/checkout@v7
@@ -102,8 +104,14 @@ jobs:
 
       - run: uv sync --locked
 
-      # The report renderer draws ```dot diagrams with Graphviz, as the images do.
-      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends graphviz
+      # The system packages the images install, WeasyPrint's Pango stack, its
+      # fonts and Graphviz, read from Dockerfile.base so the two lists match.
+      - name: System packages from Dockerfile.base
+        run: |
+          packages=$(sed -n '/apt-get install/,/rm -rf/s/^ *\([a-z0-9][a-z0-9.+-]*\) *\\$/\1/p' Dockerfile.base)
+          test -n "$packages"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $packages
 
       - name: Unit & Integration Tests
         # Live third-party APIs are deselected: NCBI rate limits by IP and the

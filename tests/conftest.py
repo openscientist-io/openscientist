@@ -5,7 +5,7 @@ import os
 import subprocess
 import tempfile
 from collections.abc import AsyncGenerator, Callable, Generator, Mapping
-from functools import partial
+from functools import cache, partial
 from pathlib import Path
 
 import pytest
@@ -81,6 +81,35 @@ if "OPENSCIENTIST_JOB_DIR" not in os.environ:
 
 # Clear and reload settings cache after setting up test environment
 _clear_settings_cache()
+
+_WEASYPRINT_SKIP_REASON = "WeasyPrint system libraries (Pango) not installed; see CONTRIBUTING"
+
+
+@cache
+def _weasyprint_unavailable() -> str | None:
+    """Why WeasyPrint cannot load here, or None when it can. WeasyPrint opens
+    Pango and its companions when imported and raises OSError without them,
+    which a Python install alone does not provide."""
+    try:
+        import weasyprint  # type: ignore[import-untyped]  # noqa: F401
+    except OSError as exc:
+        return str(exc)
+    return None
+
+
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """Skip a ``requires_weasyprint`` test on a host without Pango, or fail it
+    when OPENSCIENTIST_REQUIRE_PDF_TESTS is set, as CI does."""
+    if item.get_closest_marker("requires_weasyprint") is None:
+        return
+    missing = _weasyprint_unavailable()
+    if missing is None:
+        return
+    if os.environ.get("OPENSCIENTIST_REQUIRE_PDF_TESTS"):
+        pytest.fail(
+            f"OPENSCIENTIST_REQUIRE_PDF_TESTS is set, but WeasyPrint cannot load: {missing}"
+        )
+    pytest.skip(_WEASYPRINT_SKIP_REASON)
 
 
 @pytest.fixture

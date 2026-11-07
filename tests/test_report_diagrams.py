@@ -43,6 +43,7 @@ def test_a_dot_block_becomes_an_inline_svg_diagram(tmp_path: Path, embed: bool) 
     assert "The deficit explains both branches." in html
 
 
+@pytest.mark.requires_weasyprint
 def test_the_pdf_draws_the_diagram_labels(tmp_path: Path) -> None:
     from weasyprint import HTML  # type: ignore[import-untyped]
 

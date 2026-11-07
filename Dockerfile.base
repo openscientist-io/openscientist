@@ -8,7 +8,8 @@ FROM python:3.12-slim@sha256:b18b261e1b4974b4f321451ad5251ded85abb22c2b8b262da52
 
 # Install system dependencies
 # WeasyPrint requires: pango, cairo, harfbuzz, gdk-pixbuf (for PNG/JPEG), and
-# the fonts the web and the agent render reports with
+# the fonts the web and the agent render reports with. CI installs this list
+# too, reading one package per line, so keep that layout
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \

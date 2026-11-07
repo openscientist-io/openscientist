@@ -121,6 +121,7 @@ def test_a_finished_job_shows_no_live_status_line() -> None:
     assert "leftover" not in labels
 
 
+@pytest.mark.requires_weasyprint
 @pytest.mark.asyncio
 async def test_a_tab_pane_spaces_its_sections_like_a_tab_panel(served_page) -> None:
     """The status line, the research question card and the timeline sit a gap
