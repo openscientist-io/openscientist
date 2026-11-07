@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from openscientist.admin_settings import parse_docker_memory_mib
+from openscientist.docker_memory import parse_docker_memory_mib
 
 
 @pytest.mark.parametrize(

@@ -17,9 +17,9 @@ def _recorded(run):
 
 
 def test_start_runs_the_four_builds_then_up_in_order(checkout: Path, monkeypatch):
-    calls: list[tuple[tuple[str, ...], Mapping[str, str] | None]] = []
+    calls: list[tuple[tuple[str, ...], Mapping[str, str]]] = []
 
-    def run(argv: tuple[str, ...], env: Mapping[str, str] | None) -> int:
+    def run(argv: tuple[str, ...], env: Mapping[str, str]) -> int:
         calls.append((argv, env))
         return 0
 
@@ -36,9 +36,9 @@ def test_start_runs_the_four_builds_then_up_in_order(checkout: Path, monkeypatch
         "openscientist-base:latest",
         ".",
     )
-    assert calls[0][1] == {"DOCKER_DEFAULT_PLATFORM": "linux/amd64"}
+    assert calls[0][1]["DOCKER_DEFAULT_PLATFORM"] == "linux/amd64"
     assert argvs[1][:5] == ("docker", "compose", "-f", "docker-compose.yml", "build")
-    assert calls[1][1] == {"DOCKER_DEFAULT_PLATFORM": "linux/amd64"}
+    assert calls[1][1]["DOCKER_DEFAULT_PLATFORM"] == "linux/amd64"
     assert argvs[1].count("--build-arg") == 2
     assert any(arg.startswith("OPENSCIENTIST_COMMIT=") for arg in argvs[1])
     assert any(arg.startswith("BUILD_TIME=") for arg in argvs[1])
@@ -79,7 +79,7 @@ def test_start_records_the_checkout_path_before_any_compose_call(checkout: Path,
     (checkout / ".env").write_text("OPENSCIENTIST_HOST_PROJECT_DIR=/old/place\n", encoding="utf-8")
     recorded_at_first_call: list[str | None] = []
 
-    def run(argv: tuple[str, ...], env: Mapping[str, str] | None) -> int:
+    def run(argv: tuple[str, ...], env: Mapping[str, str]) -> int:
         if not recorded_at_first_call:
             values = stack.envfiles.file_values(checkout, "env")
             recorded_at_first_call.append(values.get("OPENSCIENTIST_HOST_PROJECT_DIR"))
@@ -117,7 +117,7 @@ def test_start_gives_a_fresh_jobs_directory_to_the_jobs_group_before_up(
     before up."""
     argvs: list[tuple[str, ...]] = []
 
-    def run(argv: tuple[str, ...], env: Mapping[str, str] | None) -> int:
+    def run(argv: tuple[str, ...], env: Mapping[str, str]) -> int:
         argvs.append(argv)
         return 0
 
@@ -153,9 +153,9 @@ def test_image_tags_come_from_the_env_file(checkout: Path, monkeypatch: pytest.M
         "OPENSCIENTIST_AGENT_IMAGE=openscientist-agent:staging\n",
         encoding="utf-8",
     )
-    calls: list[tuple[tuple[str, ...], Mapping[str, str] | None]] = []
+    calls: list[tuple[tuple[str, ...], Mapping[str, str]]] = []
 
-    def run(argv: tuple[str, ...], env: Mapping[str, str] | None) -> int:
+    def run(argv: tuple[str, ...], env: Mapping[str, str]) -> int:
         calls.append((argv, env))
         return 0
 
@@ -179,9 +179,9 @@ def test_image_tags_fall_back_to_latest_when_unset_or_empty(
         "OPENSCIENTIST_BASE_IMAGE=\nOPENSCIENTIST_EXECUTOR_IMAGE=\nOPENSCIENTIST_AGENT_IMAGE=\n",
         encoding="utf-8",
     )
-    calls: list[tuple[tuple[str, ...], Mapping[str, str] | None]] = []
+    calls: list[tuple[tuple[str, ...], Mapping[str, str]]] = []
 
-    def run(argv: tuple[str, ...], env: Mapping[str, str] | None) -> int:
+    def run(argv: tuple[str, ...], env: Mapping[str, str]) -> int:
         calls.append((argv, env))
         return 0
 
@@ -199,9 +199,9 @@ def test_image_tags_fall_back_to_latest_when_unset_or_empty(
 
 
 def test_start_stops_at_the_first_failing_build(checkout: Path, monkeypatch):
-    calls: list[tuple[tuple[str, ...], Mapping[str, str] | None]] = []
+    calls: list[tuple[tuple[str, ...], Mapping[str, str]]] = []
 
-    def run(argv: tuple[str, ...], env: Mapping[str, str] | None) -> int:
+    def run(argv: tuple[str, ...], env: Mapping[str, str]) -> int:
         calls.append((argv, env))
         return 1 if len(calls) == 3 else 0
 
@@ -212,9 +212,9 @@ def test_start_stops_at_the_first_failing_build(checkout: Path, monkeypatch):
 
 
 def test_start_stops_when_up_fails(checkout: Path, monkeypatch):
-    calls: list[tuple[tuple[str, ...], Mapping[str, str] | None]] = []
+    calls: list[tuple[tuple[str, ...], Mapping[str, str]]] = []
 
-    def run(argv: tuple[str, ...], env: Mapping[str, str] | None) -> int:
+    def run(argv: tuple[str, ...], env: Mapping[str, str]) -> int:
         calls.append((argv, env))
         return 7 if "up" in argv else 0
 
@@ -225,9 +225,9 @@ def test_start_stops_when_up_fails(checkout: Path, monkeypatch):
 
 
 def test_start_fails_when_health_never_answers(checkout: Path, monkeypatch):
-    calls: list[tuple[tuple[str, ...], Mapping[str, str] | None]] = []
+    calls: list[tuple[tuple[str, ...], Mapping[str, str]]] = []
 
-    def run(argv: tuple[str, ...], env: Mapping[str, str] | None) -> int:
+    def run(argv: tuple[str, ...], env: Mapping[str, str]) -> int:
         calls.append((argv, env))
         return 0
 
@@ -238,9 +238,9 @@ def test_start_fails_when_health_never_answers(checkout: Path, monkeypatch):
 
 
 def test_stop_runs_compose_down_and_propagates_the_exit_code(checkout: Path):
-    calls: list[tuple[tuple[str, ...], Mapping[str, str] | None]] = []
+    calls: list[tuple[tuple[str, ...], Mapping[str, str]]] = []
 
-    def run(argv: tuple[str, ...], env: Mapping[str, str] | None) -> int:
+    def run(argv: tuple[str, ...], env: Mapping[str, str]) -> int:
         calls.append((argv, env))
         return 0
 
@@ -274,17 +274,18 @@ def test_wait_for_health_polls_until_the_server_answers(checkout: Path):
     assert not stack.wait_for_health("http://127.0.0.1:1", timeout=1, interval=0.1)
 
 
-def test_run_command_returns_the_exit_code_and_merges_the_env(checkout: Path):
-    assert stack.run_command(("true",)) == 0
-    assert stack.run_command(("false",)) == 1
-    assert stack.run_command(("sh", "-c", 'test "$FOO" = bar'), {"FOO": "bar"}) == 0
+def test_run_command_runs_with_exactly_the_environment_it_gets(checkout: Path):
+    assert stack.run_command(("sh", "-c", 'test "$FOO" = bar'), {"FOO": "bar", "PATH": "/bin"}) == 0
+    assert stack.run_command(("sh", "-c", 'test -z "$HOME"'), {"PATH": "/bin:/usr/bin"}) == 0
+    assert stack.run_command(("true",), {"PATH": "/bin:/usr/bin"}) == 0
+    assert stack.run_command(("false",), {"PATH": "/bin:/usr/bin"}) == 1
 
 
 @pytest.mark.parametrize("failing_call", [1, 2, 4])
 def test_build_images_stops_at_the_failing_build(checkout: Path, failing_call: int):
     calls: list[tuple[str, ...]] = []
 
-    def run(argv: tuple[str, ...], env: Mapping[str, str] | None) -> int:
+    def run(argv: tuple[str, ...], env: Mapping[str, str]) -> int:
         calls.append(argv)
         return 3 if len(calls) == failing_call else 0
 
@@ -306,10 +307,10 @@ def _start_with(checkout: Path, monkeypatch, airgapped: str, count: int, accept:
         f"OPENSCIENTIST_PROVIDER=vllm\nOPENSCIENTIST_AIRGAPPED={airgapped}\n",
         encoding="utf-8",
     )
-    calls: list[tuple[tuple[str, ...], Mapping[str, str] | None]] = []
+    calls: list[tuple[tuple[str, ...], Mapping[str, str]]] = []
     prompts: list[str] = []
 
-    def run(argv: tuple[str, ...], env: Mapping[str, str] | None) -> int:
+    def run(argv: tuple[str, ...], env: Mapping[str, str]) -> int:
         calls.append((argv, env))
         return 0
 
@@ -325,7 +326,7 @@ def _start_with(checkout: Path, monkeypatch, airgapped: str, count: int, accept:
     return calls, prompts
 
 
-def _loaded(calls: list[tuple[tuple[str, ...], Mapping[str, str] | None]]) -> bool:
+def _loaded(calls: list[tuple[tuple[str, ...], Mapping[str, str]]]) -> bool:
     return any("openscientist.pubmed_mirror" in " ".join(argv) for argv, _ in calls)
 
 
@@ -411,9 +412,9 @@ def test_mirror_load_failure_is_not_fatal(checkout: Path, monkeypatch):
     (checkout / ".env").write_text(
         "OPENSCIENTIST_PROVIDER=vllm\nOPENSCIENTIST_AIRGAPPED=true\n", encoding="utf-8"
     )
-    calls: list[tuple[tuple[str, ...], Mapping[str, str] | None]] = []
+    calls: list[tuple[tuple[str, ...], Mapping[str, str]]] = []
 
-    def run(argv: tuple[str, ...], env: Mapping[str, str] | None) -> int:
+    def run(argv: tuple[str, ...], env: Mapping[str, str]) -> int:
         calls.append((argv, env))
         return 9 if "openscientist.pubmed_mirror" in " ".join(argv) else 0
 

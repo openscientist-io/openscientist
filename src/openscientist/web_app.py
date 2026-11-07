@@ -104,12 +104,6 @@ def _replace_nicegui_500() -> None:
 
 _replace_nicegui_500()
 
-# Load environment variables from .env file
-# Try Docker path first, fall back to local path
-# Use override=False so Docker/system env vars take precedence over .env
-if not load_dotenv("/app/.env", override=False):
-    load_dotenv(".env", override=False)
-
 logger = logging.getLogger(__name__)
 
 
@@ -807,6 +801,12 @@ def main(
         port: Port to bind to
         jobs_dir: Directory for jobs
     """
+    # The web process's own environment first, then .env without overriding it,
+    # from the image's /app or else the working directory. Importing this module
+    # leaves the environment alone, so a CLI that imports it hands compose no copy.
+    if not load_dotenv("/app/.env", override=False):
+        load_dotenv(".env", override=False)
+
     # Set up logging
     logging.basicConfig(
         level=logging.INFO,

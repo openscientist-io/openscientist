@@ -33,6 +33,7 @@ def _render(tmp_path: Path, markdown: str, *, embed: bool = True) -> str:
     return render_report_html(tmp_path / "final_report.md", tmp_path, embed_images=embed)
 
 
+@pytest.mark.requires_graphviz
 @pytest.mark.parametrize("embed", [True, False], ids=["browser", "pdf"])
 def test_a_dot_block_becomes_an_inline_svg_diagram(tmp_path: Path, embed: bool) -> None:
     html = _render(tmp_path, _MODEL, embed=embed)
@@ -43,6 +44,7 @@ def test_a_dot_block_becomes_an_inline_svg_diagram(tmp_path: Path, embed: bool) 
     assert "The deficit explains both branches." in html
 
 
+@pytest.mark.requires_graphviz
 @pytest.mark.requires_weasyprint
 def test_the_pdf_draws_the_diagram_labels(tmp_path: Path) -> None:
     from weasyprint import HTML  # type: ignore[import-untyped]
@@ -62,6 +64,7 @@ def test_a_dot_block_inside_another_fence_stays_code(tmp_path: Path) -> None:
     assert "digraph { a -&gt; b }" in html
 
 
+@pytest.mark.requires_graphviz
 @pytest.mark.parametrize(
     ("source", "leak"),
     [
@@ -79,6 +82,7 @@ def test_a_diagram_reaches_nothing_outside_itself(source: str, leak: str) -> Non
     assert "<a " not in svg
 
 
+@pytest.mark.requires_graphviz
 def test_an_invalid_diagram_shows_its_source(tmp_path: Path) -> None:
     html = _render(tmp_path, "```dot\ndigraph { a -> }\n```\n")
     assert "<svg" not in html

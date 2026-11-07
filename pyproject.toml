@@ -181,7 +181,9 @@ asyncio_default_fixture_loop_scope = "function"
 markers = [
     "integration: marks tests as integration tests (require Docker and executor image)",
     "network: marks tests that call a live third-party API (deselected in CI, which shares egress IPs and gets rate limited)",
-    "requires_weasyprint: renders with WeasyPrint, which needs the Pango system libraries (skipped without them, failed instead when OPENSCIENTIST_REQUIRE_PDF_TESTS is set)",
+    "requires_weasyprint: renders with WeasyPrint, which needs the Pango system libraries (skipped without them, failed instead when OPENSCIENTIST_REQUIRE_SYSTEM_TESTS is set)",
+    "requires_graphviz: draws report diagrams with the Graphviz dot command (skipped without it, failed instead when OPENSCIENTIST_REQUIRE_SYSTEM_TESTS is set)",
+    "requires_docker_compose: runs the real docker compose (skipped without it, failed instead when OPENSCIENTIST_REQUIRE_SYSTEM_TESTS is set)",
 ]
 
 [dependency-groups]

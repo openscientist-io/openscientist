@@ -23,6 +23,7 @@ from rich.text import Text
 
 from openscientist.cli import envfiles
 from openscientist.cli.stack import COMPOSE_FILE
+from openscientist.docker_memory import parse_docker_memory_mib
 
 #: ``host.docker.internal:host-gateway`` in the compose file needs this engine.
 MIN_ENGINE = (20, 10)
@@ -46,7 +47,13 @@ class CommandResult(NamedTuple):
 
 def _run(argv: tuple[str, ...], cwd: Path | None) -> CommandResult:
     try:
-        proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True)
+        proc = subprocess.run(
+            argv,
+            cwd=cwd,
+            env=envfiles.docker_env(cwd or Path.cwd()),
+            capture_output=True,
+            text=True,
+        )
     except OSError as exc:
         return CommandResult(127, "", str(exc))
     return CommandResult(proc.returncode, proc.stdout, proc.stderr)
@@ -224,8 +231,6 @@ def _disk(info: dict[str, object], host: Host) -> list[Finding]:
 
 def _memory(info: dict[str, object], values: dict[str, str]) -> list[Finding]:
     """Memory the engine has against what the configured jobs ask for."""
-    from openscientist.admin_settings import parse_docker_memory_mib
-
     total = int(str(info.get("MemTotal") or 0))
     if total <= 0:
         return []

@@ -1,7 +1,6 @@
 """The admin settings row, read at each use and seeded from the environment once."""
 
 import math
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
@@ -11,11 +10,8 @@ from sqlalchemy import text
 from openscientist.async_tasks import run_sync
 from openscientist.database.models.admin_settings import AdminSettings
 from openscientist.database.session import get_admin_session, get_session_ctx
+from openscientist.docker_memory import parse_docker_memory_mib
 from openscientist.settings import get_settings
-
-_MIB = 1024**2
-_MEMORY = re.compile(r"^(\d+)(?:([bkmBKMgG])([bB])?)?$")
-_UNITS = {"b": 1, "k": 1024, "m": _MIB, "g": _MIB * 1024}
 
 
 class AdminSettingsMissingError(RuntimeError):
@@ -44,25 +40,6 @@ class AdminSettingsValues:
     session_duration_days: int
     updated_at: datetime
     updated_by: UUID | None
-
-
-def parse_docker_memory_mib(value: str, variable: str) -> int:
-    """The whole MiB a Docker memory string like ``8g``, ``512m`` or a byte count holds, truncated.
-
-    The units are Docker's, with or without the trailing ``b`` and any case.
-
-    Raises:
-        ValueError: the string is not a Docker memory string or holds less than 1 MiB, named by ``variable``.
-    """
-    match = _MEMORY.match(value)
-    if match is None:
-        raise ValueError(
-            f"{variable} must be a Docker memory string like 8g or 512m, got {value!r}"
-        )
-    mib = int(match[1]) * _UNITS[(match[2] or "b").lower()] // _MIB
-    if mib < 1:
-        raise ValueError(f"{variable} must be at least 1 MiB, got {value!r}")
-    return mib
 
 
 def _inf_or_none(value: float) -> float | None:

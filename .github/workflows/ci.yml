@@ -86,8 +86,9 @@ jobs:
 
     env:
       DATABASE_URL: postgresql+asyncpg://openscientist:openscientist_dev_password@localhost:5434/openscientist
-      # A requires_weasyprint test fails here instead of skipping when Pango is missing.
-      OPENSCIENTIST_REQUIRE_PDF_TESTS: "1"
+      # A test whose system requirement (Pango, Graphviz, Docker Compose) is
+      # missing fails here instead of skipping.
+      OPENSCIENTIST_REQUIRE_SYSTEM_TESTS: "1"
 
     steps:
       - uses: actions/checkout@v7
