@@ -20,7 +20,7 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist import web_app
-from openscientist.database.models import Job, JobDataFile, Session, User
+from openscientist.database.models import AnalysisLog, Job, JobDataFile, Session, User
 from openscientist.job.types import JobStatus
 from openscientist.webapp_components.pages.job_detail import job_detail_page
 from openscientist.webapp_components.pages.job_detail.prompt import (
@@ -485,6 +485,7 @@ async def test_a_formatted_prompt_written_while_running_appears_on_the_next_tick
             e for e in client.elements.values() if isinstance(e, ui.timer) and e.interval == 2.0
         )
     assert _prompt_html(client) is None
+    assert _refining(client), "a running job without a formatted prompt shows it is refining"
 
     async with AsyncSession(test_engine) as db:
         job = await db.get(Job, UUID(job_id))
@@ -501,3 +502,67 @@ async def test_a_formatted_prompt_written_while_running_appears_on_the_next_tick
     assert "<em>X</em>" in html.content
     assert not _original(client).visible
     assert _button(client, "Show original prompt") is not None
+    assert not _refining(client), "the refining status stays after the prompt arrived"
+
+
+def _refining(client: Client) -> bool:
+    return any(e.text == _REFINING for e in _elements(client, ui.label))
+
+
+_REFINING = "Refining the research question..."
+
+
+@pytest.mark.asyncio
+async def test_a_job_whose_discovery_started_shows_no_refining_status(
+    database: Forwarder,
+    unformatted_job: dict[str, Any],
+    served_page: ServedPage,
+    test_engine: AsyncEngine,
+) -> None:
+    """The formatting turn runs before the first analysis, so once one is
+    logged the turn is over, recorded or not."""
+    async with AsyncSession(test_engine) as db:
+        db.add(
+            AnalysisLog(
+                job_id=UUID(unformatted_job["job_id"]),
+                iteration=1,
+                step_number=1,
+                action_type="execute_code",
+                description="Run 1",
+                input_data={"code": "print(1)"},
+            )
+        )
+        await db.commit()
+    client = await _build(served_page, unformatted_job["owner_token"], unformatted_job["job_id"])
+    assert not _refining(client)
+
+
+def _prompt_boxes(fragment: str) -> list[Any]:
+    from openscientist.webapp_components.pages.job_detail.prompt import _PROMPT_CSS
+    from tests.webapp.css_layout import layout
+
+    return layout(f'<div id="prompt" class="os-prompt">{fragment}</div>', _PROMPT_CSS)
+
+
+def test_the_first_heading_starts_the_prompt_even_inside_its_language_wrapper() -> None:
+    from tests.webapp.css_layout import box_by_id
+
+    boxes = _prompt_boxes('<div lang="en"><h2 id="first">Background</h2><p>Text</p></div>')
+    assert box_by_id(boxes, "first").position_y == pytest.approx(
+        box_by_id(boxes, "prompt").position_y
+    )
+
+
+def test_prompt_headings_stay_close_to_the_text_size() -> None:
+    """The card's own label is small, so a heading may only step a little above
+    the prompt's text, with modest space around it."""
+    from tests.webapp.css_layout import box_by_id
+
+    boxes = _prompt_boxes(
+        '<p id="text">Text</p><h1 id="h1">One</h1><h2 id="h2">Two</h2><h3 id="h3">Three</h3>'
+    )
+    text = float(box_by_id(boxes, "text").style["font_size"])
+    for heading in ("h1", "h2", "h3"):
+        box = box_by_id(boxes, heading)
+        assert float(box.style["font_size"]) <= text * 1.05
+        assert float(box.margin_top) <= 12
