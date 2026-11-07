@@ -31,6 +31,7 @@ from openscientist.webapp_components.pages.job_detail import (
     common,
     feedback,
     iterations,
+    prompt,
     report,
     timeline,
 )
@@ -317,6 +318,7 @@ async def test_the_job_page_follows_the_job_from_feedback_to_completion(
             patch.object(chat, "ui", mock_ui),
             patch.object(feedback, "ui", mock_ui),
             patch.object(iterations, "ui", mock_ui),
+            patch.object(prompt, "ui", mock_ui),
             patch.object(report, "ui", mock_ui),
             patch.object(timeline, "ui", mock_ui),
             patch("openscientist.webapp_components.components.badges.ui", mock_ui),

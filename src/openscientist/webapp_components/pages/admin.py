@@ -24,6 +24,7 @@ from openscientist.settings import get_settings
 from openscientist.webapp_components.components.badges import render_job_id_badge
 from openscientist.webapp_components.components.banners import render_alert_banner
 from openscientist.webapp_components.components.common import (
+    FONTAWESOME_HEAD_HTML,
     STATUS_COLORS,
     format_uptime,
     make_action_button_slot,
@@ -36,10 +37,7 @@ from openscientist.webapp_components.components.common import (
 from openscientist.webapp_components.components.job_table import render_job_id_slot
 from openscientist.webapp_components.components.navigation import render_navigator
 from openscientist.webapp_components.pages.billing import render_billing_panel
-from openscientist.webapp_components.pages.settings_panel import (
-    _FONTAWESOME_HEAD_HTML,
-    render_settings_panel,
-)
+from openscientist.webapp_components.pages.settings_panel import render_settings_panel
 from openscientist.webapp_components.utils import session_checked_timer
 from openscientist.webapp_components.utils.permissions import (
     refuse_stale_admin_session,
@@ -135,7 +133,7 @@ async def admin_page() -> None:
     """Admin page for managing orphaned jobs and user assignments."""
     # Before the page is sent, so the links go into the first HTML the
     # browser receives and the settings icons render without a flash.
-    ui.add_head_html(_FONTAWESOME_HEAD_HTML)
+    ui.add_head_html(FONTAWESOME_HEAD_HTML)
     page_user_id = get_current_user_id()
     assert page_user_id is not None
     render_navigator(active_page="admin")

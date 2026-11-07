@@ -169,6 +169,7 @@ def _executor(run: _Run, growing: bool = False) -> MagicMock:
     executor.shutdown = AsyncMock()
     executor.prepare_job_workspace = AsyncMock()
     executor.warm_model_profile = AsyncMock()
+    executor.prompt_fragments = lambda: SimpleNamespace(mcp_tool_prefix="")
     executor.provider = SimpleNamespace(
         display_name="Anthropic", effective_model_name=lambda: MODEL
     )
@@ -300,7 +301,9 @@ class TestDiscoveryBudgetGate:
         executor = _executor(run)
         result = await _run_discovery(run, executor)
         assert result["status"] == "completed"
-        assert executor.run_iteration.await_count == 2  # both iterations ran
+        assert (
+            executor.run_iteration.await_count == 4
+        )  # the two formatting turns plus both iterations
         row = await _row(run)
         assert row["status"] == "completed"
         assert row["stop_note"] is None
@@ -313,7 +316,9 @@ class TestDiscoveryBudgetGate:
         executor = _executor(run)
         result = await _run_discovery(run, executor)
         assert result["status"] == "completed"
-        assert executor.run_iteration.await_count == 0  # no iteration ran
+        assert (
+            executor.run_iteration.await_count == 2
+        )  # only the formatting turns ran, before the check
         row = await _row(run)
         assert row["status"] == "completed"
         assert row["stop_note"] is not None
@@ -322,14 +327,14 @@ class TestDiscoveryBudgetGate:
     async def test_a_project_total_stops_a_later_iteration(
         self, run: _Run, ask_via_broker: None, admin_settings_reader: None
     ) -> None:
-        """Iteration 1's ledger row spends past the limit, so iteration 2's
-        check stops the run."""
+        """The two formatting turns' ledger rows spend past the limit, so the
+        iteration-1 check stops the run before any iteration."""
         with patch("openscientist.budget.get_provider", return_value=_billing_zero()):
             await set_admin_settings_row(run.engine, max_project_spend_total_usd=0.5)
             executor = _executor(run, growing=True)
             result = await _run_discovery(run, executor)
         assert result["status"] == "completed"
-        assert executor.run_iteration.await_count == 1
+        assert executor.run_iteration.await_count == 2
         row = await _row(run)
         assert row["status"] == "completed"
         assert row["stop_note"] is not None
@@ -343,7 +348,7 @@ class TestDiscoveryBudgetGate:
             executor = _executor(run, growing=True)
             result = await _run_discovery(run, executor)
         assert result["status"] == "completed"
-        assert executor.run_iteration.await_count == 1
+        assert executor.run_iteration.await_count == 2
         row = await _row(run)
         assert row["stop_note"] is not None
         assert "Project 24-hour spend limit" in row["stop_note"]
@@ -363,7 +368,7 @@ class TestDiscoveryBudgetGate:
             await _set_status(run, "running")
             result = await asyncio.wait_for(task, timeout=60.0)
         assert result["status"] == "completed"
-        assert executor.run_iteration.await_count == 1  # iteration 2 never ran
+        assert executor.run_iteration.await_count == 3  # the two formatting turns plus iteration 1
         row = await _row(run)
         assert row["status"] == "completed"
         assert row["stop_note"] is not None
@@ -388,7 +393,7 @@ class TestDiscoveryBudgetGate:
         executor = _executor(run)
         result = await _run_discovery(run, executor)
         assert result["status"] == "completed"
-        assert executor.run_iteration.await_count == 0
+        assert executor.run_iteration.await_count == 2  # only the formatting turns ran
         row = await _row(run)
         assert row["status"] == "completed"
         assert row["stop_note"] is not None
@@ -407,7 +412,7 @@ class TestDiscoveryBudgetGate:
         started = time.monotonic()
         result = await _run_discovery(run, executor)
         assert result["status"] == "completed"
-        assert executor.run_iteration.await_count == 0
+        assert executor.run_iteration.await_count == 2  # only the formatting turns ran
         assert time.monotonic() - started < 10.0  # not after the two-minute window
         row = await _row(run)
         assert row["status"] == "completed"
@@ -453,7 +458,7 @@ class TestDiscoveryBudgetGate:
         ):
             result = await run_discovery_async(run.job_dir)
         assert result["status"] == "cancelled"
-        assert executor.run_iteration.await_count == 0
+        assert executor.run_iteration.await_count == 2  # only the formatting turns ran
         row = await _row(run)
         assert row["status"] == "cancelled"
         assert row["stop_note"] is None

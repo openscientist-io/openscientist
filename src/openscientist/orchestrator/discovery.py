@@ -35,6 +35,7 @@ from openscientist.orchestrator.iteration import (
     update_job_status,
     wait_for_feedback_or_timeout,
 )
+from openscientist.orchestrator.prompt_format import format_research_prompt
 from openscientist.orchestrator.provenance import _sync_version_metadata
 from openscientist.orchestrator.report import _persist_final_status, _run_report_generation_phase
 from openscientist.providers.base import Provider
@@ -214,6 +215,7 @@ async def _run_primary_discovery_loop(
         tool_prefix=executor.prompt_fragments().mcp_tool_prefix,
     )
 
+    await format_research_prompt(executor, job_id, runtime["research_question"], data_files)
     logger.info("Iteration 1/%d: Starting session", max_iterations)
     await _check_budget_before_iteration(job_id)
     result = await executor.run_iteration(initial_prompt, reset_session=True)

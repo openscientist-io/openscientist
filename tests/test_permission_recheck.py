@@ -627,9 +627,16 @@ async def test_viewer_whose_share_is_removed_stops_receiving_status_updates(
     timer = MagicMock()
     holder: dict[str, object] = {"timer": timer}
     render_job_stats = MagicMock()
+    render_prompt = MagicMock()
     timeline = iterations_module._Timeline(context)  # type: ignore[arg-type]
 
-    await timeline_module._check_and_refresh(context, render_job_stats, timeline, holder)  # type: ignore[arg-type]
+    await timeline_module._check_and_refresh(
+        context,  # type: ignore[arg-type]
+        render_job_stats,
+        render_prompt,
+        timeline,
+        holder,  # type: ignore[arg-type]
+    )
     timer.deactivate.assert_not_called()
 
     async with _session(test_engine) as db:
@@ -647,7 +654,13 @@ async def test_viewer_whose_share_is_removed_stops_receiving_status_updates(
     common_ui = MagicMock()
     monkeypatch.setattr(job_detail_common, "ui", common_ui)
 
-    await timeline_module._check_and_refresh(context, render_job_stats, timeline, holder)  # type: ignore[arg-type]
+    await timeline_module._check_and_refresh(
+        context,  # type: ignore[arg-type]
+        render_job_stats,
+        render_prompt,
+        timeline,
+        holder,  # type: ignore[arg-type]
+    )
 
     timer.deactivate.assert_called_once()
     mock_ui.context.client.content.clear.assert_called_once()

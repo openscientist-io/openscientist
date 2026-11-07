@@ -75,6 +75,7 @@ MCP_TOOL_NAMES: tuple[str, ...] = (
     "set_consensus_answer",
     "set_job_title",
     "set_status",
+    "set_formatted_prompt",
     "add_hypothesis",
     "update_hypothesis",
     "run_phenix_tool",

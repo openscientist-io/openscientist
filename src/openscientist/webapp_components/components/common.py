@@ -83,6 +83,13 @@ def format_relative_time(dt: datetime | None) -> str:
 
 AsyncCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
+#: The vendored Font Awesome stylesheets, served same-origin under ``/fa``, for
+#: a page that shows ``fa-solid`` icons.
+FONTAWESOME_HEAD_HTML = (
+    '<link rel="stylesheet" href="/fa/css/fontawesome.min.css">\n'
+    '<link rel="stylesheet" href="/fa/css/solid.min.css">'
+)
+
 
 STATUS_COLORS = {
     JobStatus.PENDING: "gray",

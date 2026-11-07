@@ -12,6 +12,8 @@ from openscientist.orchestrator.iteration import (
     build_consensus_prompt,
     build_initial_prompt,
     build_iteration_prompt,
+    build_prompt_format_prompt,
+    build_prompt_format_retry_prompt,
 )
 from openscientist.prompts.common import namespace_tool_mentions
 
@@ -50,6 +52,42 @@ def test_the_consensus_prompt_namespaces_only_its_own_instruction() -> None:
     prompt = build_consensus_prompt(_QUESTION, tool_prefix=_PREFIX)
     assert f"`{_PREFIX}set_consensus_answer`" in prompt
     assert _QUESTION in prompt
+
+
+def test_the_prompt_format_prompt_namespaces_only_its_own_instruction() -> None:
+    prompt = build_prompt_format_prompt(
+        _QUESTION, image_files=["figure.png"], other_files=["data.csv"], tool_prefix=_PREFIX
+    )
+    assert f"`{_PREFIX}set_formatted_prompt`" in prompt
+    assert _QUESTION in prompt
+    assert "data/figure.png" in prompt
+    assert "data/data.csv" in prompt
+
+
+def test_the_prompt_format_prompt_renders_the_vocabulary_from_the_sanitizer() -> None:
+    """The allowed tags, attributes and layout classes are rendered from the
+    lists the job page's sanitizer keeps, so the prompt and the sanitizer
+    cannot drift apart."""
+    from openscientist.formatted_prompt import ALLOWED_ATTRIBUTES, ALLOWED_TAGS, LAYOUT_CLASSES
+
+    prompt = build_prompt_format_prompt(_QUESTION, image_files=[], other_files=[], tool_prefix="")
+    for tag in sorted(ALLOWED_TAGS):
+        assert tag in prompt
+    for attributes in ALLOWED_ATTRIBUTES.values():
+        for attribute in sorted(attributes):
+            assert attribute in prompt
+    for name in LAYOUT_CLASSES:
+        assert name in prompt
+
+
+def test_the_prompt_format_retry_prompt_restates_the_task() -> None:
+    prompt = build_prompt_format_retry_prompt(
+        _QUESTION, image_files=["figure.png"], other_files=[], tool_prefix=_PREFIX
+    )
+    assert "did NOT record" in prompt
+    assert f"`{_PREFIX}set_formatted_prompt`" in prompt
+    assert _QUESTION in prompt
+    assert "data/figure.png" in prompt
 
 
 def test_an_empty_prefix_changes_nothing() -> None:

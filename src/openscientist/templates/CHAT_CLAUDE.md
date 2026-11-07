@@ -53,7 +53,7 @@ Always set `description` to explain what you're computing.
 ## What You Should NOT Do
 
 - Do not call `add_hypothesis`, `update_hypothesis`, or `update_knowledge_state`, because the discovery job is already complete (or in progress independently)
-- Do not call `save_iteration_summary`, `set_status`, or `set_job_title`
+- Do not call `save_iteration_summary`, `set_status`, `set_job_title`, or `set_formatted_prompt`
 - Do not write to `final_report.md`
 - Do not run speculative analyses the user hasn't asked for
 

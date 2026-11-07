@@ -25,11 +25,13 @@ from openscientist.webapp_components.pages.job_detail.common import (
     _chat_tab_tooltip,
     _derive_progress_from_ks,
     _JobDetailContext,
+    _load_attachments,
     _load_knowledge_state,
     _page_snapshot,
     _PageSnapshot,
     _report_tab_tooltip,
 )
+from openscientist.webapp_components.pages.job_detail.prompt import add_prompt_head_html
 from openscientist.webapp_components.pages.job_detail.report import _render_report_tab
 from openscientist.webapp_components.pages.job_detail.timeline import (
     _render_timeline_tab,
@@ -63,8 +65,10 @@ async def _load_db_job_for_user(job_id: str, user_id: str) -> Any:
 async def _resolve_job_permissions(
     job_id: str, user_id: str, db_job: Any
 ) -> tuple[bool, bool, bool]:
-    """Whether the caller is the owner, may edit through a share, and may see
-    the job's cost ledger, the same readers the cost_records policies admit."""
+    """Whether the caller is the owner, may edit through a share, and reads the
+    job as its owner or through a share rather than only because it is public.
+    Those direct readers are the ones the cost_records policies admit and the
+    ones the job's uploads are served to."""
     is_owner = db_job.owner_id == UUID(user_id)
     if is_owner:
         return True, True, True
@@ -136,7 +140,7 @@ async def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
     if db_job is None:
         return None
 
-    is_owner, can_edit, spend_visible = await _resolve_job_permissions(job_id, user_id, db_job)
+    is_owner, can_edit, direct_access = await _resolve_job_permissions(job_id, user_id, db_job)
     owner_name = await _owner_name(job_id, is_owner)
 
     job_dir = job_manager.jobs_dir / job_id
@@ -150,6 +154,7 @@ async def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
     probe = await _page_snapshot(job_id, user_id, job_dir)
     snapshot = probe[1] if probe is not None else None
     spend = snapshot.job.spend if snapshot is not None else 0.0
+    attachments = await _load_attachments(job_id, user_id) if direct_access else []
     share_dialog, delete_dialog, notifications_dialog = _create_page_dialogs(
         job_id,
         job_manager,
@@ -170,13 +175,14 @@ async def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
         action_counts=action_counts,
         ks_load_error=ks_load_error,
         spend=spend,
-        spend_visible=spend_visible,
+        spend_visible=direct_access,
         state=_initial_job_state(
-            job_info, _stats_model(job_info, ks_data, spend if spend_visible else None), snapshot
+            job_info, _stats_model(job_info, ks_data, spend if direct_access else None), snapshot
         ),
         share_dialog=share_dialog,
         delete_dialog=delete_dialog,
         notifications_dialog=notifications_dialog,
+        attachments=attachments,
     )
 
 
@@ -239,6 +245,7 @@ async def job_detail_page(job_id: str) -> None:
         return
 
     ui.page_title(f"{_job_page_title(context.job_info)} - OpenScientist")
+    add_prompt_head_html()
     render_navigator()
     _render_job_status_notices(context)
     await _render_job_tabs(context)
