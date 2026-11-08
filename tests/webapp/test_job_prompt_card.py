@@ -116,10 +116,10 @@ def test_a_link_outside_the_web_and_the_attachments_loses_its_target(href: str) 
 
 def test_only_layout_classes_survive() -> None:
     sanitized = sanitize_formatted_prompt(
-        '<p class="fp-justify fixed inset-0 z-50">Text</p><div class="bg-red-500">x</div>',
+        '<p class="fp-lead fixed inset-0 z-50">Text</p><div class="bg-red-500">x</div>',
         attachment_urls=_URLS,
     )
-    assert '<p class="fp-justify">Text</p>' in sanitized.html
+    assert '<p class="fp-lead">Text</p>' in sanitized.html
     assert "bg-red-500" not in sanitized.html
 
 
@@ -149,7 +149,7 @@ def test_lists_tables_and_headings_are_kept() -> None:
 @pytest.mark.parametrize("lang", ["it", "en-GB", "zh-Hant-TW"])
 def test_a_language_tag_is_kept_for_hyphenation(lang: str) -> None:
     sanitized = sanitize_formatted_prompt(
-        f'<div lang="{lang}"><p class="fp-justify">Testo</p></div>', attachment_urls=_URLS
+        f'<div lang="{lang}"><p>Testo</p></div>', attachment_urls=_URLS
     )
     assert f'<div lang="{lang}">' in sanitized.html
 
@@ -213,7 +213,7 @@ def test_identifier_links_keep_their_canonical_urls() -> None:
 
 
 _FORMATTED = (
-    '<h2>Aims</h2><p class="fp-justify">Compare the bands in '
+    '<h2>Aims</h2><p class="fp-lead">Compare the bands in '
     '<a href="data/counts.csv">the counts</a>.</p>'
     '<figure class="fp-float-right fp-small"><img src="data/fig 1.png" alt="Gel"></figure>'
     "<script>steal()</script>"
@@ -461,7 +461,7 @@ async def test_a_public_reader_gets_neither_images_nor_attachments(
         ("Does X bind Y?", "<p>Does <strong>X</strong> bind <em>Y</em>?</p>"),
         (
             "Aims\n\nCompare A &  B  in   counts.csv",
-            '<div lang="en"><h2>Aims</h2><p class="fp-justify">Compare A &amp; B in '
+            '<div lang="en"><h2>Aims</h2><p>Compare A &amp; B in '
             '<a href="data/counts.csv">counts.csv</a></p></div>',
         ),
     ],
@@ -626,6 +626,24 @@ def _prompt_boxes(fragment: str, quasar: bool = False) -> list[Any]:
     return layout(
         f'<div id="prompt" class="os-prompt">{fragment}</div>', _PROMPT_CSS, quasar=quasar
     )
+
+
+@pytest.mark.requires_weasyprint
+def test_running_text_is_justified_and_hyphenated() -> None:
+    """Ragged lines leave a wide empty band down a narrow phone card, so the
+    question's running text fills its lines and breaks long words."""
+    from tests.webapp.css_layout import box_by_id
+
+    boxes = _prompt_boxes(
+        '<div lang="en"><p id="para">Text</p><ul><li id="item">Item</li></ul>'
+        '<p id="centered" class="fp-text-center">Centred</p></div>',
+        quasar=True,
+    )
+    for element_id in ("para", "item"):
+        style = box_by_id(boxes, element_id).style
+        assert style["text_align_all"] == "justify", element_id
+        assert style["hyphens"] == "auto", element_id
+    assert box_by_id(boxes, "centered").style["text_align_all"] == "center"
 
 
 @pytest.mark.requires_weasyprint

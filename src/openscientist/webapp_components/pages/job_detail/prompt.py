@@ -23,6 +23,7 @@ from openscientist.formatted_prompt import (
     ALLOWED_ATTRIBUTES,
     ALLOWED_TAGS,
     ATTACHMENT_DIR,
+    DEFAULT_LANGUAGE,
     GLOBAL_ATTRIBUTES,
     LAYOUT_CLASSES,
     PROMPT_ICONS,
@@ -34,10 +35,6 @@ _LINK_SCHEMES = frozenset({"http", "https", "mailto"})
 
 #: A BCP 47 language tag such as ``en``, ``en-GB`` or ``zh-Hant-TW``.
 _LANGUAGE_TAG = re.compile(r"[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*")
-
-#: The language the browser hyphenates justified text in when the fragment
-#: declares none.
-_DEFAULT_LANGUAGE = "en"
 
 #: A link whose content is text only, in the sanitizer's normalized output.
 _PLAIN_LINK = re.compile(r"(<a\b[^>]*>)([^<]+)(</a>)")
@@ -126,8 +123,8 @@ _PROMPT_CSS = """
 .os-prompt .fp-small { width: 25%; min-width: 8rem; }
 .os-prompt .fp-medium { width: 50%; min-width: 12rem; }
 .os-prompt .fp-large { width: 100%; max-width: 100%; float: none; margin-left: 0; margin-right: 0; }
-.os-prompt .fp-justify { text-align: justify; text-wrap: pretty; -webkit-hyphens: auto;
-  hyphens: auto; hyphenate-limit-chars: 6 3 3; }
+.os-prompt :is(p, li, dd, blockquote), .os-prompt-original { text-align: justify;
+  text-wrap: pretty; -webkit-hyphens: auto; hyphens: auto; hyphenate-limit-chars: 6 3 3; }
 .os-prompt .fp-text-center { text-align: center; }
 .os-prompt .fp-text-right { text-align: right; }
 .os-prompt .fp-lead { font-size: 1.1rem; color: #374151; }
@@ -373,12 +370,12 @@ def render_research_prompt(
             if sanitized is not None:
                 # Sanitized above against the formatted-prompt vocabulary.
                 ui.html(sanitized.html, sanitize=False).classes("os-prompt").props(
-                    f"lang={_DEFAULT_LANGUAGE}"
+                    f"lang={DEFAULT_LANGUAGE}"
                 )
             else:
                 ui.label(research_question).classes(
                     "os-prompt-original text-base whitespace-pre-wrap"
-                )
+                ).props(f"lang={DEFAULT_LANGUAGE}")
             if unplaced:
                 _render_gallery(unplaced)
         if _is_long(len(text), len(placed) + len(unplaced)):
@@ -388,9 +385,13 @@ def render_research_prompt(
         if offers_original:
             show = ui.button("Show original prompt").props("flat dense no-caps color=grey")
             show.classes("self-start text-xs")
-            original = ui.label(research_question).classes(
-                "os-prompt-original w-full whitespace-pre-wrap text-sm text-gray-600 "
-                "bg-gray-50 border rounded p-3"
+            original = (
+                ui.label(research_question)
+                .classes(
+                    "os-prompt-original w-full whitespace-pre-wrap text-sm text-gray-600 "
+                    "bg-gray-50 border rounded p-3"
+                )
+                .props(f"lang={DEFAULT_LANGUAGE}")
             )
             original.set_visibility(False)
             show.on_click(lambda: _toggle_original(original, show))

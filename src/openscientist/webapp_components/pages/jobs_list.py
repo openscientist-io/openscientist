@@ -8,6 +8,7 @@ from uuid import UUID
 
 from nicegui import ui
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.auth import (
     can_current_user_start_jobs,
@@ -20,6 +21,7 @@ from openscientist.database.models import Job, JobShare, User
 from openscientist.database.models.finding import Finding
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_admin_session, get_session_ctx
+from openscientist.formatted_prompt import DEFAULT_LANGUAGE
 from openscientist.job.types import JobStatus, completed_iterations
 from openscientist.providers import check_provider_config
 from openscientist.webapp_components.components.banners import (
@@ -39,6 +41,7 @@ from openscientist.webapp_components.components.job_table import (
     render_actions_slot_with_delete,
     render_cost_slot,
     render_job_id_slot,
+    render_question_slot,
     render_status_cell_slot,
 )
 from openscientist.webapp_components.components.navigation import render_navigator
@@ -46,38 +49,88 @@ from openscientist.webapp_components.utils import session_checked_timer
 
 logger = logging.getLogger(__name__)
 
+#: The research question wraps and clamps to three lines, the Job ID and the
+#: stat columns drop out under 640px, so the table never runs past a phone
+#: screen. The question cell opens the job, which stands in for the Job ID
+#: badge on narrow screens, and its tooltip carries the full question.
+_JOBS_TABLE_STYLES = """
+<style>
+.os-jobs-question {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: justify;
+  -webkit-hyphens: auto;
+  hyphens: auto;
+  cursor: pointer;
+}
+@media (max-width: 640px) {
+  .os-jobs-table .os-hide-phone { display: none; }
+}
+</style>
+"""
+
+#: A column that drops out on a phone, its cells and its header alike.
+_HIDE_ON_PHONE = {"classes": "os-hide-phone", "headerClasses": "os-hide-phone"}
+
 _OWNED_COLUMNS = [
-    {"name": "job_id", "label": "Job ID", "field": "job_id", "align": "left"},
+    {"name": "job_id", "label": "Job ID", "field": "job_id", "align": "left", **_HIDE_ON_PHONE},
     {"name": "question", "label": "Research Question", "field": "question", "align": "left"},
     {"name": "status", "label": "Status", "field": "status", "align": "center"},
-    {"name": "iterations", "label": "Iterations", "field": "iterations", "align": "center"},
-    {"name": "findings", "label": "Findings", "field": "findings", "align": "center"},
-    {"name": "cost", "label": "Cost", "field": "cost", "align": "center"},
-    {"name": "created", "label": "Created", "field": "created", "align": "left"},
+    {
+        "name": "iterations",
+        "label": "Iterations",
+        "field": "iterations",
+        "align": "center",
+        **_HIDE_ON_PHONE,
+    },
+    {
+        "name": "findings",
+        "label": "Findings",
+        "field": "findings",
+        "align": "center",
+        **_HIDE_ON_PHONE,
+    },
+    {"name": "cost", "label": "Cost", "field": "cost", "align": "center", **_HIDE_ON_PHONE},
+    {"name": "created", "label": "Created", "field": "created", "align": "left", **_HIDE_ON_PHONE},
     {"name": "actions", "label": "Actions", "field": "actions", "align": "center"},
 ]
 
 _SHARED_COLUMNS = [
-    {"name": "job_id", "label": "Job ID", "field": "job_id", "align": "left"},
+    {"name": "job_id", "label": "Job ID", "field": "job_id", "align": "left", **_HIDE_ON_PHONE},
     {"name": "question", "label": "Research Question", "field": "question", "align": "left"},
-    {"name": "owner", "label": "Owner", "field": "owner", "align": "left"},
-    {"name": "permission", "label": "Permission", "field": "permission", "align": "center"},
+    {"name": "owner", "label": "Owner", "field": "owner", "align": "left", **_HIDE_ON_PHONE},
+    {
+        "name": "permission",
+        "label": "Permission",
+        "field": "permission",
+        "align": "center",
+        **_HIDE_ON_PHONE,
+    },
     {"name": "status", "label": "Status", "field": "status", "align": "center"},
-    {"name": "iterations", "label": "Iterations", "field": "iterations", "align": "center"},
-    {"name": "findings", "label": "Findings", "field": "findings", "align": "center"},
-    {"name": "cost", "label": "Cost", "field": "cost", "align": "center"},
+    {
+        "name": "iterations",
+        "label": "Iterations",
+        "field": "iterations",
+        "align": "center",
+        **_HIDE_ON_PHONE,
+    },
+    {
+        "name": "findings",
+        "label": "Findings",
+        "field": "findings",
+        "align": "center",
+        **_HIDE_ON_PHONE,
+    },
+    {"name": "cost", "label": "Cost", "field": "cost", "align": "center", **_HIDE_ON_PHONE},
     {"name": "actions", "label": "Actions", "field": "actions", "align": "center"},
 ]
 
 
-def _truncate_question(question: str, limit: int = 50) -> str:
-    """Truncate long research question text for table display."""
-    if len(question) > limit:
-        return question[:limit] + "..."
-    return question
-
-
-async def _batch_findings_counts(session: Any, job_ids: list[UUID]) -> dict[UUID, int]:
+async def _batch_findings_counts(session: AsyncSession, job_ids: list[UUID]) -> dict[UUID, int]:
     """Batch-fetch findings counts for multiple jobs in one query."""
     if not job_ids:
         return {}
@@ -87,7 +140,7 @@ async def _batch_findings_counts(session: Any, job_ids: list[UUID]) -> dict[UUID
         .group_by(Finding.job_id)
     )
     result = await session.execute(stmt)
-    return dict(result.all())
+    return {job_id: count for job_id, count in result.all()}
 
 
 def _render_badges(
@@ -150,7 +203,7 @@ def _owned_rows(
     return [
         {
             "job_id": str(job.id),
-            "question": _truncate_question(job.research_question),
+            "question": job.research_question,
             "status": job.status,
             "error": job.error_message or "",
             "iterations": f"{completed_iterations(job.status, job.current_iteration)}/{job.max_iterations}",
@@ -177,7 +230,7 @@ def _shared_rows(
         rows.append(
             {
                 "job_id": str(job.id),
-                "question": _truncate_question(job.research_question),
+                "question": job.research_question,
                 "owner": owner.name,
                 "permission": share.permission_level,
                 "status": job.status,
@@ -328,6 +381,7 @@ async def jobs_page() -> None:
     can_start_jobs = can_current_user_start_jobs()
 
     render_navigator(active_page="jobs", show_new_job=is_configured)
+    ui.add_head_html(_JOBS_TABLE_STYLES)
     if not is_configured:
         render_config_error_banner(provider_name, config_errors)
     if not can_start_jobs:
@@ -350,14 +404,19 @@ async def jobs_page() -> None:
                 new_job=is_configured and can_start_jobs,
                 icon="work_outline",
             )
-            my_jobs_table = ui.table(
-                columns=_OWNED_COLUMNS,
-                rows=[],
-                row_key="job_id",
-                pagination=10,
-            ).classes("w-full")
+            my_jobs_table = (
+                ui.table(
+                    columns=_OWNED_COLUMNS,
+                    rows=[],
+                    row_key="job_id",
+                    pagination=10,
+                )
+                .classes("w-full os-jobs-table")
+                .props(f"lang={DEFAULT_LANGUAGE}")
+            )
             my_jobs = _JobList(my_jobs_table, my_jobs_empty, my_jobs_error, "your jobs")
             my_jobs_table.add_slot("body-cell-job_id", render_job_id_slot())
+            my_jobs_table.add_slot("body-cell-question", render_question_slot())
             my_jobs_table.add_slot("body-cell-status", render_status_cell_slot())
             my_jobs_table.add_slot("body-cell-cost", render_cost_slot())
             my_jobs_table.add_slot("body-cell-actions", render_actions_slot_with_delete())
@@ -390,16 +449,21 @@ async def jobs_page() -> None:
                 new_job=False,
                 icon="people_outline",
             )
-            shared_jobs_table = ui.table(
-                columns=_SHARED_COLUMNS,
-                rows=[],
-                row_key="job_id",
-                pagination=10,
-            ).classes("w-full")
+            shared_jobs_table = (
+                ui.table(
+                    columns=_SHARED_COLUMNS,
+                    rows=[],
+                    row_key="job_id",
+                    pagination=10,
+                )
+                .classes("w-full os-jobs-table")
+                .props(f"lang={DEFAULT_LANGUAGE}")
+            )
             shared_jobs = _JobList(
                 shared_jobs_table, shared_jobs_empty, shared_jobs_error, "the shared jobs"
             )
             shared_jobs_table.add_slot("body-cell-job_id", render_job_id_slot())
+            shared_jobs_table.add_slot("body-cell-question", render_question_slot())
             shared_jobs_table.add_slot("body-cell-status", render_status_cell_slot())
             shared_jobs_table.add_slot("body-cell-permission", render_permission_badge_slot())
             shared_jobs_table.add_slot("body-cell-cost", render_cost_slot())

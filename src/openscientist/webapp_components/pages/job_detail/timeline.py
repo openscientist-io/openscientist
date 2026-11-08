@@ -179,31 +179,30 @@ def _prompt_refining(job_info: JobInfo, action_counts: ActionCounts) -> bool:
 def _render_research_question_card(
     context: _JobDetailContext, render_prompt: refreshable[[], None]
 ) -> None:
-    with ui.card().classes("w-full mb-4"), ui.row().classes("w-full items-start justify-between"):
-        with ui.column().classes("flex-1 min-w-0"):
+    with ui.card().classes("w-full mb-4"):
+        with ui.row().classes("w-full items-center justify-between gap-2"):
             ui.label("Research Question").classes("text-subtitle2 font-bold")
-            render_prompt()
-            consensus = context.ks_data.get("consensus_answer") if context.ks_data else None
-            if consensus and context.job_info.status == JobStatus.COMPLETED:
-                with ui.element("div").classes(
-                    "mt-3 p-3 bg-emerald-50 border-l-4 border-emerald-500 rounded"
-                ):
-                    ui.label("Consensus Answer").classes(
-                        "text-xs font-bold text-emerald-700 uppercase tracking-wide"
-                    )
-                    ui.label(consensus).classes("text-emerald-900 mt-1")
-
-        on_share = (
-            context.share_dialog.open
-            if context.is_owner and context.share_dialog is not None
-            else None
-        )
-        on_delete = context.delete_dialog.open if context.is_owner else None
-        render_job_action_buttons(
-            on_share=on_share,
-            on_delete=on_delete,
-            on_notifications=lambda: _open_dialog(context.notifications_dialog),
-        )
+            on_share = (
+                context.share_dialog.open
+                if context.is_owner and context.share_dialog is not None
+                else None
+            )
+            on_delete = context.delete_dialog.open if context.is_owner else None
+            render_job_action_buttons(
+                on_share=on_share,
+                on_delete=on_delete,
+                on_notifications=lambda: _open_dialog(context.notifications_dialog),
+            )
+        render_prompt()
+        consensus = context.ks_data.get("consensus_answer") if context.ks_data else None
+        if consensus and context.job_info.status == JobStatus.COMPLETED:
+            with ui.element("div").classes(
+                "mt-3 p-3 bg-emerald-50 border-l-4 border-emerald-500 rounded"
+            ):
+                ui.label("Consensus Answer").classes(
+                    "text-xs font-bold text-emerald-700 uppercase tracking-wide"
+                )
+                ui.label(consensus).classes("text-emerald-900 mt-1")
 
 
 def _stats_model(
