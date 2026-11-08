@@ -15,7 +15,10 @@ from typing import Any
 
 import nicegui
 
-NICEGUI_CSS = Path(nicegui.__file__).parent / "static" / "nicegui.css"
+NICEGUI_STATIC = Path(nicegui.__file__).parent / "static"
+NICEGUI_CSS = NICEGUI_STATIC / "nicegui.css"
+_QUASAR_UNIMPORTANT = NICEGUI_STATIC / "quasar.unimportant.prod.css"
+_QUASAR_IMPORTANT = NICEGUI_STATIC / "quasar.important.prod.css"
 
 
 def _boxes(box: Any) -> Iterator[Any]:
@@ -24,16 +27,38 @@ def _boxes(box: Any) -> Iterator[Any]:
         yield from _boxes(child)
 
 
-def layout(body: str, *styles: str) -> list[Any]:
+#: The cascade-layer order NiceGUI's page template declares for the browser.
+_LAYER_ORDER = (
+    "@layer theme, base, quasar, nicegui, components, utilities, overrides, quasar_importants;"
+)
+
+
+def layout(
+    body: str, *styles: str, quasar: bool = False, page_width: int | None = None
+) -> list[Any]:
     """Every box of ``body`` laid out under NiceGUI's CSS and ``styles``,
-    each a ``<style>`` block or bare CSS."""
-    sheets = "".join(
-        s if s.lstrip().startswith("<style") else f"<style>{s}</style>" for s in styles
+    each a ``<style> block or bare CSS. With ``quasar``, Quasar's own
+    stylesheets join under the browser's layer order, where the unlayered app
+    styles still win on the properties they declare. ``page_width`` fixes the
+    page width in px, for column layout at a chosen card width."""
+    page_size = (
+        f"<style>@page {{ size: {page_width}px 4000px; margin: 0; }}</style>"
+        if page_width is not None
+        else ""
     )
-    html = (
-        f"<html><head><style>{NICEGUI_CSS.read_text(encoding='utf-8')}</style>{sheets}</head>"
-        f"<body>{body}</body></html>"
-    )
+    if quasar:
+        head = (
+            "<style>"
+            + _LAYER_ORDER
+            + f"@layer quasar {_QUASAR_UNIMPORTANT.read_text(encoding='utf-8')}"
+            + f"@layer quasar_importants {_QUASAR_IMPORTANT.read_text(encoding='utf-8')}"
+            + f"@layer nicegui {NICEGUI_CSS.read_text(encoding='utf-8')}"
+            + "</style>"
+        )
+    else:
+        head = f"<style>{NICEGUI_CSS.read_text(encoding='utf-8')}</style>"
+    head += "".join(s if s.lstrip().startswith("<style") else f"<style>{s}</style>" for s in styles)
+    html = f"<html><head>{page_size}{head}</head><body>{body}</body></html>"
     import weasyprint  # type: ignore[import-untyped]
 
     page = weasyprint.HTML(string=html).render().pages[0]
