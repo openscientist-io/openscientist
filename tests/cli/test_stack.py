@@ -42,6 +42,7 @@ def test_start_runs_the_four_builds_then_up_in_order(checkout: Path, monkeypatch
     assert argvs[1].count("--build-arg") == 2
     assert any(arg.startswith("OPENSCIENTIST_COMMIT=") for arg in argvs[1])
     assert any(arg.startswith("BUILD_TIME=") for arg in argvs[1])
+    build_args = tuple(argvs[1][5:])
     assert argvs[2] == (
         "docker",
         "build",
@@ -49,6 +50,7 @@ def test_start_runs_the_four_builds_then_up_in_order(checkout: Path, monkeypatch
         "Dockerfile.executor",
         "-t",
         "openscientist-executor:latest",
+        *build_args,
         ".",
     )
     assert argvs[3] == (
@@ -58,6 +60,7 @@ def test_start_runs_the_four_builds_then_up_in_order(checkout: Path, monkeypatch
         "Dockerfile.agent",
         "-t",
         "openscientist-agent:latest",
+        *build_args,
         ".",
     )
     assert argvs[4] == _jobs_group_command(checkout)

@@ -328,8 +328,9 @@ Use the correct tool for each file type:
 | Excel (.xlsx)       | `read_document` for a text overview, `execute_code` with pandas for analysis |
 | PDF (.pdf)          | `read_document` MCP tool |
 | Word (.docx)        | `read_document` MCP tool |
+| Image (.png, .jpg, .gif, .webp) | To look at it, `Read` its copy `previews/<file name>.jpg`, scaled to what you see anyway. To measure it, open the original from `data_files` in `execute_code` |
 
-**WARNING:** Do NOT use Claude's built-in `Read` tool (or any file reader) on PDF, DOCX, XLSX, or other binary files. It returns garbled content that corrupts your context and causes "Prompt is too long" errors. For CSV, TSV, TXT, or JSON analysis, do not use a file reader at all. Load them inside `execute_code` as described above.
+**WARNING:** Do NOT use Claude's built-in `Read` tool (or any file reader) on PDF, DOCX, XLSX, or other binary files, or on an original image in `data/`. It returns garbled content or a result too large for your session, which corrupts your context and can end the job. For CSV, TSV, TXT, or JSON analysis, do not use a file reader at all. Load them inside `execute_code` as described above.
 
 ### Skills (MUST USE)
 

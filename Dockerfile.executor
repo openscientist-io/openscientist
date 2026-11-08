@@ -64,5 +64,12 @@ COPY src/openscientist /app/openscientist
 # Switch to non-root user
 USER executor
 
+# Build metadata for the version string the run logs. Late, so a new commit
+# only rebuilds this ENV layer.
+ARG OPENSCIENTIST_COMMIT=unknown
+ARG BUILD_TIME=unknown
+ENV OPENSCIENTIST_COMMIT=${OPENSCIENTIST_COMMIT}
+ENV OPENSCIENTIST_BUILD_TIME=${BUILD_TIME}
+
 # Run the executor module
 ENTRYPOINT ["python", "-m", "openscientist_executor"]
