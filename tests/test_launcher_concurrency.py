@@ -35,6 +35,9 @@ class _BlockingContainer:
         self.released.wait(timeout=3)
         return {"StatusCode": 0}
 
+    def start(self) -> None:
+        pass
+
     def logs(self, **_kwargs: object) -> bytes:
         return b"done\n"
 
@@ -47,7 +50,7 @@ class _FakeDocker:
 
     def __init__(self, container: _BlockingContainer) -> None:
         self.containers = SimpleNamespace(
-            run=lambda **_kwargs: container,
+            create=lambda **_kwargs: container,
             list=lambda **_kwargs: [],
         )
         digests = {"agent:latest": _AGENT_DIGEST, "executor:latest": _EXECUTOR_DIGEST}

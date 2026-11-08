@@ -34,6 +34,7 @@ from tests.launcher import (
     LAUNCHER_INSTANCE_ID,
     VENV_PYTHON,
     Launcher,
+    executor_image_problem,
     image_digest,
 )
 
@@ -102,10 +103,8 @@ def _clear_stale_agent(docker_client: docker.DockerClient) -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _require_executor_image(docker_client: docker.DockerClient) -> None:
-    try:
-        docker_client.images.get(EXECUTOR_IMAGE)
-    except docker.errors.ImageNotFound:
-        pytest.skip("Executor image not built. Run 'uv run openscientist' first.")
+    if problem := executor_image_problem():
+        pytest.skip(problem)
 
 
 def _agent_body(**overrides: object) -> dict[str, object]:
@@ -476,6 +475,85 @@ class TestImageRefusals:
             assert health.json()["images"] == {"agent": False, "executor": True}
             assert create.status_code == 409, create.text
             assert create.json()["error"].startswith("image_missing")
+        finally:
+            launcher.close()
+
+
+NO_ENTRYPOINT_IMAGE = "openscientist-launcher-test-noentry:latest"
+
+
+@pytest.fixture(scope="module")
+def no_entrypoint_image(docker_client: docker.DockerClient) -> str:
+    """An image without the firewall entrypoint, so the daemon creates a
+    container from it and then refuses to start it."""
+    docker_client.images.build(
+        fileobj=io.BytesIO(b"FROM python:3.12-slim-bookworm\n"), tag=NO_ENTRYPOINT_IMAGE, rm=True
+    )
+    return NO_ENTRYPOINT_IMAGE
+
+
+class TestFailedStart:
+    """A container the daemon creates but cannot start is removed again, so a
+    broken image leaves nothing labelled with the launcher behind."""
+
+    @staticmethod
+    def _left_behind(docker_client: docker.DockerClient, name: str) -> list[Container]:
+        return docker_client.containers.list(
+            all=True, filters={"label": f"openscientist.launcher={INSTANCE_ID}", "name": name}
+        )
+
+    def test_an_agent_that_cannot_start_leaves_no_container(
+        self, docker_client: docker.DockerClient, jobs_root: Path, no_entrypoint_image: str
+    ) -> None:
+        launcher = Launcher.start(
+            jobs_root,
+            jobs_root,
+            AGENT_IMAGE=no_entrypoint_image,
+            AGENT_IMAGE_DIGESTS=image_digest(docker_client, no_entrypoint_image),
+            EXECUTOR_IMAGE_DIGESTS=image_digest(docker_client, EXECUTOR_IMAGE),
+        )
+        try:
+            with launcher.client() as client:
+                create = client.post("/v1/containers/agent", json=_agent_body())
+            assert create.status_code == 502, create.text
+            assert self._left_behind(docker_client, f"openscientist-agent-{JOB_ID[:12]}") == []
+        finally:
+            launcher.close()
+
+    def test_an_executor_that_cannot_start_leaves_no_container(
+        self, docker_client: docker.DockerClient, jobs_root: Path, no_entrypoint_image: str
+    ) -> None:
+        (jobs_root / JOB_ID / "out").mkdir()
+        launcher = Launcher.start(
+            jobs_root,
+            jobs_root,
+            AGENT_IMAGE=TEST_IMAGE,
+            AGENT_IMAGE_DIGESTS=image_digest(docker_client, TEST_IMAGE),
+            EXECUTOR_IMAGE=no_entrypoint_image,
+            EXECUTOR_IMAGE_DIGESTS=image_digest(docker_client, no_entrypoint_image),
+        )
+        body = {
+            "job_id": JOB_ID,
+            "timeout_seconds": 60,
+            "memory_mib": 1024,
+            "cpu": 0.5,
+            "egress_allow": ["openscientist:8081"],
+            "input": {
+                "code": "print(1)",
+                "language": "python",
+                "data_path": None,
+                "output_dir": str(jobs_root / JOB_ID / "out"),
+                "timeout": 30,
+                "description": "",
+                "iteration": 0,
+                "data_files": [],
+            },
+        }
+        try:
+            with launcher.client() as client:
+                run = client.post("/v1/exec", json=body)
+            assert run.status_code == 502, run.text
+            assert self._left_behind(docker_client, f"openscientist-exec-{JOB_ID}") == []
         finally:
             launcher.close()
 

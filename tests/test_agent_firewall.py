@@ -23,7 +23,7 @@ from uuid import uuid4
 
 import pytest
 
-from tests.launcher import EXECUTOR_IMAGE, Launcher
+from tests.launcher import EXECUTOR_IMAGE, Launcher, executor_image_problem
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "docker" / "agent-firewall-entrypoint.sh"
@@ -1033,12 +1033,8 @@ class TestLauncherRestrictedExecutor:
         firewall_image: str,
         tmp_path_factory: pytest.TempPathFactory,
     ) -> Iterator[dict[str, Any]]:
-        import docker
-
-        try:
-            docker_client.images.get(EXECUTOR_IMAGE)
-        except docker.errors.ImageNotFound:
-            pytest.skip("Executor image not built")
+        if problem := executor_image_problem():
+            pytest.skip(problem)
         with _lab(docker_client) as lab:
             # The web's services on the shared network: proxy and broker are
             # allowlisted for the executor, Postgres is not.
