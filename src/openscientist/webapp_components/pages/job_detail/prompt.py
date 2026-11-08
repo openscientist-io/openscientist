@@ -25,6 +25,7 @@ from openscientist.formatted_prompt import (
     ATTACHMENT_DIR,
     GLOBAL_ATTRIBUTES,
     LAYOUT_CLASSES,
+    PROMPT_ICONS,
     is_inline_image,
 )
 from openscientist.webapp_components.components.common import FONTAWESOME_HEAD_HTML
@@ -113,6 +114,7 @@ _PROMPT_CSS = """
 .os-prompt caption { caption-side: bottom; font-size: .85rem; color: #6b7280; padding-top: .3rem; }
 .os-prompt hr { border: 0; border-top: 1px solid #e5e7eb; margin: 1rem 0; }
 .os-prompt mark { background: #fef08a; padding: 0 .15rem; }
+.os-prompt i.fa-solid { margin-right: .4em; }
 .os-prompt figure { margin: 0 0 .75rem; }
 .os-prompt img { max-width: 100%; max-height: 24rem; height: auto; border-radius: .25rem; }
 .os-prompt figure img { display: block; margin-inline: auto; }
@@ -197,13 +199,27 @@ def sanitize_formatted_prompt(
     """Keep only the formatted-prompt vocabulary of ``fragment``.
 
     ``attachment_urls`` maps each attachment the viewer may open to its URL.
-    An image keeps its source only when it names an attached image, and a
-    link only when it is an http, https or mailto URL or names an attachment.
+    An image keeps its source only when it names an attached image, a link
+    only when it is an http, https or mailto URL or names an attachment, and
+    an ``i`` element only with exactly ``fa-solid`` plus one of
+    ``PROMPT_ICONS``. An icon that loses its class leaves an empty ``i``,
+    which the fragment drops.
     """
     placed: set[str] = set()
 
+    def icon_classes(value: str) -> str | None:
+        tokens = set(value.split())
+        if len(tokens) != 2 or "fa-solid" not in tokens:
+            return None
+        (icon,) = tokens - {"fa-solid"}
+        if icon.removeprefix("fa-") not in PROMPT_ICONS or not icon.startswith("fa-"):
+            return None
+        return f"fa-solid {icon}"
+
     def keep(tag: str, attribute: str, value: str) -> str | None:
         if attribute == "class":
+            if tag == "i":
+                return icon_classes(value)
             kept = [token for token in value.split() if token in LAYOUT_CLASSES]
             return " ".join(kept) or None
         if attribute == "lang":
@@ -233,6 +249,9 @@ def sanitize_formatted_prompt(
         link_rel="noopener noreferrer nofollow",
         set_tag_attribute_values={"a": {"target": "_blank"}},
     )
+    # An icon that lost its class is an empty <i>, dropped here. An <i> with
+    # text is plain emphasis and stays.
+    cleaned = re.sub(r"<i>\s*</i>\s?", "", cleaned)
     return SanitizedPrompt(html=_with_link_breaks(cleaned), placed_images=frozenset(placed))
 
 

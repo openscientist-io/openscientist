@@ -160,6 +160,58 @@ def test_a_malformed_language_tag_is_dropped(lang: str) -> None:
     assert sanitized.html == "<p>Text</p>"
 
 
+def test_an_allowed_prompt_icon_is_kept() -> None:
+    sanitized = sanitize_formatted_prompt(
+        '<h2><i class="fa-solid fa-bullseye"></i>Aims</h2>', attachment_urls=_URLS
+    )
+    assert sanitized.html == '<h2><i class="fa-solid fa-bullseye"></i>Aims</h2>'
+
+
+def test_an_icon_class_in_other_order_is_written_canonical() -> None:
+    sanitized = sanitize_formatted_prompt(
+        '<ul><li><i class="fa-database fa-solid"></i>Data</li></ul>', attachment_urls=_URLS
+    )
+    assert sanitized.html == '<ul><li><i class="fa-solid fa-database"></i>Data</li></ul>'
+
+
+@pytest.mark.parametrize("icon", ["fa-solid fa-dragon", "fa-solid bullseye"])
+def test_an_unknown_icon_name_is_removed(icon: str) -> None:
+    sanitized = sanitize_formatted_prompt(
+        f'<h2><i class="{icon}"></i>Aims</h2>', attachment_urls=_URLS
+    )
+    assert sanitized.html == "<h2>Aims</h2>"
+
+
+def test_extra_classes_on_an_icon_are_dropped() -> None:
+    sanitized = sanitize_formatted_prompt(
+        '<li><i class="fa-solid fa-bullseye fa-spin"></i>Plan</li>', attachment_urls=_URLS
+    )
+    assert sanitized.html == "<li>Plan</li>"
+
+
+def test_non_class_attributes_on_an_icon_are_dropped() -> None:
+    sanitized = sanitize_formatted_prompt(
+        '<h2><i class="fa-solid fa-bullseye" onclick="steal()" style="color:red"></i>Aims</h2>',
+        attachment_urls=_URLS,
+    )
+    assert sanitized.html == '<h2><i class="fa-solid fa-bullseye"></i>Aims</h2>'
+
+
+def test_an_italic_word_keeps_its_element() -> None:
+    sanitized = sanitize_formatted_prompt("<p><i>emphasis</i></p>", attachment_urls=_URLS)
+    assert sanitized.html == "<p><i>emphasis</i></p>"
+
+
+def test_identifier_links_keep_their_canonical_urls() -> None:
+    sanitized = sanitize_formatted_prompt(
+        '<a href="https://clinicaltrials.gov/study/NCT01234567">NCT01234567</a> '
+        '<a href="https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE12345">GSE12345</a>',
+        attachment_urls=_URLS,
+    )
+    assert 'href="https://clinicaltrials.gov/study/NCT01234567"' in sanitized.html
+    assert 'href="https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE12345"' in sanitized.html
+
+
 _FORMATTED = (
     '<h2>Aims</h2><p class="fp-justify">Compare the bands in '
     '<a href="data/counts.csv">the counts</a>.</p>'
@@ -584,6 +636,19 @@ def test_the_first_heading_starts_the_prompt_even_inside_its_language_wrapper() 
     assert box_by_id(boxes, "first").position_y == pytest.approx(
         box_by_id(boxes, "prompt").position_y
     )
+
+
+@pytest.mark.requires_weasyprint
+def test_an_icon_sits_a_small_gap_before_its_label() -> None:
+    """An icon flush against its heading's first letter reads as one blot."""
+    from tests.webapp.css_layout import box_by_id
+
+    boxes = _prompt_boxes(
+        '<h2><i id="icon" class="fa-solid fa-bullseye"></i><span id="label">Aim</span></h2>'
+    )
+    icon = box_by_id(boxes, "icon")
+    gap = box_by_id(boxes, "label").position_x - (icon.position_x + icon.width)
+    assert 4 <= gap <= 10
 
 
 @pytest.mark.requires_weasyprint
