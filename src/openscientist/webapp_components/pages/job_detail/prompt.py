@@ -49,10 +49,6 @@ _LINK_SEPARATOR = re.compile(r"([/:._=?-])(?=\w)")
 _COLLAPSE_WEIGHT = 2500
 _IMAGE_WEIGHT = 400
 
-#: Above this visible text length the prompt is long enough to fill the extra
-#: columns of a wide card without being chopped into a couple of lines each.
-_COLUMN_TEXT_LEN = 1000
-
 _FILE_ICONS: dict[str, str] = {
     ".pdf": "fa-file-pdf",
     ".csv": "fa-file-csv",
@@ -136,10 +132,6 @@ _PROMPT_CSS = """
 .os-prompt .fp-note { background: #eff6ff; border-left: 4px solid #3b82f6;
   padding: .5rem .75rem; border-radius: .25rem; margin: 0 0 .75rem; }
 .os-prompt .fp-muted { color: #6b7280; }
-.os-prompt-body:not(.os-prompt-collapsed) .os-prompt-columns { column-width: 24rem;
-  column-gap: 2rem; }
-.os-prompt-columns :is(h1, h2, h3, h4) { break-after: avoid; }
-.os-prompt-columns :is(figure, table, blockquote, pre, li, .fp-note) { break-inside: avoid; }
 @media (max-width: 640px) {
   .os-prompt .fp-float-left, .os-prompt .fp-float-right { float: none; max-width: 100%;
     width: 100%; margin: 0 0 .75rem; }
@@ -361,11 +353,7 @@ def render_research_prompt(
         with ui.element("div").classes("os-prompt-body w-full") as body:
             if sanitized is not None:
                 # Sanitized above against the formatted-prompt vocabulary.
-                # Only a long prompt fills the wide card's extra columns.
-                prompt_classes = "os-prompt"
-                if len(text) >= _COLUMN_TEXT_LEN:
-                    prompt_classes += " os-prompt-columns"
-                ui.html(sanitized.html, sanitize=False).classes(prompt_classes).props(
+                ui.html(sanitized.html, sanitize=False).classes("os-prompt").props(
                     f"lang={_DEFAULT_LANGUAGE}"
                 )
             else:
