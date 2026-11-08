@@ -176,6 +176,26 @@ def current_values(root: Path) -> dict[str, str]:
     return values
 
 
+def docker_env(root: Path, overlay: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The environment for a docker or compose command run in ``root``.
+
+    It is this process's environment without any key one of the three env
+    files defines, then ``overlay``. Compose prefers a variable from its
+    environment over .env when it fills the compose file, so a value the CLI
+    wrote to the files during this run reaches the containers only when no
+    copy of the key comes along. The files are read at each call for that
+    reason, and a value set for such a key in the shell is dropped too.
+    """
+    defined: set[str] = set()
+    for file in ENV_FILES:
+        path = _file_path(root, file)
+        if path.is_file():
+            defined.update(parse_values(path.read_text(encoding="utf-8").splitlines()))
+    env = {key: value for key, value in os.environ.items() if key not in defined}
+    env.update(overlay or {})
+    return env
+
+
 def _example_value(root: Path, file: str, key: str) -> str:
     example = root / EXAMPLE_FILES[file]
     if not example.is_file():

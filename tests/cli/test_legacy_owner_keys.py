@@ -49,7 +49,7 @@ def test_start_moves_the_launcher_keys_out_of_the_owner_file(
     _old_layout(checkout)
     assert not envfiles.is_configured(checkout)
 
-    def run(argv: tuple[str, ...], env: Mapping[str, str] | None) -> int:
+    def run(argv: tuple[str, ...], env: Mapping[str, str]) -> int:
         return 0
 
     def _image_id(image: str) -> str:

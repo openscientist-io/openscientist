@@ -9,13 +9,10 @@ import threading
 import weakref
 from collections.abc import AsyncGenerator
 
-from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from openscientist.database.retry import guard_connect
 from openscientist.settings import get_settings
-
-load_dotenv()
 
 
 class _LoopEngines:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 import time
 import urllib.request
@@ -22,20 +21,21 @@ HEALTH_TIMEOUT = 300.0
 
 console = Console()
 
-#: Runs a command, streams its output and returns its exit code.
-CommandRunner = Callable[[tuple[str, ...], Mapping[str, str] | None], int]
+#: Runs a command in the checkout with exactly the environment it gets,
+#: streams its output and returns its exit code.
+CommandRunner = Callable[[tuple[str, ...], Mapping[str, str]], int]
 
 
-def run_command(argv: tuple[str, ...], env: Mapping[str, str] | None = None) -> int:
-    """Run the command in the checkout, streaming its output; return its exit code."""
-    merged_env = {**os.environ, **env} if env else os.environ
-    return subprocess.run(argv, env=merged_env).returncode
+def run_command(argv: tuple[str, ...], env: Mapping[str, str]) -> int:
+    """Run the command in the checkout with ``env``, streaming its output; return its exit code."""
+    return subprocess.run(argv, env=dict(env)).returncode
 
 
 def _image_id(image: str) -> str:
     """The local config digest of a built image, or empty when unreadable."""
     proc = subprocess.run(
         ("docker", "image", "inspect", "--format", "{{.Id}}", image),
+        env=envfiles.docker_env(Path.cwd()),
         capture_output=True,
         text=True,
     )
@@ -71,8 +71,8 @@ def build_images(run: CommandRunner, root: Path) -> int:
     base_image = _base_image(values)
     executor_image = values.get("OPENSCIENTIST_EXECUTOR_IMAGE") or "openscientist-executor:latest"
     agent_image = values.get("OPENSCIENTIST_AGENT_IMAGE") or "openscientist-agent:latest"
-    platform_env = {"DOCKER_DEFAULT_PLATFORM": BUILD_PLATFORM}
-    code = run(("docker", "build", "-f", "Dockerfile.base", "-t", base_image, "."), platform_env)
+    build_env = envfiles.docker_env(root, {"DOCKER_DEFAULT_PLATFORM": BUILD_PLATFORM})
+    code = run(("docker", "build", "-f", "Dockerfile.base", "-t", base_image, "."), build_env)
     if code:
         return _failed("the base image", code)
     code = run(
@@ -87,16 +87,16 @@ def build_images(run: CommandRunner, root: Path) -> int:
             "--build-arg",
             f"BUILD_TIME={datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}",
         ),
-        platform_env,
+        build_env,
     )
     if code:
         return _failed("the web image", code)
     code = run(
-        ("docker", "build", "-f", "Dockerfile.executor", "-t", executor_image, "."), platform_env
+        ("docker", "build", "-f", "Dockerfile.executor", "-t", executor_image, "."), build_env
     )
     if code:
         return _failed("the executor image", code)
-    code = run(("docker", "build", "-f", "Dockerfile.agent", "-t", agent_image, "."), platform_env)
+    code = run(("docker", "build", "-f", "Dockerfile.agent", "-t", agent_image, "."), build_env)
     if code:
         return _failed("the agent image", code)
     code = record_image_digests(root)
@@ -138,7 +138,7 @@ def prepare_jobs_dir(root: Path, run: CommandRunner, image: str) -> int:
             "-c",
             f"chgrp {JOBS_GROUP} /jobs && chmod {JOBS_DIR_MODE} /jobs",
         ),
-        None,
+        envfiles.docker_env(root),
     )
 
 
@@ -156,7 +156,8 @@ def start(
         console.print(f"[red]Preparing the jobs directory failed (exit {code}).[/red]")
         return code
     code = run(
-        ("docker", "compose", "-f", COMPOSE_FILE, "up", "-d", "--remove-orphans", WEB_SERVICE), None
+        ("docker", "compose", "-f", COMPOSE_FILE, "up", "-d", "--remove-orphans", WEB_SERVICE),
+        envfiles.docker_env(root),
     )
     if code:
         console.print(f"[red]Starting the stack failed (exit {code}).[/red]")
@@ -177,7 +178,10 @@ def start(
 
 def stop(root: Path, run: CommandRunner = run_command) -> int:
     """Stop the stack, keeping the data volume."""
-    code = run(("docker", "compose", "-f", COMPOSE_FILE, "down", "--remove-orphans"), None)
+    code = run(
+        ("docker", "compose", "-f", COMPOSE_FILE, "down", "--remove-orphans"),
+        envfiles.docker_env(root),
+    )
     if code:
         console.print(f"[red]Stopping the stack failed (exit {code}).[/red]")
     else:
@@ -219,6 +223,7 @@ def _compose_exec_postgres(root: Path, argv: tuple[str, ...]) -> str:
     proc = subprocess.run(
         ("docker", "compose", "-f", COMPOSE_FILE, "exec", "-T", "postgres", *argv),
         cwd=root,
+        env=envfiles.docker_env(root),
         capture_output=True,
         text=True,
     )
@@ -238,7 +243,7 @@ def _offer_pubmed_mirror(root: Path, run: CommandRunner, values: dict[str, str])
             "`docker compose run --rm migrate python -m openscientist.pubmed_mirror`."
         )
         return
-    code = run(PUBMED_MIRROR_LOAD, None)
+    code = run(PUBMED_MIRROR_LOAD, envfiles.docker_env(root))
     if code:
         console.print(f"[red]Loading the PubMed mirror failed (exit {code}).[/red]")
     else:

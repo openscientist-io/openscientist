@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import shutil
 import subprocess
 import tempfile
 from collections.abc import AsyncGenerator, Callable, Generator, Mapping
@@ -82,7 +83,8 @@ if "OPENSCIENTIST_JOB_DIR" not in os.environ:
 # Clear and reload settings cache after setting up test environment
 _clear_settings_cache()
 
-_WEASYPRINT_SKIP_REASON = "WeasyPrint system libraries (Pango) not installed; see CONTRIBUTING"
+#: Set in CI, where a test whose system requirement is missing fails instead of skipping.
+_REQUIRE_SYSTEM_TESTS = "OPENSCIENTIST_REQUIRE_SYSTEM_TESTS"
 
 
 @cache
@@ -97,19 +99,51 @@ def _weasyprint_unavailable() -> str | None:
     return None
 
 
-def pytest_runtest_setup(item: pytest.Item) -> None:
-    """Skip a ``requires_weasyprint`` test on a host without Pango, or fail it
-    when OPENSCIENTIST_REQUIRE_PDF_TESTS is set, as CI does."""
-    if item.get_closest_marker("requires_weasyprint") is None:
-        return
-    missing = _weasyprint_unavailable()
-    if missing is None:
-        return
-    if os.environ.get("OPENSCIENTIST_REQUIRE_PDF_TESTS"):
-        pytest.fail(
-            f"OPENSCIENTIST_REQUIRE_PDF_TESTS is set, but WeasyPrint cannot load: {missing}"
+@cache
+def _graphviz_unavailable() -> str | None:
+    """Why the report diagrams cannot be drawn here, or None when they can."""
+    return None if shutil.which("dot") else "the dot command is not on PATH"
+
+
+@cache
+def _docker_compose_unavailable() -> str | None:
+    """Why ``docker compose`` cannot run here, or None when it can."""
+    try:
+        result = subprocess.run(
+            ("docker", "compose", "version"), capture_output=True, text=True, timeout=30
         )
-    pytest.skip(_WEASYPRINT_SKIP_REASON)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return str(exc)
+    return None if result.returncode == 0 else result.stderr.strip() or "docker compose failed"
+
+
+#: Each marker of a test that needs a system program uv cannot install, with
+#: the check that says why the program is missing and the reason a skip reports.
+_SYSTEM_REQUIREMENTS: dict[str, tuple[Callable[[], str | None], str]] = {
+    "requires_weasyprint": (
+        _weasyprint_unavailable,
+        "WeasyPrint system libraries (Pango) not installed; see CONTRIBUTING",
+    ),
+    "requires_graphviz": (
+        _graphviz_unavailable,
+        "Graphviz (the dot command) not installed; see CONTRIBUTING",
+    ),
+    "requires_docker_compose": (_docker_compose_unavailable, "Docker Compose not available"),
+}
+
+
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """Skip a test whose system requirement is missing on this host, or fail it
+    when OPENSCIENTIST_REQUIRE_SYSTEM_TESTS is set, as CI does."""
+    for marker, (unavailable, reason) in _SYSTEM_REQUIREMENTS.items():
+        if item.get_closest_marker(marker) is None:
+            continue
+        missing = unavailable()
+        if missing is None:
+            continue
+        if os.environ.get(_REQUIRE_SYSTEM_TESTS):
+            pytest.fail(f"{_REQUIRE_SYSTEM_TESTS} is set, but {reason}: {missing}")
+        pytest.skip(reason)
 
 
 @pytest.fixture

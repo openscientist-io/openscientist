@@ -384,10 +384,10 @@ class TestProviderContainerEnvVars:
         assert env["AZURE_OPENAI_API_VERSION"] == "2025-04-01-preview"
 
     def test_azure_openai_vars_omitted_when_unset(self, monkeypatch, tmp_path):
-        # The dev .env reaches tests via both os.environ (database.engine calls
-        # load_dotenv() at import) and the settings env_file. Neutralize both:
-        # chdir to an empty dir so env_file resolves to nothing, and drop any
-        # real Azure values already loaded into os.environ.
+        # A dev .env reaches settings through the env_file, and the shell may
+        # export the same variables. Neutralize both: chdir to an empty dir so
+        # env_file resolves to nothing, and drop any real Azure values in
+        # os.environ.
         monkeypatch.chdir(tmp_path)
         for var in (
             "AZURE_OPENAI_API_KEY",
@@ -412,8 +412,8 @@ class TestProviderContainerEnvVars:
         assert env["OLLAMA_BASE_URL"] == "http://host.docker.internal:11434/v1"
 
     def test_ollama_vars_default_when_unset(self, monkeypatch, tmp_path):
-        # The dev .env reaches tests via both os.environ (database.engine calls
-        # load_dotenv() at import) and the settings env_file. Neutralize both.
+        # A dev .env reaches settings through the env_file, and the shell may
+        # export the same variables. Neutralize both.
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
         settings = ProviderSettings(OPENSCIENTIST_PROVIDER="ollama")
@@ -436,8 +436,8 @@ class TestProviderContainerEnvVars:
         assert env["VLLM_API_KEY"] == "vk-real"
 
     def test_vllm_optional_vars_default_or_are_omitted(self, monkeypatch, tmp_path):
-        # The dev .env reaches tests via both os.environ (database.engine calls
-        # load_dotenv() at import) and the settings env_file. Neutralize both.
+        # A dev .env reaches settings through the env_file, and the shell may
+        # export the same variables. Neutralize both.
         monkeypatch.chdir(tmp_path)
         for var in ("VLLM_BASE_URL", "OPENSCIENTIST_MODEL", "VLLM_API_KEY"):
             monkeypatch.delenv(var, raising=False)
@@ -465,8 +465,8 @@ class TestProviderContainerEnvVars:
         assert env["LLAMACPP_API_KEY"] == "lk-real"
 
     def test_llamacpp_optional_vars_default_or_are_omitted(self, monkeypatch, tmp_path):
-        # The dev .env reaches tests via both os.environ (database.engine calls
-        # load_dotenv() at import) and the settings env_file. Neutralize both.
+        # A dev .env reaches settings through the env_file, and the shell may
+        # export the same variables. Neutralize both.
         monkeypatch.chdir(tmp_path)
         for var in ("LLAMACPP_BASE_URL", "OPENSCIENTIST_MODEL", "LLAMACPP_API_KEY"):
             monkeypatch.delenv(var, raising=False)
@@ -790,8 +790,8 @@ class TestContainerSettings:
 
     def test_default_values(self, monkeypatch, tmp_path):
         """Default container settings are reasonable."""
-        # The dev .env reaches tests via both os.environ (database.engine calls
-        # load_dotenv() at import) and the settings env_file. Neutralize both.
+        # A dev .env reaches settings through the env_file, and the shell may
+        # export the same variables. Neutralize both.
         monkeypatch.chdir(tmp_path)
         monkeypatch.delenv("OPENSCIENTIST_AGENT_IMAGE", raising=False)
         monkeypatch.delenv("OPENSCIENTIST_EXECUTOR_IMAGE", raising=False)

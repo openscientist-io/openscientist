@@ -5,7 +5,7 @@
 - Python 3.12+
 - Docker
 - [uv](https://docs.astral.sh/uv/getting-started/installation/)
-- The system libraries WeasyPrint renders reports with, the DejaVu font the fallback PDF uses, and Graphviz for report diagrams. uv installs WeasyPrint itself but cannot install these. Without Pango the tests that render a PDF or lay out the page are skipped.
+- The system libraries WeasyPrint renders reports with, the DejaVu font the fallback PDF uses, and Graphviz for report diagrams. uv installs WeasyPrint itself but cannot install these. Without Pango the tests that render a PDF or lay out the page are skipped, and without Graphviz the diagram tests are. CI sets `OPENSCIENTIST_REQUIRE_SYSTEM_TESTS=1`, which fails those tests instead.
 
 ```bash
 # Debian and Ubuntu, packages taken from Dockerfile.base
