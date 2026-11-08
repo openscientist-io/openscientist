@@ -92,7 +92,6 @@ _PROMPT_CSS = """
 .os-prompt h4 { font-size: .95rem; font-weight: 600; margin: .5rem 0 .2rem; }
 .os-prompt p { margin: 0 0 .5rem; }
 .os-prompt ul, .os-prompt ol { margin: 0 0 .5rem; padding-left: 1.5rem; }
-.os-prompt-refining { color: #0e7490; font-style: italic; font-size: .875rem; }
 .os-prompt ul { list-style: disc; }
 .os-prompt ol { list-style: decimal; }
 .os-prompt li { margin: .15rem 0; }
@@ -330,13 +329,10 @@ def render_research_prompt(
     research_question: str,
     formatted_prompt: str | None,
     attachments: list[Attachment],
-    *,
-    refining: bool,
 ) -> None:
     """The formatted prompt, or the original text while there is none, then
     the images it does not show, a Show more for a long prompt, the original
-    text behind a toggle and the other attachments. ``refining`` marks the
-    original text as waiting for its formatted version."""
+    text behind a toggle and the other attachments."""
     images = [a for a in attachments if is_inline_image(a.name)]
     files = [a for a in attachments if not is_inline_image(a.name)]
     sanitized = (
@@ -353,10 +349,6 @@ def render_research_prompt(
     offers_original = sanitized is not None and text != _collapse_space(research_question)
 
     with ui.column().classes("w-full gap-1"):
-        if refining and sanitized is None:
-            with ui.row().classes("items-center gap-2 os-prompt-refining"):
-                ui.spinner(size="1em", color="cyan-7")
-                ui.label("Refining the research question...")
         with ui.element("div").classes("os-prompt-body w-full") as body:
             if sanitized is not None:
                 # Sanitized above against the formatted-prompt vocabulary.

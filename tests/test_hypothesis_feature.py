@@ -454,9 +454,12 @@ class TestStatsBadgesHypotheses:
         findings: int = 0,
         llm_provider: str | None = None,
         llm_model: str | None = None,
-    ) -> Any:
-        return SimpleNamespace(
+    ) -> JobInfo:
+        return JobInfo(
+            job_id="hypo-job",
+            research_question="Does X bind Y?",
             status=JobStatus(status),
+            created_at="2026-01-01T00:00:00",
             iterations_completed=2,
             max_iterations=5,
             findings_count=findings,
@@ -498,8 +501,11 @@ class TestStatsBadgesHypotheses:
     def test_completed_job_with_a_stop_note_shows_it(self) -> None:
         from openscientist.webapp_components.pages.job_detail.timeline import _stats_badges
 
-        job = SimpleNamespace(
+        job = JobInfo(
+            job_id="hypo-job",
+            research_question="Does X bind Y?",
             status=JobStatus.COMPLETED,
+            created_at="2026-01-01T00:00:00",
             iterations_completed=2,
             max_iterations=5,
             findings_count=0,

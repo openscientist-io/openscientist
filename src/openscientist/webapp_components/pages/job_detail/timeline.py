@@ -16,6 +16,7 @@ from openscientist.webapp_components.components.common import (
 )
 from openscientist.webapp_components.components.job_table import render_job_action_buttons
 from openscientist.webapp_components.pages.job_detail.common import (
+    ActionCounts,
     _derive_progress_from_ks,
     _JobDetailContext,
     _load_knowledge_state,
@@ -33,6 +34,9 @@ from openscientist.webapp_components.utils import (
 
 #: The stats card's rendered values, its badges and the live status line.
 _StatsModel = tuple[tuple[tuple[str, str | int, str], ...], str | None]
+
+#: The status line's text while the question's formatting turn is running.
+_REFINING_STATUS = "Refining the research question..."
 
 
 def _provider_display_name(provider_id: str) -> str:
@@ -68,7 +72,7 @@ def _format_model_name(llm_model: str | None) -> str | None:
 
 
 def _stats_badges(
-    latest_job: Any, lit_count: int, hyp_count: int = 0, spend: float | None = None
+    latest_job: JobInfo, lit_count: int, hyp_count: int = 0, spend: float | None = None
 ) -> list[tuple[str, str | int, str]]:
     status_color = STATUS_COLORS.get(latest_job.status, "gray")
     badges: list[tuple[str, str | int, str]] = [
@@ -112,12 +116,17 @@ def _stats_badges(
     return badges
 
 
-def _status_line_for(latest_job: Any, latest_ks: dict[str, Any] | None) -> str | None:
+def _status_line_for(
+    latest_job: JobInfo, latest_ks: dict[str, Any] | None, refining: bool
+) -> str | None:
     """The live status line under the badges, or None when nothing is live.
 
-    The report phase names itself, because a regenerating job carries no
+    The refining turn shows its own text instead of the agent's status, and
+    the report phase names itself, because a regenerating job carries no
     fresh agent status.
     """
+    if refining:
+        return _REFINING_STATUS
     if latest_job.status == JobStatus.GENERATING_REPORT:
         return "Generating report..."
     if latest_job.status == JobStatus.RUNNING and latest_ks:
@@ -146,7 +155,9 @@ def _render_job_stats_content(context: _JobDetailContext) -> None:
     if context.owner_name:
         ui.label(f"Owner: {context.owner_name}").classes("text-xs text-gray-500 mt-1")
 
-    status_line = _status_line_for(latest_job, latest_ks)
+    status_line = _status_line_for(
+        latest_job, latest_ks, _prompt_refining(latest_job, context.action_counts)
+    )
     if status_line:
         with ui.element("div").classes("mt-2"):
             render_thinking_status(status_line)
@@ -156,19 +167,12 @@ def _open_dialog(dialog: ui.dialog) -> None:
     dialog.open()
 
 
-def _prompt_refining(context: _JobDetailContext) -> bool:
+def _prompt_refining(job_info: JobInfo, action_counts: ActionCounts) -> bool:
     """Whether the formatting turn may still be running. It runs before the
     first analysis, so a logged action means it ended, recorded or not."""
     return (
-        context.job_info.status == JobStatus.RUNNING
-        and not context.job_info.formatted_prompt
-        and not context.action_counts
+        job_info.status == JobStatus.RUNNING and not job_info.formatted_prompt and not action_counts
     )
-
-
-def _prompt_model(context: _JobDetailContext) -> tuple[str | None, bool]:
-    """What the prompt card shows, compared across ticks before a redraw."""
-    return context.job_info.formatted_prompt, _prompt_refining(context)
 
 
 def _render_research_question_card(
@@ -202,14 +206,17 @@ def _render_research_question_card(
 
 
 def _stats_model(
-    latest_job: JobInfo, latest_ks: dict[str, Any] | None, spend: float | None
+    latest_job: JobInfo,
+    latest_ks: dict[str, Any] | None,
+    spend: float | None,
+    refining: bool,
 ) -> _StatsModel:
     """The stats card's rendered values, compared across ticks so the card
     refreshes when a badge or the status line would actually change."""
     lit_count = len(latest_ks.get("literature", [])) if latest_ks else 0
     hyp_count = len(latest_ks.get("hypotheses", [])) if latest_ks else 0
     return tuple(_stats_badges(latest_job, lit_count, hyp_count, spend)), _status_line_for(
-        latest_job, latest_ks
+        latest_job, latest_ks, refining
     )
 
 
@@ -285,7 +292,7 @@ async def _check_and_refresh(
     )
     latest_job = JobInfo.from_db_model(db_job, iters, findings)
 
-    prompt_before = _prompt_model(context)
+    prompt_before = context.job_info.formatted_prompt
 
     # Update context before calling .refresh() so refreshables read fresh data
     context.ks_data = latest_ks
@@ -294,12 +301,15 @@ async def _check_and_refresh(
     context.spend = snapshot.job.spend
 
     stats_model = _stats_model(
-        latest_job, latest_ks, context.spend if context.spend_visible else None
+        latest_job,
+        latest_ks,
+        context.spend if context.spend_visible else None,
+        _prompt_refining(latest_job, action_counts),
     )
     if stats_model != context.state["stats_model"]:
         context.state["stats_model"] = stats_model
         render_job_stats.refresh()
-    if _prompt_model(context) != prompt_before:
+    if latest_job.formatted_prompt != prompt_before:
         render_prompt.refresh()
 
     await timeline.update(old_snapshot, snapshot)
@@ -319,7 +329,6 @@ async def _render_timeline_tab(context: _JobDetailContext) -> None:
             context.job_info.research_question,
             context.job_info.formatted_prompt,
             context.attachments,
-            refining=_prompt_refining(context),
         )
 
     render_job_stats()
