@@ -961,6 +961,46 @@ def _body_fragment(card: ui.expansion) -> str:
     return f'<div id="body" class="{" ".join(content_box.classes)}">{sections}</div>'
 
 
+def _card_fragment(card: ui.expansion) -> str:
+    """An opened card as plain divs: the Quasar header row, the content
+    wrapper and the body, so a layout engine places the header against the
+    first section the way the browser does."""
+    return (
+        '<div class="q-expansion-item q-expansion-item--expanded '
+        'os-iteration-card w-full border-l-4">'
+        '<div class="q-expansion-item__container relative-position">'
+        '<div id="header" class="q-item row no-wrap">'
+        "<span>Iteration 1: Knockout raises lactate</span>"
+        "</div>"
+        '<div class="q-expansion-item__content">'
+        '<div class="nicegui-expansion-content">' + _body_fragment(card) + "</div></div>"
+        "</div></div>"
+    )
+
+
+def _collapsed_card_fragment(card_id: str, label: str) -> str:
+    return (
+        f'<div id="{card_id}" class="q-expansion-item q-expansion-item--collapsed '
+        f'os-iteration-card w-full border-l-4">'
+        '<div class="q-expansion-item__container relative-position">'
+        f'<div class="q-item row no-wrap"><span>{label}</span></div>'
+        "</div></div>"
+    )
+
+
+def _timeline_fragment() -> str:
+    """The timeline's scroll content with two cards, as laid out in the
+    browser."""
+    return (
+        '<div class="q-scrollarea nicegui-scroll-area os-iteration-timeline w-full">'
+        '<div class="q-scrollarea__container scroll relative-position fit">'
+        '<div id="content" class="q-scrollarea__content">'
+        + _collapsed_card_fragment("card-1", "Iteration 1: Knockout raises lactate")
+        + _collapsed_card_fragment("card-2", "Iteration 2: Second pass")
+        + "</div></div></div>"
+    )
+
+
 @pytest.mark.requires_weasyprint
 @pytest.mark.asyncio
 async def test_a_card_with_only_actions_starts_with_them(
@@ -979,7 +1019,7 @@ async def test_a_card_with_only_actions_starts_with_them(
     [content_box] = card.default_slot.children
     sections = content_box.default_slot.children
     actions_index = next(i for i, s in enumerate(sections) if s.default_slot.children)
-    boxes = layout(_body_fragment(card), ITERATION_STYLES)
+    boxes = layout(_body_fragment(card), ITERATION_STYLES, quasar=True, page_width=1100)
     body = box_by_id(boxes, "body")
     actions = box_by_id(boxes, f"section-{actions_index}")
     assert actions.position_y == pytest.approx(body.position_y)
@@ -987,12 +1027,38 @@ async def test_a_card_with_only_actions_starts_with_them(
 
 @pytest.mark.requires_weasyprint
 @pytest.mark.asyncio
-async def test_sections_of_a_card_sit_a_small_gap_apart(
+async def test_the_card_header_starts_the_body_without_room(
     database: Forwarder,
     running_job: dict[str, str],
     served_page: ServedPage,
 ) -> None:
-    """Iteration 1 shows its summary and its actions, half a rem apart."""
+    """An opened card's first section starts directly under its header. Runs
+    without the Quasar layer, the only setting where NiceGUI's
+    var-based content padding resolves, since the gap is the padding the
+    content wrapper carries."""
+    from openscientist.webapp_components.pages.job_detail.iterations import ITERATION_STYLES
+    from tests.webapp.css_layout import box_by_id, layout
+
+    client = await _build(served_page, running_job)
+    card = _card(client, 1)
+    await _open_card(client, card)
+    [content_box] = card.default_slot.children
+    filled = [i for i, s in enumerate(content_box.default_slot.children) if s.default_slot.children]
+    boxes = layout(_card_fragment(card), ITERATION_STYLES, page_width=1100)
+    header = box_by_id(boxes, "header")
+    first = box_by_id(boxes, f"section-{filled[0]}")
+    assert first.position_y == pytest.approx(header.position_y + header.height)
+
+
+@pytest.mark.requires_weasyprint
+@pytest.mark.asyncio
+async def test_the_sections_of_a_card_touch(
+    database: Forwarder,
+    running_job: dict[str, str],
+    served_page: ServedPage,
+) -> None:
+    """The sections of an opened card sit flush against each other; each
+    section's header keeps them readable apart."""
     from openscientist.webapp_components.pages.job_detail.iterations import ITERATION_STYLES
     from tests.webapp.css_layout import box_by_id, layout
 
@@ -1002,7 +1068,103 @@ async def test_sections_of_a_card_sit_a_small_gap_apart(
     [content_box] = card.default_slot.children
     filled = [i for i, s in enumerate(content_box.default_slot.children) if s.default_slot.children]
     assert len(filled) >= 2
-    boxes = layout(_body_fragment(card), ITERATION_STYLES)
+    boxes = layout(_card_fragment(card), ITERATION_STYLES, quasar=True, page_width=1100)
     first = box_by_id(boxes, f"section-{filled[0]}")
     second = box_by_id(boxes, f"section-{filled[1]}")
-    assert second.position_y - (first.position_y + first.height) == pytest.approx(8)
+    assert second.position_y == pytest.approx(first.position_y + first.height)
+
+
+@pytest.mark.requires_weasyprint
+def test_the_timeline_cards_sit_twelve_pixels_apart() -> None:
+    """The gap between two timeline cards is 12px, half the 24px the scroll
+    area's 16px gap and the card's 8px bottom margin once summed."""
+    from openscientist.webapp_components.pages.job_detail.iterations import ITERATION_STYLES
+    from tests.webapp.css_layout import box_by_id, layout
+
+    boxes = layout(_timeline_fragment(), ITERATION_STYLES, quasar=True, page_width=1100)
+    first = box_by_id(boxes, "card-1")
+    second = box_by_id(boxes, "card-2")
+    assert second.position_y - (first.position_y + first.height) == pytest.approx(12)
+
+
+def _section_fragment() -> str:
+    """One section of an iteration body, its Quasar header row and icon
+    column exactly as the browser lays them out."""
+    return (
+        '<div id="body" class="nicegui-column w-full os-iteration-body">'
+        '<div class="nicegui-column w-full">'
+        '<div class="q-expansion-item q-item-type q-expansion-item--expanded">'
+        '<div class="q-expansion-item__container relative-position">'
+        '<div id="sheader" class="q-item row no-wrap">'
+        '<div id="savatar" class="q-item__section column q-item__section--side '
+        'justify-center q-item__section--avatar">'
+        '<i id="siconglyph" class="q-icon notranslate material-icons">summarize</i></div>'
+        '<div class="q-item__section column q-item__section--main justify-center">'
+        '<div class="q-item__label">Summary</div></div>'
+        "</div></div></div></div></div>"
+    )
+
+
+@pytest.mark.requires_weasyprint
+def test_the_section_headers_are_compact_rows() -> None:
+    """The section header rows inside an iteration body are compact: the row
+    keeps a 32px click target instead of Quasar's 48px item, and the icon
+    column stops reserving the 56px avatar width so the title sits closer."""
+    from openscientist.webapp_components.pages.job_detail.iterations import ITERATION_STYLES
+    from tests.webapp.css_layout import box_by_id, layout
+
+    boxes = layout(_section_fragment(), ITERATION_STYLES, quasar=True, page_width=1100)
+    header = box_by_id(boxes, "sheader")
+    assert header.height == pytest.approx(32, abs=1)
+    assert header.style["padding_top"].value == 2.0
+    avatar = box_by_id(boxes, "savatar")
+    assert avatar.style["padding_right"].value == 8.0
+    icon = box_by_id(boxes, "siconglyph")
+    assert icon.style["font_size"] == 20.0
+
+
+def _wide_timeline_fragment() -> str:
+    """The timeline's scroll content at phone width: one card with a long
+    header and one wide, unbroken code line. The ``absolute`` class Tailwind
+    puts on the scroll content is inlined, the harness has no Tailwind."""
+    wide_line = "print(" + "a_" * 120 + ")"
+    return (
+        '<div class="q-scrollarea nicegui-scroll-area os-iteration-timeline">'
+        '<div class="q-scrollarea__container scroll relative-position fit">'
+        '<div id="content" class="q-scrollarea__content" style="position:absolute; '
+        'inset: 0 auto auto 0;">'
+        # Tailwind's w-full on the card is generated in the browser only, so
+        # the app's width constraint is made explicit for the layout engine.
+        '<div id="card" class="q-expansion-item q-expansion-item--expanded '
+        'os-iteration-card border-l-4" style="width: 100%;">'
+        '<div class="q-expansion-item__container relative-position">'
+        '<div id="wideheader" class="q-item row no-wrap">'
+        '<div class="nicegui-column w-full"><div class="nicegui-row">'
+        '<div class="nicegui-label font-medium">Iteration 1: Investigation in '
+        "progress on a very long strapline that keeps going</div>"
+        '<span class="q-badge">3 analyses</span><span class="q-badge">2 '
+        "searches</span></div></div>"
+        "</div>"
+        '<div class="q-expansion-item__content">'
+        '<div class="nicegui-expansion-content">'
+        '<div class="nicegui-column w-full os-iteration-body">'
+        '<div class="nicegui-code text-xs">'
+        '<pre id="wideline" style="white-space: pre;">' + wide_line + "</pre></div>"
+        "</div></div></div></div></div></div>"
+    )
+
+
+@pytest.mark.requires_weasyprint
+def test_the_timeline_content_stays_within_the_pane() -> None:
+    """At phone width a wide code line and a long header must not stretch the
+    timeline's scroll content past the pane: the content is constrained to
+    the pane's width and the wide line stays inside its own box."""
+    from openscientist.webapp_components.pages.job_detail.iterations import ITERATION_STYLES
+    from tests.webapp.css_layout import box_by_id, layout
+
+    boxes = layout(_wide_timeline_fragment(), ITERATION_STYLES, quasar=True, page_width=390)
+    content = box_by_id(boxes, "content")
+    assert content.width == pytest.approx(390, abs=2)
+    header = box_by_id(boxes, "wideheader")
+    assert header.width <= 392
+    # WeasyPrint sizes flex column items from their content, so the wide line's own box is verified in the browser pass.

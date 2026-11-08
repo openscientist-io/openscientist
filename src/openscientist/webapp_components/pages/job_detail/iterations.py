@@ -42,12 +42,34 @@ from openscientist.webapp_components.utils import (
     is_client_connected,
 )
 
-#: A card body keeps one column per section, so a section that has nothing
-#: yet takes neither room nor a gap, and the shown ones sit half a rem apart.
+#: An iteration card's body starts directly under its header, its sections
+#: sit flush against each other, the timeline's cards sit a three-quarters
+#: rem apart, the sections' header rows are compact 32px rows, and the
+#: scroll content never grows past the pane, so the page keeps no empty
+#: room between them and a wide code line cannot push the timeline sideways.
 ITERATION_STYLES = """
 <style>
-.os-iteration-body { gap: 0.5rem; }
+.os-iteration-card > .q-expansion-item__container > .q-expansion-item__content > .nicegui-expansion-content {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.os-iteration-body { gap: 0; }
 .os-iteration-body > .nicegui-column:empty { display: none; }
+.os-iteration-timeline .q-scrollarea__content { gap: 0.75rem; width: 100%; }
+.os-iteration-timeline .q-scrollarea__content * { min-width: 0; }
+.os-iteration-timeline .nicegui-code { max-width: 100%; }
+.os-iteration-timeline .nicegui-code pre { max-width: 100%; overflow-x: auto; }
+.os-iteration-body > .nicegui-column > .q-expansion-item > .q-expansion-item__container > .q-item {
+  min-height: 32px;
+  padding: 2px 16px;
+}
+.os-iteration-body > .nicegui-column > .q-expansion-item > .q-expansion-item__container > .q-item > .q-item__section--avatar {
+  min-width: 0;
+  padding-right: 8px;
+}
+.os-iteration-body > .nicegui-column > .q-expansion-item > .q-expansion-item__container > .q-item > .q-item__section--avatar > .q-icon {
+  font-size: 20px;
+}
 </style>
 """
 
@@ -487,7 +509,9 @@ class _IterationCard:
         model = _header_model(self.iteration, self.context)
         self.header_model = model
         self.border_class = model.border_class
-        with ui.expansion(icon="science").classes(f"w-full mb-2 {model.border_class}") as expansion:
+        with ui.expansion(icon="science").classes(
+            f"w-full os-iteration-card {model.border_class}"
+        ) as expansion:
             with expansion.add_slot("header"):
                 self.header_box = ui.column().classes("w-full")
                 with self.header_box:
@@ -685,7 +709,7 @@ class _Timeline:
 
     def _ensure_card_container(self) -> ui.scroll_area:
         if self.container is None:
-            self.container = ui.scroll_area().classes("w-full h-[600px]")
+            self.container = ui.scroll_area().classes("w-full h-[600px] os-iteration-timeline")
         return self.container
 
     def _ensure_card(self, iteration: int) -> None:
