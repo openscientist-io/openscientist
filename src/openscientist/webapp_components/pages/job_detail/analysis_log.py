@@ -1,7 +1,15 @@
-"""Analysis log rendering for the job detail timeline."""
+"""Analysis log rendering for the job detail timeline.
+
+Every action renders as one dense row with a type icon, a status dot, a
+one-line description and the time and duration at the right. Arguments,
+code and output live in the row's details, collapsed by default with
+capped, scrollable blocks, and short single-line output shows in the row
+itself.
+"""
 
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -18,6 +26,44 @@ ACTIONS_PER_BATCH = 50
 
 #: How many action cards one render chunk creates before yielding to the loop.
 CARDS_PER_CHUNK = 10
+
+#: Output shorter than this and on one line fits the row without details.
+_INLINE_OUTPUT_MAX_CHARS = 160
+
+#: The rows' styles, added to the job page's head with the timeline. The
+#: plain and expandable rows share one grid: the icon sits after the 10px
+#: header padding, the facts end 32px from the row's right edge, and the
+#: last 24px column holds the expand arrow (or stays empty on plain rows).
+ACTION_STYLES = """
+<style>
+.os-action { border-left: 3px solid #d1d5db; margin-bottom: 4px; background: #fff;
+  min-width: 0; }
+.os-action-execute { border-left-color: #93c5fd; }
+.os-action-search { border-left-color: #c4b5fd; }
+.os-action-knowledge { border-left-color: #86efac; }
+.os-action-header { padding: 2px 8px 2px 10px; }
+.os-action-plain .os-action-header { padding-right: 32px; }
+.os-action-icon { font-size: 16px; width: 18px; color: #6b7280; flex: none; }
+.os-action-dot { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; flex: none; }
+.os-action-dot-failed { background: #ef4444; }
+.os-action-title { font-size: 13px; min-width: 0; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.os-action-title-failed { color: #dc2626; }
+.os-action-facts { font-size: 12px; color: #6b7280; flex: none; }
+.os-action-inline { font-size: 12px; color: #4b5563; padding: 0 10px 4px 46px; margin: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.os-action-inline-failed { color: #dc2626; }
+.os-action.q-expansion-item .os-action-header-col { flex: 1 1 0%; min-width: 0; }
+.os-action .q-expansion-item__container > .q-item { padding: 0; min-height: 0; }
+.os-action .q-expansion-item__container > .q-item > .q-item__section--side {
+  padding: 0; width: 24px; flex: none; }
+.os-action .q-expansion-item__content { padding: 2px 10px 8px 34px; }
+.os-action-meta { font-size: 12px; color: #4b5563; margin: 2px 0; }
+.os-actions { min-width: 0; }
+.os-action .nicegui-code { width: 100%; max-height: 12rem; overflow: auto; margin: 4px 0; }
+.os-action .nicegui-code pre { font-size: 12px; }
+</style>
+"""
 
 
 @dataclass(frozen=True)
@@ -47,14 +93,61 @@ class _IterationLog:
             )
 
 
-def _action_card_class(tool_name: str) -> str:
-    if "execute_code" in tool_name:
-        return "w-full mb-2 border-l-4 border-blue-300"
-    if "search_pubmed" in tool_name:
-        return "w-full mb-2 border-l-4 border-purple-300"
-    if "update_knowledge_state" in tool_name:
-        return "w-full mb-2 border-l-4 border-green-300"
-    return "w-full mb-2 border-l-4 border-gray-300"
+#: The action types the row's icon knows, as the tool name contains them.
+_ACTION_ICONS: tuple[tuple[str, str], ...] = (
+    ("execute_code", "code"),
+    ("search_pubmed", "search"),
+    ("update_knowledge_state", "bolt"),
+    ("add_hypothesis", "psychology"),
+    ("update_hypothesis", "psychology"),
+    ("read_document", "description"),
+    ("set_status", "info"),
+    ("set_job_title", "title"),
+    ("save_iteration_summary", "summary"),
+    ("run_phenix_tool", "science"),
+    ("compare_structures", "compare_arrows"),
+    ("parse_alphafold_confidence", "insights"),
+)
+
+
+def _action_icon(action_type: str) -> str:
+    for needle, icon in _ACTION_ICONS:
+        if needle in action_type:
+            return icon
+    return "more_horiz"
+
+
+def _action_kind(action_type: str) -> str:
+    if "execute_code" in action_type:
+        return "execute"
+    if "search_pubmed" in action_type:
+        return "search"
+    if "update_knowledge_state" in action_type:
+        return "knowledge"
+    return "other"
+
+
+def _action_facts(entry: dict[str, Any]) -> str | None:
+    """The time and duration at the row's right, if either is known."""
+    parts: list[str] = []
+    stamp = entry.get("timestamp")
+    if isinstance(stamp, str):
+        parts.append(datetime.fromisoformat(stamp).strftime("%H:%M:%S"))
+    duration = entry.get("execution_time")
+    if isinstance(duration, (int, float)):
+        parts.append(f"{duration:.1f}s")
+    return " \u00b7 ".join(parts) if parts else None
+
+
+def _inline_output(entry: dict[str, Any]) -> str | None:
+    """The output when it is short and single-line, so it fits the row."""
+    output = entry.get("output")
+    if output is None:
+        return None
+    text = str(output)
+    if len(text) > _INLINE_OUTPUT_MAX_CHARS or "\n" in text:
+        return None
+    return text
 
 
 @dataclass(frozen=True)
@@ -73,67 +166,113 @@ def _analysis_log_meta_lines(entry: dict[str, Any]) -> list[_AnalysisLogMetaLine
         if (count := entry.get("results_count")) is not None:
             lines.append(_AnalysisLogMetaLine(f"Papers found: {count}"))
     elif "add_hypothesis" in action_type or "update_hypothesis" in action_type:
+        if hypothesis_id := entry.get("hypothesis_id"):
+            lines.append(_AnalysisLogMetaLine(f"Hypothesis: {hypothesis_id}"))
         if statement := entry.get("statement"):
-            lines.append(_AnalysisLogMetaLine(statement, italic=True))
+            lines.append(_AnalysisLogMetaLine(str(statement), italic=True))
         if status := entry.get("status"):
             lines.append(_AnalysisLogMetaLine(f"Status: {status}"))
         if summary := entry.get("result_summary"):
-            lines.append(_AnalysisLogMetaLine(summary))
+            lines.append(_AnalysisLogMetaLine(str(summary)))
     elif "update_knowledge_state" in action_type:
         if title := entry.get("title"):
             lines.append(_AnalysisLogMetaLine(f"Finding: {title}"))
+        if evidence := entry.get("evidence"):
+            lines.append(_AnalysisLogMetaLine(f"Evidence: {evidence}"))
+    elif "read_document" in action_type:
+        if file_path := entry.get("file_path"):
+            lines.append(_AnalysisLogMetaLine(str(file_path)))
     elif "run_phenix_tool" in action_type:
         if tool_name := entry.get("tool_name"):
             lines.append(_AnalysisLogMetaLine(f"Tool: {tool_name}"))
 
-    if "execute_code" in action_type and (exec_time := entry.get("execution_time")) is not None:
-        lines.append(_AnalysisLogMetaLine(f"Duration: {exec_time}s"))
+    language = entry.get("language")
+    if "execute_code" in action_type and isinstance(language, str) and language != "python":
+        lines.append(_AnalysisLogMetaLine(f"Language: {language}"))
 
     return lines
 
 
-def _render_analysis_log_details(entry: dict[str, Any], success: bool) -> None:
-    meta = "text-xs text-gray-600 mt-1"
+def _render_action_header(entry: dict[str, Any]) -> None:
+    success = entry.get("success", True)
+    action_type = entry.get("action", "")
+    description = entry.get("description") or action_type or "Unknown"
+    with ui.row().classes("os-action-header w-full no-wrap items-center gap-1.5"):
+        icon = ui.icon(_action_icon(action_type)).classes("os-action-icon")
+        with icon:
+            ui.tooltip(action_type)
+        dot = ui.element("span").classes("os-action-dot")
+        if not success:
+            dot.classes(add="os-action-dot-failed")
+        title = ui.label(str(description)).classes("os-action-title flex-1")
+        if not success:
+            title.classes(add="os-action-title-failed")
+        if facts := _action_facts(entry):
+            ui.label(facts).classes("os-action-facts")
+
+
+def _render_inline_output(text: str, success: bool) -> None:
+    label = ui.label(text).classes("os-action-inline")
+    if not success:
+        label.classes(add="os-action-inline-failed")
+
+
+def _render_action_details(entry: dict[str, Any], inline: str | None) -> None:
     action_type = entry.get("action", "")
 
     for line in _analysis_log_meta_lines(entry):
-        label = ui.label(line.text).classes(meta)
+        label = ui.label(line.text).classes("os-action-meta")
         if line.italic:
             label.style("font-style: italic")
 
     code = entry.get("code")
     if code and "execute_code" in action_type:
-        with ui.expansion("Code", icon="code").classes("w-full mt-1"):
-            ui.code(code, language="python").classes("text-xs")
+        language = entry.get("language")
+        ui.code(str(code), language=language if isinstance(language, str) else "python").classes(
+            "os-action-code"
+        )
 
     output = entry.get("output")
-    if not output:
+    if output is None or inline is not None:
         return
     output_str = str(output)
-    if len(output_str) > 200:
-        with ui.expansion("Result", icon="output").classes("w-full mt-1"):
-            ui.code(
-                output_str[:RESULT_PREVIEW_CHARS]
-                + ("..." if len(output_str) > RESULT_PREVIEW_CHARS else ""),
-                language="text",
-            ).classes("text-xs")
-    elif not success:
-        ui.label(output_str).classes("text-xs text-red-600 mt-1")
-    else:
-        ui.label(output_str).classes(meta)
+    ui.code(
+        output_str[:RESULT_PREVIEW_CHARS]
+        + ("..." if len(output_str) > RESULT_PREVIEW_CHARS else ""),
+        language="text",
+    ).classes("os-action-output")
 
 
 def _render_action_card(entry: dict[str, Any]) -> None:
+    """One dense row for the action, its details behind an expand when it
+    has any, and its short output inline."""
     success = entry.get("success", True)
     action_type = entry.get("action", "")
-    description = entry.get("description", action_type or "Unknown")
-    status_icon = "\u2705" if success else "\u274c"
+    kind = _action_kind(action_type)
+    inline = _inline_output(entry)
+    has_code = "execute_code" in action_type and bool(entry.get("code"))
+    has_details = (
+        bool(_analysis_log_meta_lines(entry))
+        or has_code
+        or (inline is None and entry.get("output") is not None)
+    )
 
-    with ui.card().classes(_action_card_class(action_type)):
-        with ui.row().classes("items-center gap-2"):
-            ui.label(f"{status_icon} {description}").classes("font-medium text-sm")
-            ui.badge(action_type, color="gray").props("outline").classes("text-xs")
-        _render_analysis_log_details(entry, success)
+    classes = f"os-action os-action-{kind}"
+    if not has_details:
+        with ui.column().classes(f"{classes} os-action-plain w-full gap-0"):
+            _render_action_header(entry)
+            if inline is not None:
+                _render_inline_output(inline, success)
+        return
+
+    with ui.expansion().classes(f"{classes} w-full").props("dense") as action:
+        with action.add_slot("header"):
+            with ui.column().classes("os-action-header-col gap-0"):
+                _render_action_header(entry)
+                if inline is not None:
+                    _render_inline_output(inline, success)
+        with action:
+            _render_action_details(entry, inline)
 
 
 async def _render_action_cards(cards: ui.column, entries: list[dict[str, Any]]) -> None:
@@ -203,7 +342,7 @@ async def _render_analysis_log_actions(
         return
     with box:
         with ui.expansion(f"Actions ({total})", icon="build").classes("w-full") as expansion:
-            with ui.column().classes("w-full gap-0") as cards:
+            with ui.column().classes("os-actions w-full gap-0") as cards:
                 await _render_action_cards(cards, first)
     state.expansion = expansion
     state.cards = cards

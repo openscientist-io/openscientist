@@ -680,19 +680,16 @@ class TestAnalysisLogMetadata:
         ]
         assert [line.italic for line in lines] == [True, False, False]
 
-    def test_execute_code_metadata_adds_duration(self) -> None:
+    def test_execute_code_duration_shows_once_in_the_row(self) -> None:
         from openscientist.webapp_components.pages.job_detail.analysis_log import (
+            _action_facts,
             _analysis_log_meta_lines,
         )
 
-        lines = _analysis_log_meta_lines(
-            {
-                "action": "execute_code",
-                "execution_time": 3.5,
-            }
-        )
+        entry = {"action": "execute_code", "execution_time": 3.5}
 
-        assert [line.text for line in lines] == ["Duration: 3.5s"]
+        assert _action_facts(entry) == "3.5s"
+        assert _analysis_log_meta_lines(entry) == []
 
 
 # ---------------------------------------------------------------------------

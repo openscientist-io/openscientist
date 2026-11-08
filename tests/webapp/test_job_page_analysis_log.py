@@ -145,12 +145,12 @@ def _expansion_named(client: Client, prefix: str) -> ui.expansion:
 
 
 def _action_titles(client: Client) -> list[str]:
-    """The titles of the action cards inside the iteration's Actions list."""
+    """The titles of the action rows inside the iteration's Actions list."""
     actions = _expansion_named(client, "Actions")
     return [
         child.text
         for child in actions.descendants()
-        if isinstance(child, ui.label) and child.text.startswith("\u2705 ")
+        if isinstance(child, ui.label) and "os-action-title" in child.classes
     ]
 
 
@@ -227,7 +227,7 @@ async def test_an_opened_iteration_shows_its_actions_fifty_at_a_time(
     await _open_iteration(client, 1)
     total = CODE_RUNS + SEARCHES
     assert _expansion_named(client, "Actions").props["label"] == f"Actions ({total})"
-    assert _action_titles(client) == [f"\u2705 Run {n}" for n in range(50)]
+    assert _action_titles(client) == [f"Run {n}" for n in range(50)]
 
     for shown in (100, total):
         button = _show_more(client)
@@ -237,8 +237,8 @@ async def test_an_opened_iteration_shows_its_actions_fifty_at_a_time(
         assert len(_action_titles(client)) == shown
 
     titles = _action_titles(client)
-    assert titles[-SEARCHES:] == [f"\u2705 Search {n}" for n in range(SEARCHES)]
-    assert titles[:CODE_RUNS] == [f"\u2705 Run {n}" for n in range(CODE_RUNS)]
+    assert titles[-SEARCHES:] == [f"Search {n}" for n in range(SEARCHES)]
+    assert titles[:CODE_RUNS] == [f"Run {n}" for n in range(CODE_RUNS)]
     assert _show_more(client) is None
 
 
@@ -259,14 +259,14 @@ async def test_two_racing_show_more_clicks_each_append_one_batch(
     await fire_click_twice(button, client, burst)
     burst.undo()
     await _until(lambda: len(_action_titles(client)) >= 100, "the second batch")
-    assert _action_titles(client) == [f"\u2705 Run {n}" for n in range(100)]
+    assert _action_titles(client) == [f"Run {n}" for n in range(100)]
     remaining = _show_more(client)
     assert remaining is not None, "20 actions remain, the button must stay offered"
 
     _click(client, remaining)
     await _until(lambda: len(_action_titles(client)) >= total, "every action")
-    assert _action_titles(client) == [f"\u2705 Run {n}" for n in range(CODE_RUNS)] + [
-        f"\u2705 Search {n}" for n in range(SEARCHES)
+    assert _action_titles(client) == [f"Run {n}" for n in range(CODE_RUNS)] + [
+        f"Search {n}" for n in range(SEARCHES)
     ]
     assert _show_more(client) is None
 
@@ -304,7 +304,7 @@ async def test_reopening_an_iteration_while_its_load_is_pending_loads_it_once(
     for task in scheduled:
         await asyncio.wait_for(task, 10)
     assert loads == 1
-    assert _action_titles(client) == [f"\u2705 Run {n}" for n in range(50)]
+    assert _action_titles(client) == [f"Run {n}" for n in range(50)]
     assert _show_more(client) is not None
 
 
@@ -353,7 +353,7 @@ async def test_a_failed_first_load_keeps_the_placeholder_until_the_next_open(
         await asyncio.wait_for(task, 10)
     assert calls == 2
     assert not _placeholder_visible(client, expansion)
-    assert _action_titles(client) == [f"\u2705 Run {n}" for n in range(50)]
+    assert _action_titles(client) == [f"Run {n}" for n in range(50)]
     assert _show_more(client) is not None
 
 
@@ -398,7 +398,7 @@ async def test_deleting_the_content_while_its_batch_renders_stops_the_render(
         await asyncio.wait_for(task, 10)
     assert rendered == 2 * CARDS_PER_CHUNK
     assert [
-        label.text for label in _of_type(client, ui.label) if label.text.startswith("\u2705 ")
+        label.text for label in _of_type(client, ui.label) if "os-action-title" in label.classes
     ] == []
     assert _show_more(client) is None
     with pytest.raises(AssertionError):
@@ -421,7 +421,7 @@ async def test_show_more_after_the_actions_list_was_deleted_appends_nothing(
     make the click append nothing and raise nothing."""
     client = await _served(served_page, long_log_job)
     await _open_iteration(client, 1)
-    assert _action_titles(client) == [f"\u2705 Run {n}" for n in range(50)]
+    assert _action_titles(client) == [f"Run {n}" for n in range(50)]
     button = _show_more(client)
     assert button is not None
 
@@ -449,7 +449,7 @@ async def test_show_more_after_the_actions_list_was_deleted_appends_nothing(
         await asyncio.wait_for(task, 10)
     assert offsets == [50]
     assert [
-        label.text for label in _of_type(client, ui.label) if label.text.startswith("\u2705 ")
+        label.text for label in _of_type(client, ui.label) if "os-action-title" in label.classes
     ] == []
     assert _show_more(client) is None
 
