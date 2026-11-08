@@ -633,82 +633,6 @@ def test_prompt_headings_keep_a_compact_line_height_against_quasar() -> None:
         assert float(box.margin_top) <= 12
 
 
-#: A long prompt the renderer offers the extra columns of a wide card.
-_COLUMNS_LONG = (
-    '<div class="os-prompt-body">'
-    '<div id="prompt" class="os-prompt os-prompt-columns">'
-    "<h1>Background</h1>"
-    + "".join(
-        f'<p class="fp-justify">Background point {i}. ' + "study " * 9 + "</p>" for i in range(8)
-    )
-    + "<h2>Aims</h2>"
-    + "".join(f"<p>Aim {i}. " + "compare " * 9 + "</p>" for i in range(8))
-    + "</div></div>"
-)
-
-
-#: The same card with a short prompt, which never gets the columns class.
-_COLUMNS_SHORT = (
-    '<div class="os-prompt-body">'
-    '<div id="prompt" class="os-prompt">'
-    "<h1>Aims</h1>"
-    '<p class="fp-justify">A short aim that fills a single column alone.</p>'
-    "</div></div>"
-)
-
-
-def _paragraph_xs(boxes) -> set:
-    """The x positions the prompt's paragraphs laid out at, one per column."""
-    return {round(box.position_x, 1) for box in boxes if getattr(box, "element_tag", None) == "p"}
-
-
-@pytest.mark.requires_weasyprint
-def test_a_long_prompt_lays_out_in_columns_in_a_wide_card() -> None:
-    """A wide card with a long prompt lays the text out in several columns."""
-    from openscientist.webapp_components.pages.job_detail.prompt import _PROMPT_CSS
-    from tests.webapp.css_layout import layout
-
-    boxes = layout(_COLUMNS_LONG, _PROMPT_CSS, quasar=True, page_width=1400)
-    assert len(_paragraph_xs(boxes)) >= 2
-
-
-@pytest.mark.requires_weasyprint
-def test_a_short_prompt_stays_in_a_single_column() -> None:
-    """The renderer only offers columns to a long prompt, so a short one keeps
-    its single column even in a wide card."""
-    from openscientist.webapp_components.pages.job_detail.prompt import _PROMPT_CSS
-    from tests.webapp.css_layout import layout
-
-    boxes = layout(_COLUMNS_SHORT, _PROMPT_CSS, quasar=True, page_width=1400)
-    assert len(_paragraph_xs(boxes)) == 1
-
-
-@pytest.mark.requires_weasyprint
-def test_a_long_prompt_keeps_one_column_in_a_narrow_card() -> None:
-    """Below the column width even a long prompt stays a single column, as on
-    a phone."""
-    from openscientist.webapp_components.pages.job_detail.prompt import _PROMPT_CSS
-    from tests.webapp.css_layout import layout
-
-    boxes = layout(_COLUMNS_LONG, _PROMPT_CSS, quasar=True, page_width=390)
-    assert len(_paragraph_xs(boxes)) == 1
-
-
-@pytest.mark.requires_weasyprint
-def test_a_collapsed_prompt_keeps_one_column() -> None:
-    """Columns only show once expanded. A collapsed preview with a height cap
-    would otherwise show nearly the whole prompt and leave the Show more fade
-    nothing to hide."""
-    from openscientist.webapp_components.pages.job_detail.prompt import _PROMPT_CSS
-    from tests.webapp.css_layout import layout
-
-    fragment = _COLUMNS_LONG.replace(
-        'class="os-prompt-body"', 'class="os-prompt-body os-prompt-collapsed"'
-    )
-    boxes = layout(fragment, _PROMPT_CSS, quasar=True, page_width=1400)
-    assert len(_paragraph_xs(boxes)) == 1
-
-
 def _image_data_uri(width: int, height: int) -> str:
     import base64
     import io
@@ -739,22 +663,22 @@ def test_a_tall_image_is_capped_without_distorting_its_ratio() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_long_formatted_prompt_gets_the_columns_class(
+@pytest.mark.requires_weasyprint
+async def test_a_long_formatted_prompt_reads_as_one_column_in_a_wide_card(
     database: Forwarder, long_job: dict[str, Any], served_page: ServedPage
 ) -> None:
+    """Text columns cram tables and figures into a narrow strip, so even a
+    long prompt in a wide card keeps the card's full width."""
+    from openscientist.webapp_components.pages.job_detail.prompt import _PROMPT_CSS
+    from tests.webapp.css_layout import layout
+
     client = await _build(served_page, long_job["owner_token"], long_job["job_id"])
-
     prompt = _prompt_html(client)
     assert prompt is not None
-    assert "os-prompt-columns" in prompt.classes
-
-
-@pytest.mark.asyncio
-async def test_a_short_formatted_prompt_gets_no_columns_class(
-    database: Forwarder, formatted_job: dict[str, Any], served_page: ServedPage
-) -> None:
-    client = await _build(served_page, formatted_job["owner_token"], formatted_job["job_id"])
-
-    prompt = _prompt_html(client)
-    assert prompt is not None
-    assert "os-prompt-columns" not in prompt.classes
+    fragment = (
+        '<div class="os-prompt-body">'
+        f'<div class="{" ".join(prompt.classes)}">{prompt.content}</div></div>'
+    )
+    boxes = layout(fragment, _PROMPT_CSS, quasar=True, page_width=1400)
+    xs = {round(box.position_x, 1) for box in boxes if getattr(box, "element_tag", None) == "p"}
+    assert len(xs) == 1
