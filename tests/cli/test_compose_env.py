@@ -19,7 +19,7 @@ import pytest
 from typer.testing import CliRunner
 
 from openscientist.cli import app as cli_app
-from openscientist.cli import envfiles, stack
+from openscientist.cli import envfiles, preflight, stack
 from tests.cli.conftest import REPO_ROOT, env_value
 
 runner = CliRunner()
@@ -125,6 +125,19 @@ def test_stop_gets_no_copy_of_a_key_the_env_files_define(
     assert result.exit_code == 0, result.output
     [env] = calls
     assert not set(_FILE_KEYS) & env.keys()
+
+
+def test_preflight_probes_run_without_a_copy_of_a_key_the_env_files_define(
+    checkout: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Preflight's own `docker compose ps` fills the compose file too, so its
+    probes get the same environment as the stack's commands."""
+    _configure(checkout)
+    _stale_environment(monkeypatch)
+    probe = 'printf "%s|%s" "${AGENT_IMAGE_DIGESTS-unset}" "$OPENSCIENTIST_TEST_UNRELATED"'
+    result = preflight._run(("sh", "-c", probe), checkout)
+    assert (result.code, result.stdout) == (0, "unset|kept")
+    assert preflight._run(("openscientist-no-such-command",), checkout).code == 127
 
 
 @pytest.mark.requires_docker_compose
