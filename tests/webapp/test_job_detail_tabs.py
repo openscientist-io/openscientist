@@ -70,24 +70,22 @@ def _job(status: JobStatus) -> JobInfo:
 
 def test_the_log_tab_carries_the_report_generation_status() -> None:
     job = _job(JobStatus.GENERATING_REPORT)
-    assert timeline._status_line_for(job, None, False) == "Generating report..."
-    assert timeline._status_line_for(job, {"agent_status": "leftover"}, False) == (
-        "Generating report..."
-    )
+    assert timeline._status_line_for(job, None) == "Generating report..."
+    assert timeline._status_line_for(job, {"agent_status": "leftover"}) == ("Generating report...")
 
 
 def test_the_log_tab_carries_the_live_agent_status_while_running() -> None:
     job = _job(JobStatus.RUNNING)
     assert (
-        timeline._status_line_for(job, {"agent_status": "Iteration 2: checking markers"}, False)
+        timeline._status_line_for(job, {"agent_status": "Iteration 2: checking markers"})
         == "Iteration 2: checking markers"
     )
 
 
 def test_the_log_tab_shows_no_line_without_a_live_status() -> None:
     job = _job(JobStatus.RUNNING)
-    assert timeline._status_line_for(job, None, False) is None
-    assert timeline._status_line_for(job, {"agent_status": None}, False) is None
+    assert timeline._status_line_for(job, None) is None
+    assert timeline._status_line_for(job, {"agent_status": None}) is None
 
 
 @pytest.mark.parametrize(
@@ -95,7 +93,7 @@ def test_the_log_tab_shows_no_line_without_a_live_status() -> None:
 )
 def test_a_job_without_a_live_status_has_no_line(status: JobStatus) -> None:
     job = _job(status)
-    assert timeline._status_line_for(job, {"agent_status": "leftover"}, False) is None
+    assert timeline._status_line_for(job, {"agent_status": "leftover"}) is None
 
 
 def test_the_report_tab_does_not_render_the_generation_status(tmp_path: Path) -> None:

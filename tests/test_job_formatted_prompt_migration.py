@@ -1,5 +1,5 @@
-"""The migration that adds ``jobs.formatted_prompt`` also grants the container
-role its write, and downgrades cleanly."""
+"""The migration that drops ``jobs.formatted_prompt`` removes the column and
+restores it, with the container role's write grant, on downgrade."""
 
 from __future__ import annotations
 
@@ -16,12 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 _MIGRATION = (
     Path(__file__).parent.parent
     / "src/openscientist/database/migrations/versions"
-    / "2026-11-07_1200_job_formatted_prompt.py"
+    / "2026-11-08_1200_drop_job_formatted_prompt.py"
 )
 
 
 def _migration() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("job_formatted_prompt", _MIGRATION)
+    spec = importlib.util.spec_from_file_location("drop_job_formatted_prompt", _MIGRATION)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -52,7 +52,9 @@ def _update_columns(connection: Connection, role: str) -> set[str]:
 
 
 @pytest.mark.asyncio
-async def test_formatted_prompt_upgrades_and_downgrades_cleanly(test_engine: AsyncEngine) -> None:
+async def test_drop_formatted_prompt_upgrades_and_downgrades_cleanly(
+    test_engine: AsyncEngine,
+) -> None:
     module = _migration()
 
     def run(connection: Connection) -> None:
@@ -60,13 +62,16 @@ async def test_formatted_prompt_upgrades_and_downgrades_cleanly(test_engine: Asy
         transaction = connection.begin()
         try:
             with Operations.context(MigrationContext.configure(connection)):
+                # Head is past this migration, so the downgrade rebuilds the
+                # state the upgrade drops.
                 module.downgrade()
-                assert not _has_column(connection)
+                assert _has_column(connection)
+                assert "formatted_prompt" in _update_columns(connection, "openscientist_agent")
+                # Only the container writes it, so a share with edit rights cannot.
+                assert "formatted_prompt" not in _update_columns(connection, "openscientist_app")
                 module.upgrade()
-            assert _has_column(connection)
-            assert "formatted_prompt" in _update_columns(connection, "openscientist_agent")
-            # Only the container writes it, so a share with edit rights cannot.
-            assert "formatted_prompt" not in _update_columns(connection, "openscientist_app")
+            assert not _has_column(connection)
+            assert "formatted_prompt" not in _update_columns(connection, "openscientist_agent")
         finally:
             transaction.rollback()
 

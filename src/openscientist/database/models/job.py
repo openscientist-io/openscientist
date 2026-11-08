@@ -45,12 +45,6 @@ class Job(UUIDv7Mixin, Base):
         comment="Optional short display label (model- or user-generated)",
     )
 
-    formatted_prompt: Mapped[str | None] = mapped_column(
-        Text,
-        nullable=True,
-        comment="Model-formatted HTML fragment of the research question, for display",
-    )
-
     description: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,

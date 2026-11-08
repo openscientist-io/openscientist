@@ -21,7 +21,6 @@ from openscientist.database.models import Job, JobShare, User
 from openscientist.database.models.finding import Finding
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_admin_session, get_session_ctx
-from openscientist.formatted_prompt import DEFAULT_LANGUAGE
 from openscientist.job.types import JobStatus, completed_iterations
 from openscientist.providers import check_provider_config
 from openscientist.webapp_components.components.banners import (
@@ -29,6 +28,7 @@ from openscientist.webapp_components.components.banners import (
     render_pending_approval_notice,
 )
 from openscientist.webapp_components.components.common import (
+    DEFAULT_LANGUAGE,
     render_permission_badge_slot,
     render_stat_badges,
 )
