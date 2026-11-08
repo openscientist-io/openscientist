@@ -191,12 +191,19 @@ async def _tick(
 
 
 def _iteration_cards(client: Client) -> list[ui.expansion]:
-    """The iteration cards, the only expansions that own a header slot."""
+    """The iteration cards, the expansions whose header slot starts with an
+    ``Iteration`` label."""
     with client:
         return [
             e
             for e in client.elements.values()
-            if isinstance(e, ui.expansion) and "header" in e.slots
+            if isinstance(e, ui.expansion)
+            and "header" in e.slots
+            and any(
+                isinstance(label, ui.label) and label.text.startswith("Iteration ")
+                for element in e.slots["header"].children
+                for label in [element, *element.descendants()]
+            )
         ]
 
 
@@ -268,13 +275,13 @@ def _actions_label(card: ui.expansion) -> str | None:
 
 
 def _shown_actions(card: ui.expansion) -> list[str]:
-    """The titles of the action cards the card currently shows."""
+    """The titles of the action rows the card currently shows."""
     actions = _actions_expansion(card)
     assert actions is not None, "the card has no Actions section"
     return [
         child.text
         for child in actions.descendants()
-        if isinstance(child, ui.label) and child.text.startswith("\u2705 ")
+        if isinstance(child, ui.label) and "os-action-title" in child.classes
     ]
 
 
@@ -419,7 +426,7 @@ async def test_a_new_log_row_updates_the_cards_in_place_and_keeps_them_open(
     card1 = _card(client, 1)
     await _open_card(client, card1)
     shown1 = _shown_actions(card1)
-    assert shown1 == ["\u2705 Run 1", "\u2705 Run 2"]
+    assert shown1 == ["Run 1", "Run 2"]
     assert _actions_label(card1) == "Actions (2)"
     assert _show_more(card1) is None
     card2 = _card(client, 2)
@@ -444,7 +451,7 @@ async def test_a_new_log_row_updates_the_cards_in_place_and_keeps_them_open(
     assert not card2.value
     assert "2 analyses" in _header_badges(card2)
     await _open_card(client, card2)
-    assert _shown_actions(card2) == ["\u2705 Run 3", "\u2705 Run 6"]
+    assert _shown_actions(card2) == ["Run 3", "Run 6"]
     assert _actions_label(card2) == "Actions (2)"
 
     assert _placeholder_body(card3), "the never opened card was rebuilt"
@@ -918,7 +925,7 @@ async def test_an_actionless_open_card_gains_its_actions_section(
 
     assert card3.value is True
     assert _actions_label(card3) == "Actions (1)"
-    assert _shown_actions(card3) == ["\u2705 Run 9"]
+    assert _shown_actions(card3) == ["Run 9"]
 
 
 @pytest.mark.asyncio

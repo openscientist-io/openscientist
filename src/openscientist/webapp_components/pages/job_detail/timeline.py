@@ -15,6 +15,7 @@ from openscientist.webapp_components.components.common import (
     render_thinking_status,
 )
 from openscientist.webapp_components.components.job_table import render_job_action_buttons
+from openscientist.webapp_components.pages.job_detail.analysis_log import ACTION_STYLES
 from openscientist.webapp_components.pages.job_detail.common import (
     ActionCounts,
     _derive_progress_from_ks,
@@ -318,6 +319,7 @@ async def _check_and_refresh(
 
 async def _render_timeline_tab(context: _JobDetailContext) -> None:
     ui.add_head_html(ITERATION_STYLES)
+    ui.add_head_html(ACTION_STYLES)
 
     @ui.refreshable
     def render_job_stats() -> None:
