@@ -83,7 +83,12 @@ def test_the_job_page_shows_the_run_environment() -> None:
         version_info=_RECORDED,
     )
     context = SimpleNamespace(
-        job_info=info, ks_data=None, owner_name=None, spend=0.0, spend_visible=False
+        job_info=info,
+        ks_data=None,
+        owner_name=None,
+        spend=0.0,
+        spend_visible=False,
+        action_counts={},
     )
     with (
         patch.object(timeline, "ui") as mock_ui,

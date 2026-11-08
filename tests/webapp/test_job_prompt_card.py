@@ -27,6 +27,7 @@ from openscientist.webapp_components.pages.job_detail.prompt import (
     attachment_url,
     sanitize_formatted_prompt,
 )
+from openscientist.webapp_components.pages.job_detail.timeline import _REFINING_STATUS
 from tests.db_outage import Forwarder
 from tests.webapp.conftest import ServedPage, WireMessage, drain_outbox
 
@@ -168,7 +169,12 @@ _FORMATTED = (
 
 
 async def _seed(
-    test_engine: AsyncEngine, *, formatted_prompt: str | None, question: str, is_public: bool
+    test_engine: AsyncEngine,
+    *,
+    formatted_prompt: str | None,
+    question: str,
+    is_public: bool,
+    agent_status: str | None = None,
 ) -> dict[str, Any]:
     async with AsyncSession(test_engine, expire_on_commit=False) as db:
         owner = User(email=f"owner-{uuid4().hex}@prompt.test", name="Owner", is_approved=True)
@@ -183,6 +189,7 @@ async def _seed(
             current_iteration=1,
             max_iterations=5,
             is_public=is_public,
+            agent_status=agent_status,
         )
         db.add(job)
         await db.flush()
@@ -236,7 +243,11 @@ async def formatted_job(test_engine: AsyncEngine) -> AsyncIterator[dict[str, Any
 @pytest_asyncio.fixture
 async def unformatted_job(test_engine: AsyncEngine) -> AsyncIterator[dict[str, Any]]:
     seeded = await _seed(
-        test_engine, formatted_prompt=None, question="Does X bind Y?", is_public=False
+        test_engine,
+        formatted_prompt=None,
+        question="Does X bind Y?",
+        is_public=False,
+        agent_status="Thinking",
     )
     yield seeded
     await _cleanup(test_engine, seeded)
@@ -485,7 +496,10 @@ async def test_a_formatted_prompt_written_while_running_appears_on_the_next_tick
             e for e in client.elements.values() if isinstance(e, ui.timer) and e.interval == 2.0
         )
     assert _prompt_html(client) is None
-    assert _refining(client), "a running job without a formatted prompt shows it is refining"
+    assert _status_line(client) == _REFINING_STATUS, (
+        "a running job without a formatted prompt shows it is refining"
+    )
+    assert not _card_refining(client)
 
     async with AsyncSession(test_engine) as db:
         job = await db.get(Job, UUID(job_id))
@@ -502,14 +516,29 @@ async def test_a_formatted_prompt_written_while_running_appears_on_the_next_tick
     assert "<em>X</em>" in html.content
     assert not _original(client).visible
     assert _button(client, "Show original prompt") is not None
-    assert not _refining(client), "the refining status stays after the prompt arrived"
+    assert _status_line(client) == "Thinking", "the status line returns to the agent status"
+    assert not _card_refining(client)
 
 
-def _refining(client: Client) -> bool:
-    return any(e.text == _REFINING for e in _elements(client, ui.label))
+def _status_line(client: Client) -> str | None:
+    """The status line under the stat badges, the page's one status place."""
+    with client:
+        for e in client.elements.values():
+            if isinstance(e, ui.label) and "thinking-label" in e.classes:
+                text: str = e.text
+                return text
+    return None
 
 
-_REFINING = "Refining the research question..."
+def _card_refining(client: Client) -> bool:
+    """Whether the research question card shows the refining label of its own."""
+    with client:
+        for e in client.elements.values():
+            if isinstance(e, ui.card):
+                labels = [d.text for d in e.descendants() if isinstance(d, ui.label)]
+                if "Research Question" in labels:
+                    return _REFINING_STATUS in labels
+    return False
 
 
 @pytest.mark.asyncio
@@ -534,7 +563,8 @@ async def test_a_job_whose_discovery_started_shows_no_refining_status(
         )
         await db.commit()
     client = await _build(served_page, unformatted_job["owner_token"], unformatted_job["job_id"])
-    assert not _refining(client)
+    assert _status_line(client) == "Thinking", "the logged action ends the refining turn"
+    assert not _card_refining(client)
 
 
 def _prompt_boxes(fragment: str) -> list[Any]:

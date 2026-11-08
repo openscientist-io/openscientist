@@ -34,6 +34,7 @@ from openscientist.webapp_components.pages.job_detail.common import (
 from openscientist.webapp_components.pages.job_detail.prompt import add_prompt_head_html
 from openscientist.webapp_components.pages.job_detail.report import _render_report_tab
 from openscientist.webapp_components.pages.job_detail.timeline import (
+    _prompt_refining,
     _render_timeline_tab,
     _stats_model,
     _StatsModel,
@@ -177,7 +178,14 @@ async def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
         spend=spend,
         spend_visible=direct_access,
         state=_initial_job_state(
-            job_info, _stats_model(job_info, ks_data, spend if direct_access else None), snapshot
+            job_info,
+            _stats_model(
+                job_info,
+                ks_data,
+                spend if direct_access else None,
+                _prompt_refining(job_info, action_counts),
+            ),
+            snapshot,
         ),
         share_dialog=share_dialog,
         delete_dialog=delete_dialog,

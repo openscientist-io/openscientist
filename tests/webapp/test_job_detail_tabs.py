@@ -40,31 +40,43 @@ def test_a_disabled_tab_names_what_waits(status: JobStatus) -> None:
         assert common._chat_tab_tooltip(status) == "Chat opens once the job finishes."
 
 
+def _job(status: JobStatus) -> JobInfo:
+    return JobInfo(
+        job_id="job-1",
+        research_question="Q",
+        status=status,
+        created_at="2026-01-01T00:00:00",
+    )
+
+
 def test_the_log_tab_carries_the_report_generation_status() -> None:
-    job = SimpleNamespace(status=JobStatus.GENERATING_REPORT)
-    assert timeline._status_line_for(job, None) == "Generating report..."
-    assert timeline._status_line_for(job, {"agent_status": "leftover"}) == "Generating report..."
+    job = _job(JobStatus.GENERATING_REPORT)
+    assert timeline._status_line_for(job, None, False) == "Generating report..."
+    assert timeline._status_line_for(job, {"agent_status": "leftover"}, False) == (
+        "Generating report..."
+    )
 
 
 def test_the_log_tab_carries_the_live_agent_status_while_running() -> None:
-    job = SimpleNamespace(status=JobStatus.RUNNING)
-    assert timeline._status_line_for(job, {"agent_status": "Iteration 2: checking markers"}) == (
-        "Iteration 2: checking markers"
+    job = _job(JobStatus.RUNNING)
+    assert (
+        timeline._status_line_for(job, {"agent_status": "Iteration 2: checking markers"}, False)
+        == "Iteration 2: checking markers"
     )
 
 
 def test_the_log_tab_shows_no_line_without_a_live_status() -> None:
-    job = SimpleNamespace(status=JobStatus.RUNNING)
-    assert timeline._status_line_for(job, None) is None
-    assert timeline._status_line_for(job, {"agent_status": None}) is None
+    job = _job(JobStatus.RUNNING)
+    assert timeline._status_line_for(job, None, False) is None
+    assert timeline._status_line_for(job, {"agent_status": None}, False) is None
 
 
 @pytest.mark.parametrize(
     "status", [JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.QUEUED]
 )
 def test_a_job_without_a_live_status_has_no_line(status: JobStatus) -> None:
-    job = SimpleNamespace(status=status)
-    assert timeline._status_line_for(job, {"agent_status": "leftover"}) is None
+    job = _job(status)
+    assert timeline._status_line_for(job, {"agent_status": "leftover"}, False) is None
 
 
 def test_the_report_tab_does_not_render_the_generation_status(tmp_path: Path) -> None:
@@ -86,7 +98,12 @@ def _rendered_labels(job: JobInfo, ks_data: dict[str, object] | None) -> list[st
     """The label texts the Research Log stats block renders for ``job``."""
     recorder = MagicMock()
     context = SimpleNamespace(
-        job_info=job, ks_data=ks_data, owner_name=None, spend=0.0, spend_visible=False
+        job_info=job,
+        ks_data=ks_data,
+        owner_name=None,
+        spend=0.0,
+        spend_visible=False,
+        action_counts={},
     )
     with (
         patch.object(timeline, "ui", recorder),
