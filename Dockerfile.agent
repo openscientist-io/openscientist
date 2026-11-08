@@ -70,4 +70,11 @@ WORKDIR /agent/job
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
+# Build metadata for the version string the run logs. Late, so a new commit
+# only rebuilds this ENV layer.
+ARG OPENSCIENTIST_COMMIT=unknown
+ARG BUILD_TIME=unknown
+ENV OPENSCIENTIST_COMMIT=${OPENSCIENTIST_COMMIT}
+ENV OPENSCIENTIST_BUILD_TIME=${BUILD_TIME}
+
 ENTRYPOINT ["python", "/agent-entrypoint.py"]

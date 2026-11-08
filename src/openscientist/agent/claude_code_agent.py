@@ -35,13 +35,41 @@ from openscientist.agent.base import (
 )
 from openscientist.agent.mcp_specs import StdioMcpServerSpec
 from openscientist.providers.base import ClaudeCompatible
-from openscientist.transcript import CLAUDE
+from openscientist.transcript import CLAUDE, TranscriptEntry
 
 if TYPE_CHECKING:
     from openscientist.database.models import Skill
     from openscientist.prompts.common import BackendFragments
 
 logger = logging.getLogger(__name__)
+
+#: The Messages API refuses a request over 32 MB, so a larger tool result
+#: never reaches the model.
+_API_REQUEST_MAX_BYTES = 32 * 1024 * 1024
+#: The CLI writes a Read result into its stream-json line twice: as the tool
+#: result for the model and as the raw result for the SDK.
+_RESULT_COPIES_PER_MESSAGE = 2
+#: The largest stream-json message the session reads: any tool result the API
+#: could take, in both copies, with room for the message around them. A few
+#: such messages fit well inside the agent container's memory limit.
+MAX_MESSAGE_BYTES = _RESULT_COPIES_PER_MESSAGE * _API_REQUEST_MAX_BYTES + 1024 * 1024
+
+#: Opens the prompt of a turn retried after a tool result outgrew the session.
+OVERSIZED_RESULT_NOTE = (
+    "Your previous attempt at this turn stopped because one tool result was too large "
+    "to pass back to you. Do not Read large files directly: view an attached image "
+    "through its copy in `previews/`, read documents with `read_document`, and analyse "
+    "data files with `execute_code`."
+)
+
+
+class _OversizedMessageError(Exception):
+    """The SDK dropped the session over a message past ``MAX_MESSAGE_BYTES``."""
+
+    def __init__(self, tool_calls: int, transcript: list[TranscriptEntry]) -> None:
+        super().__init__("a tool result passed the message bound")
+        self.tool_calls = tool_calls
+        self.transcript = transcript
 
 
 # Monkey-patch: make the SDK's message parser tolerant of unknown types
@@ -252,6 +280,7 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
             cwd=str(job_dir),
             stderr=self._stderr_callback,
             extra_args={},
+            max_buffer_size=MAX_MESSAGE_BYTES,
         )
 
     def _apply_provider_env(self) -> None:
@@ -393,7 +422,39 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
         *,
         reset_session: bool = False,
     ) -> IterationResult:
-        """Run one iteration via the SDK's bidirectional client."""
+        """Run one iteration via the SDK's bidirectional client.
+
+        A tool result past ``MAX_MESSAGE_BYTES`` ends the session. The turn
+        then runs once more in a fresh session told to avoid the large file,
+        and fails with a plain reason only when that overflows too.
+        """
+        try:
+            return await self._run_turn(prompt, reset_session=reset_session)
+        except _OversizedMessageError as first:
+            logger.warning(
+                "A tool result passed the %d byte message bound after %d tool calls; "
+                "retrying the turn in a fresh session",
+                MAX_MESSAGE_BYTES,
+                first.tool_calls,
+            )
+        await self.shutdown()
+        try:
+            return await self._run_turn(f"{OVERSIZED_RESULT_NOTE}\n\n{prompt}", reset_session=True)
+        except _OversizedMessageError as second:
+            await self.shutdown()
+            return IterationResult(
+                outcome=TurnOutcome.FAILED,
+                output="",
+                tool_calls=second.tool_calls,
+                transcript=second.transcript,
+                error=(
+                    "A tool result was too large for the agent session (over "
+                    f"{MAX_MESSAGE_BYTES / (1024 * 1024):g} MiB in one message), "
+                    "also after a retry in a fresh session."
+                ),
+            )
+
+    async def _run_turn(self, prompt: str, *, reset_session: bool) -> IterationResult:
         await self._reset_session_if_requested(reset_session)
         self._stderr_lines.clear()
         state = _IterationState()
@@ -404,6 +465,10 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
             async for message in client.receive_response():
                 self._handle_stream_message(message, state)
         except Exception as e:
+            if "exceeded maximum buffer size" in str(e):
+                raise _OversizedMessageError(
+                    state.tool_call_count, CLAUDE.deserialize(state.transcript)
+                ) from e
             return self._iteration_failure_result(e, state)
 
         api_error = self._api_error_result(state)

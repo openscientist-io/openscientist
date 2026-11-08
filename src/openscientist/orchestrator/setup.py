@@ -23,6 +23,7 @@ from openscientist.database.session import (
     thread_safe_user_session,
 )
 from openscientist.file_loader import get_file_info
+from openscientist.image_previews import PREVIEW_DIR, write_previews
 from openscientist.job_container.identity import (
     apply_job_ownership,
     apply_job_ownership_tree,
@@ -154,6 +155,11 @@ def create_job(
 
     if data_paths:
         _persist_data_files_to_db(job_id, data_paths, open_session)
+        previews = write_previews(data_paths, job_dir)
+        if previews:
+            apply_job_ownership(job_dir / PREVIEW_DIR)
+            for preview in previews:
+                apply_job_ownership(preview)
 
     ks = KnowledgeState(
         job_id=job_id,

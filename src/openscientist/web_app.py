@@ -788,6 +788,16 @@ def _refuse_unsafe_dev_mode(settings: Settings) -> None:
         raise SystemExit(1)
 
 
+def _configure_logging() -> None:
+    """The web process root logging, with the chatty HTTP clients at warnings only."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
 def main(
     host: str = "0.0.0.0",
     port: int = 8080,
@@ -807,11 +817,7 @@ def main(
     if not load_dotenv("/app/.env", override=False):
         load_dotenv(".env", override=False)
 
-    # Set up logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    _configure_logging()
 
     # Log version info at startup
     logger.info("=" * 60)

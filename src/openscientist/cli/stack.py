@@ -75,6 +75,14 @@ def build_images(run: CommandRunner, root: Path) -> int:
     code = run(("docker", "build", "-f", "Dockerfile.base", "-t", base_image, "."), build_env)
     if code:
         return _failed("the base image", code)
+    # One commit and build time for every image, so the images report the same
+    # build as the web and the launcher.
+    build_args = (
+        "--build-arg",
+        f"OPENSCIENTIST_COMMIT={_commit()}",
+        "--build-arg",
+        f"BUILD_TIME={datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}",
+    )
     code = run(
         (
             "docker",
@@ -82,21 +90,22 @@ def build_images(run: CommandRunner, root: Path) -> int:
             "-f",
             COMPOSE_FILE,
             "build",
-            "--build-arg",
-            f"OPENSCIENTIST_COMMIT={_commit()}",
-            "--build-arg",
-            f"BUILD_TIME={datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}",
+            *build_args,
         ),
         build_env,
     )
     if code:
         return _failed("the web image", code)
     code = run(
-        ("docker", "build", "-f", "Dockerfile.executor", "-t", executor_image, "."), build_env
+        ("docker", "build", "-f", "Dockerfile.executor", "-t", executor_image, *build_args, "."),
+        build_env,
     )
     if code:
         return _failed("the executor image", code)
-    code = run(("docker", "build", "-f", "Dockerfile.agent", "-t", agent_image, "."), build_env)
+    code = run(
+        ("docker", "build", "-f", "Dockerfile.agent", "-t", agent_image, *build_args, "."),
+        build_env,
+    )
     if code:
         return _failed("the agent image", code)
     code = record_image_digests(root)
