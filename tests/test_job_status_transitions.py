@@ -500,9 +500,8 @@ async def test_the_delete_dialog_warns_only_when_the_job_is_active(
         patch.object(badges, "ui", mock_ui),
         patch.object(common, "ui", mock_ui),
     ):
-        dialog = cast(MagicMock, dialogs.render_delete_dialog(str(uuid4()), manager))
-        show = [call for call in dialog.on.call_args_list if call.args and call.args[0] == "show"]
-        await show[0].args[1]()
+        dialog = dialogs.render_delete_dialog(str(uuid4()), manager)
+        await dialog.open()
     labels = [call.args[0] for call in mock_ui.label.call_args_list if call.args]
     active_note = "This job is currently active and will be cancelled before deletion."
     assert (active_note in labels) is warns

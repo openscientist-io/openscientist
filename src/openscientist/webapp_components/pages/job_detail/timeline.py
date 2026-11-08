@@ -193,11 +193,11 @@ def _render_research_question_card(
                     ui.label(consensus).classes("text-emerald-900 mt-1")
 
         on_share = (
-            (lambda: _open_dialog(context.share_dialog))
+            context.share_dialog.open
             if context.is_owner and context.share_dialog is not None
             else None
         )
-        on_delete = (lambda: _open_dialog(context.delete_dialog)) if context.is_owner else None
+        on_delete = context.delete_dialog.open if context.is_owner else None
         render_job_action_buttons(
             on_share=on_share,
             on_delete=on_delete,

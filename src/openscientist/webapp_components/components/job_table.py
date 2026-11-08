@@ -1,6 +1,6 @@
 """Job table slot templates and action buttons for the web app."""
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from nicegui import ui
 
@@ -179,9 +179,9 @@ def render_actions_slot_with_delete() -> str:
 
 
 def render_job_action_buttons(
-    on_share: Callable[[], None] | None = None,
-    on_delete: Callable[[], None] | None = None,
-    on_notifications: Callable[[], None] | None = None,
+    on_share: Callable[[], None | Awaitable[None]] | None = None,
+    on_delete: Callable[[], None | Awaitable[None]] | None = None,
+    on_notifications: Callable[[], None | Awaitable[None]] | None = None,
 ) -> None:
     """Render job action buttons (share, delete, notifications) in table-action style.
 

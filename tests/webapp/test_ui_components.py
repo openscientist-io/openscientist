@@ -424,8 +424,8 @@ class TestBadgeStylesRegisteredOnceAtBootstrap:
 
 
 class TestRenderDeleteDialog:
-    """The delete dialog loads the job's current state on show, and its confirm
-    handler cancels an active job before deleting it."""
+    """The delete dialog renders the job's current state before it opens, and
+    its confirm handler cancels an active job before deleting it."""
 
     @staticmethod
     def _mock_ui() -> MagicMock:
@@ -459,7 +459,7 @@ class TestRenderDeleteDialog:
             ACTIVE_STATUSES=JobManager.ACTIVE_STATUSES,
         )
 
-    async def test_showing_the_dialog_uses_the_job_s_current_state(self):
+    async def test_opening_the_dialog_uses_the_job_s_current_state(self):
         from openscientist.webapp_components.components.dialogs import render_delete_dialog
 
         job_id = "12345678-1234-1234-1234-123456789012"
@@ -471,9 +471,9 @@ class TestRenderDeleteDialog:
             patch("openscientist.webapp_components.components.common.ui", mock_ui),
         ):
             dialog = render_delete_dialog(job_id, manager)
-            show_calls = [c for c in dialog.on.call_args_list if c.args and c.args[0] == "show"]
-            assert show_calls, "the dialog must reload its content when shown"
-            await show_calls[0].args[1]()
+            # Opening the dialog renders the job's current state before the
+            # dialog becomes visible.
+            await dialog.open()
 
         # The dialog warns that the running job is cancelled before deletion.
         labels = [c.args[0] for c in mock_ui.label.call_args_list if c.args]
