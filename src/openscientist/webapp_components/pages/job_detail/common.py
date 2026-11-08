@@ -31,11 +31,13 @@ logger = logging.getLogger(__name__)
 def _report_tab_tooltip(status: JobStatus) -> str | None:
     """The tooltip of a disabled Report tab, or None when the tab is enabled.
 
-    The report renders for finished jobs; a failed job may still have written
-    a partial final report.
+    The report renders for completed jobs only, and a failed job has no
+    report to show.
     """
-    if status in (JobStatus.COMPLETED, JobStatus.FAILED):
+    if status is JobStatus.COMPLETED:
         return None
+    if status is JobStatus.FAILED:
+        return "The job failed, so it has no report."
     return "The report is available once the job finishes."
 
 

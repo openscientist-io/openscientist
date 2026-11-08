@@ -276,7 +276,7 @@ def _render_missing_report_state(context: _JobDetailContext) -> None:
     if context.job_info.status == JobStatus.GENERATING_REPORT:
         ui.label("Report is being generated...").classes("text-gray-500 italic")
         return
-    if context.job_info.status in [JobStatus.COMPLETED, JobStatus.FAILED]:
+    if context.job_info.status is JobStatus.COMPLETED:
         ui.label("Report generation failed").classes("text-red-500")
         return
     ui.label("Report will be available when job completes").classes("text-gray-500 italic")
@@ -286,10 +286,10 @@ def _render_report_tab(context: _JobDetailContext, tabs: ui.tabs, report_tab: ui
     report_path = context.job_dir / "final_report.md"
     pdf_path = context.job_dir / "final_report.pdf"
 
-    # Only show the report when the job has finished. The agent may write
+    # Only show the report when the job completed. The agent may write
     # final_report.md mid-run, but it is not ready for display until the
-    # orchestrator marks the job completed (or failed).
-    if context.job_info.status not in (JobStatus.COMPLETED, JobStatus.FAILED):
+    # orchestrator marks the job completed.
+    if context.job_info.status is not JobStatus.COMPLETED:
         _render_missing_report_state(context)
         return
 
