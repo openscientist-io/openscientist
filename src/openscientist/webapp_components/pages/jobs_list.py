@@ -300,18 +300,18 @@ async def _show_share_dialog(job_id: str) -> None:
     if await owned_job_for_caller(job_id, get_current_user_id()) is None:
         return
     dialog = render_share_dialog(job_id)
-    dialog.open()
+    await dialog.open()
 
 
-def _show_delete_dialog(
+async def _show_delete_dialog(
     *,
     job_id: str,
     job_manager: Any,
     on_deleted: Callable[[], Awaitable[None] | None],
 ) -> None:
-    """Open delete confirmation dialog and refresh table on success."""
+    """Open the delete confirmation dialog and refresh the table on success."""
     dialog = render_delete_dialog(job_id, job_manager, on_deleted=on_deleted)
-    dialog.open()
+    await dialog.open()
 
 
 @ui.page("/jobs")

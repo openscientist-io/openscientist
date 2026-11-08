@@ -21,7 +21,7 @@ from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.database.models import Administrator, Job, Session, User
-from openscientist.webapp_components.components.dialogs import render_share_dialog
+from openscientist.webapp_components.components.dialogs import PreparedDialog, render_share_dialog
 from openscientist.webapp_components.pages import admin as admin_page
 from tests.db_outage import Forwarder
 from tests.webapp.conftest import OpenPage
@@ -68,13 +68,13 @@ async def test_owner_changes_visibility_from_a_signed_in_page(
 ) -> None:
     """Flipping the share dialog's public switch on the owner's own page makes the job public."""
     _, job, token, _ = signed_in_admin
-    built: list[ui.dialog] = []
+    built: list[PreparedDialog] = []
 
     async def build() -> None:
         built.append(render_share_dialog(str(job.id)))
 
     client = await signed_in_page(token, build)
-    switch = next(e for e in built[0].descendants() if isinstance(e, ui.switch))
+    switch = next(e for e in built[0].dialog.descendants() if isinstance(e, ui.switch))
     with client:
         for handler in switch._change_handlers:
             await _fire(

@@ -161,24 +161,19 @@ async def test_the_dialog_shows_the_share_list_when_the_owner_opens_it(
     seed_world: Callable[..., Awaitable[SimpleNamespace]],
     signed_in: Callable[[str], None],
 ) -> None:
-    """Opening the dialog as the owner loads and renders the current share list."""
+    """Opening the dialog as the owner loads and renders the current share list
+    before the dialog becomes visible."""
     world = await seed_world()
     signed_in(str(world.owner.id))
 
     with _content_slot():
         dialog = render_share_dialog(str(world.job.id))
-        show_handlers = [
-            listener.handler
-            for listener in dialog._event_listeners.values()
-            if listener.type == "show" and listener.handler is not None
-        ]
-        assert show_handlers, "opening the dialog must reload the share list"
-        await show_handlers[0]()
+        await dialog.open()
 
-        labels = _labels(dialog)
+        labels = _labels(dialog.dialog)
         badges = [
             child.text
-            for child in dialog.descendants()
+            for child in dialog.dialog.descendants()
             if isinstance(child, ui.badge) and child.text
         ]
     assert world.holder.name in labels
@@ -198,15 +193,9 @@ async def test_the_dialog_shows_no_shares_when_a_non_owner_opens_it(
 
     with _content_slot():
         dialog = render_share_dialog(str(world.job.id))
-        show_handlers = [
-            listener.handler
-            for listener in dialog._event_listeners.values()
-            if listener.type == "show" and listener.handler is not None
-        ]
-        assert show_handlers, "opening the dialog must reload the share list"
-        await show_handlers[0]()
+        await dialog.open()
 
-        labels = _labels(dialog)
+        labels = _labels(dialog.dialog)
     assert world.holder.name not in labels
     assert world.holder.email not in labels
 

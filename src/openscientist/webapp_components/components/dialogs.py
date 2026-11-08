@@ -337,8 +337,26 @@ class _ShareDialogController:
             ui.notify("Error sharing job", type="negative")
 
 
-def render_share_dialog(job_id: str) -> ui.dialog:
-    """Create and return a share dialog for a job."""
+class PreparedDialog:
+    """A dialog that loads its content before it opens, so it never shows
+    up empty and fills in a moment later."""
+
+    def __init__(self, dialog: ui.dialog, prepare: Callable[[], Awaitable[None]]) -> None:
+        self.dialog = dialog
+        self._prepare = prepare
+
+    async def open(self) -> None:
+        """Load the dialog's content, then open it."""
+        await self._prepare()
+        self.dialog.open()
+
+
+def render_share_dialog(job_id: str) -> PreparedDialog:
+    """Create a share dialog for a job.
+
+    Its ``open`` loads the share list and the job's visibility before the
+    dialog becomes visible.
+    """
     with ui.dialog() as dialog, ui.card().classes("w-[600px]"):
         with ui.row().classes("items-center gap-2 mb-4"):
             ui.label("Share Job").classes("text-h6")
@@ -384,10 +402,8 @@ def render_share_dialog(job_id: str) -> ui.dialog:
 
         with ui.row().classes("w-full justify-end gap-2 mt-4"):
             ui.button("Close", on_click=dialog.close)
-        # Reload on every open so the dialog shows the current share list
-        dialog.on("show", controller.refresh_shares)
 
-    return dialog
+    return PreparedDialog(dialog, controller.refresh_shares)
 
 
 async def confirm_delete_job(
@@ -430,10 +446,12 @@ def render_delete_dialog(
     job_id: str,
     job_manager: "JobManager",
     on_deleted: Callable[[], None | Awaitable[None]] | None = None,
-) -> ui.dialog:
-    """Create and return a delete confirmation dialog for a job.
+) -> PreparedDialog:
+    """Create a delete confirmation dialog for a job.
 
-    Active (running or queued) jobs are cancelled before deletion.
+    Active (running or queued) jobs are cancelled before deletion. Its
+    ``open`` renders the job's current state before the dialog becomes
+    visible.
     """
     with ui.dialog() as dialog, ui.card().classes("w-96"):
         content_container = ui.column().classes("w-full")
@@ -469,7 +487,4 @@ def render_delete_dialog(
             confirm_props="color=negative",
         )
 
-        # Reload on every open so the dialog shows the current job status
-        dialog.on("show", render_dialog_content)
-
-    return dialog
+    return PreparedDialog(dialog, render_dialog_content)
