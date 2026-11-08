@@ -49,6 +49,10 @@ _LINK_SEPARATOR = re.compile(r"([/:._=?-])(?=\w)")
 _COLLAPSE_WEIGHT = 2500
 _IMAGE_WEIGHT = 400
 
+#: Above this visible text length the prompt is long enough to fill the extra
+#: columns of a wide card without being chopped into a couple of lines each.
+_COLUMN_TEXT_LEN = 1000
+
 _FILE_ICONS: dict[str, str] = {
     ".pdf": "fa-file-pdf",
     ".csv": "fa-file-csv",
@@ -87,6 +91,7 @@ _PROMPT_CSS = """
 .os-prompt::after { content: ""; display: table; clear: both; }
 .os-prompt > :first-child,
 .os-prompt :is(h1, h2, h3, h4):first-child { margin-top: 0; }
+.os-prompt :is(h1, h2, h3, h4) { line-height: 1.3; letter-spacing: normal; }
 .os-prompt h1, .os-prompt h2 { font-size: 1.05rem; font-weight: 700; margin: .75rem 0 .25rem; }
 .os-prompt h3 { font-size: 1rem; font-weight: 700; margin: .6rem 0 .2rem; }
 .os-prompt h4 { font-size: .95rem; font-weight: 600; margin: .5rem 0 .2rem; }
@@ -114,8 +119,8 @@ _PROMPT_CSS = """
 .os-prompt hr { border: 0; border-top: 1px solid #e5e7eb; margin: 1rem 0; }
 .os-prompt mark { background: #fef08a; padding: 0 .15rem; }
 .os-prompt figure { margin: 0 0 .75rem; }
-.os-prompt img { max-width: 100%; height: auto; border-radius: .25rem; }
-.os-prompt figure img { width: 100%; }
+.os-prompt img { max-width: 100%; max-height: 24rem; height: auto; border-radius: .25rem; }
+.os-prompt figure img { display: block; margin-inline: auto; }
 .os-prompt figcaption { font-size: .85rem; color: #6b7280; margin-top: .25rem; text-align: center; }
 .os-prompt .fp-float-left { float: left; margin: .25rem 1rem .5rem 0; max-width: 50%; }
 .os-prompt .fp-float-right { float: right; margin: .25rem 0 .5rem 1rem; max-width: 50%; }
@@ -132,6 +137,10 @@ _PROMPT_CSS = """
 .os-prompt .fp-note { background: #eff6ff; border-left: 4px solid #3b82f6;
   padding: .5rem .75rem; border-radius: .25rem; margin: 0 0 .75rem; }
 .os-prompt .fp-muted { color: #6b7280; }
+.os-prompt-body:not(.os-prompt-collapsed) .os-prompt-columns { column-width: 24rem;
+  column-gap: 2rem; }
+.os-prompt-columns :is(h1, h2, h3, h4) { break-after: avoid; }
+.os-prompt-columns :is(figure, table, blockquote, pre, li, .fp-note) { break-inside: avoid; }
 @media (max-width: 640px) {
   .os-prompt .fp-float-left, .os-prompt .fp-float-right { float: none; max-width: 100%;
     width: 100%; margin: 0 0 .75rem; }
@@ -360,7 +369,11 @@ def render_research_prompt(
         with ui.element("div").classes("os-prompt-body w-full") as body:
             if sanitized is not None:
                 # Sanitized above against the formatted-prompt vocabulary.
-                ui.html(sanitized.html, sanitize=False).classes("os-prompt").props(
+                # Only a long prompt fills the wide card's extra columns.
+                prompt_classes = "os-prompt"
+                if len(text) >= _COLUMN_TEXT_LEN:
+                    prompt_classes += " os-prompt-columns"
+                ui.html(sanitized.html, sanitize=False).classes(prompt_classes).props(
                     f"lang={_DEFAULT_LANGUAGE}"
                 )
             else:
