@@ -378,9 +378,9 @@ _PROMPT_FORMAT_GUIDE = """How to format it
 ----------------
 - Structure the text with headings, paragraphs, ordered, unordered and definition lists, \
 tables, blockquotes, emphasis and code wherever they make it easier to read.
-- Justify running paragraphs with `fp-justify`, float an image with `fp-float-left` or \
-`fp-float-right` at `fp-small` or `fp-medium` width so the text wraps around it, and put a \
-key constraint or caveat in an `fp-note` call-out.
+- Float an image with `fp-float-left` or `fp-float-right` at `fp-small` or `fp-medium` \
+width so the text wraps around it, and put a key constraint or caveat in an `fp-note` \
+call-out.
 - Wrap the whole fragment in <div lang="..."> carrying the language tag of the question, \
 such as <div lang="en"> or <div lang="it">, so the page hyphenates justified text in the \
 right language. Mark a passage in another language with its own `lang`.

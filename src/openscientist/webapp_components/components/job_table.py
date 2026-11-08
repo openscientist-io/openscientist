@@ -138,6 +138,32 @@ def render_cost_slot() -> str:
     """
 
 
+def render_question_slot() -> str:
+    """Quasar slot template for the Research Question column.
+
+    The cell wraps the full question and clamps it to three lines, because
+    Quasar's table cells keep ``white-space: nowrap`` and a long question
+    would otherwise push the table past the screen. The tooltip carries the
+    full text, and clicking the question opens the job the way the Job ID
+    badge does, which the table hides on narrow screens.
+    """
+    return r"""
+        <q-td :props="props">
+            <span
+                class="os-jobs-question"
+                @click="$parent.$emit('view-job', props.row.job_id)"
+            >
+                {{ props.row.question }}
+                <q-tooltip
+                    anchor="top left"
+                    self="bottom left"
+                    max-width="420px"
+                >{{ props.row.question }}</q-tooltip>
+            </span>
+        </q-td>
+    """
+
+
 def render_actions_slot_with_delete() -> str:
     """Quasar slot template for the actions column with share and delete buttons.
 

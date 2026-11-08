@@ -84,6 +84,10 @@ ALLOWED_ATTRIBUTES: dict[str, frozenset[str]] = {
     "th": frozenset({"colspan", "rowspan"}),
 }
 
+#: The language the browser hyphenates a question's justified text in when
+#: the question declares none.
+DEFAULT_LANGUAGE = "en"
+
 #: Layout classes the fragment may use, each with what it does.
 LAYOUT_CLASSES: dict[str, str] = {
     "fp-float-left": "float left with text wrapping around it (figures, images)",
@@ -93,7 +97,6 @@ LAYOUT_CLASSES: dict[str, str] = {
     "fp-small": "about a quarter of the width (figures, images)",
     "fp-medium": "about half of the width (figures, images)",
     "fp-large": "the full width (figures, images)",
-    "fp-justify": "justify the text of a paragraph or block",
     "fp-text-center": "centre the text",
     "fp-text-right": "align the text right",
     "fp-lead": "a larger introductory paragraph",

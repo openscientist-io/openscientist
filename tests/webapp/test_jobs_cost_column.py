@@ -111,7 +111,14 @@ async def test_the_cost_column_shows_each_job_spend(
     client = await _open(served_page, cost_owner["owner_token"])
     tables = [e for e in client.elements.values() if isinstance(e, ui.table)]
     owned = next(t for t in tables if any(c["name"] == "owner" for c in t.columns) is False)
-    assert {"name": "cost", "label": "Cost", "field": "cost", "align": "center"} in owned.columns
+    assert {
+        "name": "cost",
+        "label": "Cost",
+        "field": "cost",
+        "align": "center",
+        "classes": "os-hide-phone",
+        "headerClasses": "os-hide-phone",
+    } in owned.columns
     costs = _cost_by_job_id(client, shared=False)
     assert costs[cost_owner["costed"]] == "$1.23"
     assert costs[cost_owner["plain"]] == "$0.00"
