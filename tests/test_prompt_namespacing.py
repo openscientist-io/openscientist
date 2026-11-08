@@ -85,6 +85,33 @@ def test_the_prompt_format_prompt_renders_the_vocabulary_from_the_sanitizer() ->
         assert name in prompt
 
 
+def test_the_prompt_format_prompt_offers_every_allowed_icon() -> None:
+    """The icon table is rendered from the list the job page's sanitizer
+    keeps, so the prompt cannot offer an icon the page drops."""
+    from openscientist.formatted_prompt import PROMPT_ICONS
+
+    prompt = build_prompt_format_prompt(_QUESTION, image_files=[], other_files=[], tool_prefix="")
+    for name in PROMPT_ICONS:
+        assert f'<i class="fa-solid fa-{name}"></i>' in prompt
+        assert PROMPT_ICONS[name] in prompt
+
+
+def test_the_prompt_format_prompt_lists_the_identifier_links() -> None:
+    """Every identifier the guide turns into a link shows its canonical
+    https pattern, so the model links them the way the page allows."""
+    prompt = build_prompt_format_prompt(_QUESTION, image_files=[], other_files=[], tool_prefix="")
+    for identifier in (
+        "https://clinicaltrials.gov/study/NCT01234567",
+        "https://www.uniprot.org/uniprot/P04637",
+        "https://www.rcsb.org/structure/1ABC",
+        "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE12345",
+        "https://www.ncbi.nlm.nih.gov/snp/rs12345",
+        "https://www.ensembl.org/gene/ENSG00000141510",
+        "https://www.ebi.ac.uk/chebi/chebiOntology.do?chebiId=CHEBI:12345",
+    ):
+        assert identifier in prompt
+
+
 def test_the_prompt_format_prompt_asks_for_the_language_of_the_question() -> None:
     """Justified text hyphenates only in a declared language."""
     prompt = build_prompt_format_prompt(_QUESTION, image_files=[], other_files=[], tool_prefix="")

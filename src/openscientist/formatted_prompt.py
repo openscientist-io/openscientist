@@ -102,6 +102,21 @@ LAYOUT_CLASSES: dict[str, str] = {
 }
 
 
+#: The Font Awesome solid icons the formatting turn may mark the question's
+#: parts with, each with what it marks. The sanitizer keeps an ``i`` element
+#: only with exactly ``fa-solid`` and one of these, and the prompt offers
+#: this same list.
+PROMPT_ICONS: dict[str, str] = {
+    "bullseye": "the aim or the central question",
+    "circle-question": "a hypothesis or an untested question",
+    "database": "the data or a dataset",
+    "magnifying-glass": "the method or a search",
+    "triangle-exclamation": "a caveat or a limitation",
+    "book-open": "the literature or a prior result",
+    "clock": "the timeline or a deadline",
+}
+
+
 def is_inline_image(file_name: str) -> bool:
     """Whether an attached file is an image a browser shows inline."""
     return PurePosixPath(file_name).suffix.lower() in IMAGE_EXTENSIONS

@@ -24,6 +24,7 @@ from openscientist.formatted_prompt import (
     ALLOWED_TAGS,
     GLOBAL_ATTRIBUTES,
     LAYOUT_CLASSES,
+    PROMPT_ICONS,
 )
 from openscientist.job.status import status_update_statement
 from openscientist.knowledge_state import KnowledgeState
@@ -349,17 +350,27 @@ def _prompt_format_vocabulary() -> str:
         f"`{tag}`: {', '.join(sorted(attrs))}" for tag, attrs in sorted(ALLOWED_ATTRIBUTES.items())
     )
     classes = "\n".join(f"| `{name}` | {effect} |" for name, effect in LAYOUT_CLASSES.items())
+    icons = "\n".join(
+        f'| `<i class="fa-solid fa-{name}"></i>` | {meaning} |'
+        for name, meaning in PROMPT_ICONS.items()
+    )
     global_attributes = " and ".join(f"`{name}`" for name in sorted(GLOBAL_ATTRIBUTES))
     return (
         "Vocabulary\n----------\n"
         f"Allowed tags: {tags}.\n"
         f"Allowed on every tag: {global_attributes} (`class` keeps only the layout classes "
-        "below, `lang` only a language tag such as `en` or `it`).\n"
+        "below, except `i`, which keeps exactly `fa-solid` and one icon class below, "
+        "`lang` only a language tag such as `en` or `it`).\n"
         f"Allowed per tag: {attributes}.\n"
         "Layout classes:\n\n"
         "| class | what it does |\n"
         "|-------|--------------|\n"
-        f"{classes}"
+        f"{classes}\n"
+        "Icons: mark a heading, a list item or a table cell with at most one icon at its "
+        "very start, and never inside a sentence. No other class or attribute on the <i>.\n\n"
+        "| icon | what it marks |\n"
+        "|------|--------------|\n"
+        f"{icons}"
     )
 
 
@@ -378,6 +389,17 @@ right language. Mark a passage in another language with its own `lang`.
 <a href="https://pubmed.ncbi.nlm.nih.gov/12345678/">PMID 12345678</a>, a PMCID PMC12345 into \
 <a href="https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12345/">PMC12345</a>, and an arXiv id \
 2301.12345 into <a href="https://arxiv.org/abs/2301.12345">arXiv:2301.12345</a>.
+- Link the other scientific identifiers the question mentions the same way, \
+keeping only the identifier's own text: a ClinicalTrials.gov number NCT01234567 into \
+<a href="https://clinicaltrials.gov/study/NCT01234567">NCT01234567</a>, a UniProt accession \
+P04637 into <a href="https://www.uniprot.org/uniprot/P04637">P04637</a>, a PDB id 1ABC into \
+<a href="https://www.rcsb.org/structure/1ABC">1ABC</a>, a GEO accession GSE12345 into \
+<a href="https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE12345">GSE12345</a>, a dbSNP \
+number rs12345 into <a href="https://www.ncbi.nlm.nih.gov/snp/rs12345">rs12345</a>, an \
+Ensembl gene id ENSG00000141510 into \
+<a href="https://www.ensembl.org/gene/ENSG00000141510">ENSG00000141510</a>, and a ChEBI id \
+CHEBI:12345 into \
+<a href="https://www.ebi.ac.uk/chebi/chebiOntology.do?chebiId=CHEBI:12345">CHEBI:12345</a>.
 - Replace every em dash (U+2014) in the question with a comma, a colon, parentheses or a full \
 stop, whichever keeps the meaning. Apart from that, keep the scientist's sentences word for word. \
 The writing rules below govern the headings, captions and alt text you write yourself."""
