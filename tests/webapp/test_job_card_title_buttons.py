@@ -4,6 +4,7 @@ every viewport, so a phone gets no empty band down the right side."""
 
 from __future__ import annotations
 
+import html
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -25,20 +26,14 @@ from tests.db_outage import Forwarder
 from tests.webapp.conftest import ServedPage
 
 _QUESTION = (
-    "Does carnosine depletion drive the thermal tolerance of Drosophila "
-    "melanogaster under chronic heat stress in the context of metabolic "
-    "reprogramming of the flight muscle?"
-)
-_FORMATTED_PROMPT = (
-    "<h2>Aims</h2>"
-    "<p>Determine whether carnosine depletion drives the thermal tolerance of "
+    "Determine whether carnosine depletion drives the thermal tolerance of "
     "Drosophila melanogaster under chronic heat stress in the context of "
     "metabolic reprogramming of the flight muscle, distinguishing muscle "
-    "autonomy from whole-organism feedback.</p>"
-    "<p>Work through the primary literature on the heat-shock response, "
-    "dipeptide transport and flight-muscle metabolism, then test the "
-    "depletion with a genetic knockdown in an isogenic background and "
-    "compare the thermal limits against a matched control line.</p>"
+    "autonomy from whole-organism feedback. Work through the primary "
+    "literature on the heat-shock response, dipeptide transport and "
+    "flight-muscle metabolism, then test the depletion with a genetic "
+    "knockdown in an isogenic background and compare the thermal limits "
+    "against a matched control line."
 )
 
 #: The utilities the card's rows and columns use that the layout engine does
@@ -74,8 +69,8 @@ _BUTTON_PLACEHOLDER = '<div style="width:24px;height:24px;display:inline-block">
 
 
 async def _seed(test_engine: AsyncEngine) -> dict[str, str]:
-    """An owner and a completed job whose formatted prompt and consensus
-    answer make the card show its full content."""
+    """An owner and a completed job whose question and consensus answer make
+    the card show its full content."""
     async with AsyncSession(test_engine, expire_on_commit=False) as db:
         owner = User(email=f"card-{uuid4().hex}@card.test", name="Owner", is_approved=True)
         db.add(owner)
@@ -83,7 +78,6 @@ async def _seed(test_engine: AsyncEngine) -> dict[str, str]:
         job = Job(
             owner_id=owner.id,
             research_question=_QUESTION,
-            formatted_prompt=_FORMATTED_PROMPT,
             status="completed",
             current_iteration=10,
             max_iterations=10,
@@ -208,7 +202,7 @@ async def test_the_prompt_body_spans_the_card_at_every_width(
     label = _label_of(title)
     buttons = _buttons_row(title)
 
-    prompt_html = _prompt_html(client)
+    prompt_label = _prompt_label(client)
     fragment = (
         f'<div id="card" class="{" ".join(card.classes)}">'
         f'<div id="title" class="{" ".join(title.classes)}">'
@@ -218,7 +212,7 @@ async def test_the_prompt_body_spans_the_card_at_every_width(
             _BUTTON_PLACEHOLDER for c in buttons.default_slot.children if isinstance(c, ui.button)
         )
         + "</div></div>"
-        + _prompt_block(client, prompt_html)
+        + _prompt_block(client, prompt_label)
         + "</div>"
     )
     boxes = layout(fragment, _PROMPT_CSS, _TAILWIND_SHIM, quasar=True, page_width=page_width)
@@ -239,23 +233,24 @@ async def test_the_prompt_body_spans_the_card_at_every_width(
     ), "the body starts below the title line"
 
 
-def _prompt_html(client: Client) -> ui.html:
+def _prompt_label(client: Client) -> ui.label:
     return next(
-        e for e in client.elements.values() if isinstance(e, ui.html) and "os-prompt" in e.classes
+        e
+        for e in client.elements.values()
+        if isinstance(e, ui.label) and "os-prompt-question" in e.classes
     )
 
 
-def _prompt_block(client: Client, prompt: ui.html) -> str:
-    """The prompt body as the browser lays it out, so the layout engine sees
+def _prompt_block(client: Client, question: ui.label) -> str:
+    """The question body as the browser lays it out, so the layout engine sees
     the card's real classes and content."""
     with client:
         body = next(e for e in client.elements.values() if "os-prompt-body" in e.classes)
         column = _parent(client, body)
-        parts = [f'<div id="body" class="{" ".join(body.classes)}">{prompt.content}</div>']
-        for child in column.default_slot.children:
-            if child is body:
-                continue
-            if isinstance(child, ui.label) and child.visible:
-                parts.append(f'<div class="{" ".join(child.classes)}">{child.text}</div>')
+        parts = [
+            f'<div id="body" class="{" ".join(body.classes)}">'
+            f'<div class="{" ".join(question.classes)}" lang="en">'
+            f"{html.escape(question.text)}</div></div>"
+        ]
         parts.append("</div>")
     return f'<div class="{" ".join(column.classes)}">' + "".join(parts)

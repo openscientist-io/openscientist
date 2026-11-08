@@ -215,7 +215,7 @@ async def test_built_spec_spawns_subprocess_that_lists_all_tools(
             tools = await session.list_tools()
             names = {t.name for t in tools.tools}
 
-    # The standalone server registers all 14 agent tools plus the
+    # The standalone server registers all 13 agent tools plus the
     # `ping` smoke tool. With `use_hypotheses=True` (set on the spec env),
     # add_hypothesis and update_hypothesis are included.
     assert "ping" in names
@@ -224,7 +224,6 @@ async def test_built_spec_spawns_subprocess_that_lists_all_tools(
         "search_pubmed",
         "set_status",
         "set_job_title",
-        "set_formatted_prompt",
         "save_iteration_summary",
         "set_consensus_answer",
         "update_knowledge_state",

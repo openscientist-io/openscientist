@@ -91,9 +91,6 @@ dependencies = [
     # CLI (setup wizard, start, stop)
     "typer>=0.21.1,<0.22",
     "rich>=14.3.2,<15",
-
-    # Sanitizes the model-formatted research question shown on the job page
-    "nh3>=0.3.0",
 ]
 
 [project.scripts]

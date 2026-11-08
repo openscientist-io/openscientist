@@ -91,6 +91,12 @@ FONTAWESOME_HEAD_HTML = (
 )
 
 
+#: The language the browser hyphenates justified text in when the content
+#: declares none, set on the elements that justify so the browser can break
+#: words.
+DEFAULT_LANGUAGE = "en"
+
+
 STATUS_COLORS = {
     JobStatus.PENDING: "gray",
     JobStatus.QUEUED: "blue",

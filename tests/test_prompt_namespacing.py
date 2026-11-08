@@ -12,8 +12,6 @@ from openscientist.orchestrator.iteration import (
     build_consensus_prompt,
     build_initial_prompt,
     build_iteration_prompt,
-    build_prompt_format_prompt,
-    build_prompt_format_retry_prompt,
 )
 from openscientist.prompts.common import namespace_tool_mentions
 
@@ -52,95 +50,6 @@ def test_the_consensus_prompt_namespaces_only_its_own_instruction() -> None:
     prompt = build_consensus_prompt(_QUESTION, tool_prefix=_PREFIX)
     assert f"`{_PREFIX}set_consensus_answer`" in prompt
     assert _QUESTION in prompt
-
-
-def test_the_prompt_format_prompt_namespaces_only_its_own_instruction() -> None:
-    prompt = build_prompt_format_prompt(
-        _QUESTION, image_files=["figure.png"], other_files=["data.csv"], tool_prefix=_PREFIX
-    )
-    assert f"`{_PREFIX}set_formatted_prompt`" in prompt
-    assert _QUESTION in prompt
-    assert "data/figure.png" in prompt
-    assert "data/data.csv" in prompt
-
-
-def test_the_prompt_format_prompt_renders_the_vocabulary_from_the_sanitizer() -> None:
-    """The allowed tags, attributes and layout classes are rendered from the
-    lists the job page's sanitizer keeps, so the prompt and the sanitizer
-    cannot drift apart."""
-    from openscientist.formatted_prompt import (
-        ALLOWED_ATTRIBUTES,
-        ALLOWED_TAGS,
-        GLOBAL_ATTRIBUTES,
-        LAYOUT_CLASSES,
-    )
-
-    prompt = build_prompt_format_prompt(_QUESTION, image_files=[], other_files=[], tool_prefix="")
-    for tag in sorted(ALLOWED_TAGS):
-        assert tag in prompt
-    for attributes in [*ALLOWED_ATTRIBUTES.values(), GLOBAL_ATTRIBUTES]:
-        for attribute in sorted(attributes):
-            assert attribute in prompt
-    for name in LAYOUT_CLASSES:
-        assert name in prompt
-
-
-def test_the_prompt_format_prompt_offers_every_allowed_icon() -> None:
-    """The icon table is rendered from the list the job page's sanitizer
-    keeps, so the prompt cannot offer an icon the page drops."""
-    from openscientist.formatted_prompt import PROMPT_ICONS
-
-    prompt = build_prompt_format_prompt(_QUESTION, image_files=[], other_files=[], tool_prefix="")
-    for name in PROMPT_ICONS:
-        assert f'<i class="fa-solid fa-{name}"></i>' in prompt
-        assert PROMPT_ICONS[name] in prompt
-
-
-def test_the_prompt_format_prompt_lists_the_identifier_links() -> None:
-    """Every identifier the guide turns into a link shows its canonical
-    https pattern, so the model links them the way the page allows."""
-    prompt = build_prompt_format_prompt(_QUESTION, image_files=[], other_files=[], tool_prefix="")
-    for identifier in (
-        "https://clinicaltrials.gov/study/NCT01234567",
-        "https://www.uniprot.org/uniprot/P04637",
-        "https://www.rcsb.org/structure/1ABC",
-        "https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE12345",
-        "https://www.ncbi.nlm.nih.gov/snp/rs12345",
-        "https://www.ensembl.org/gene/ENSG00000141510",
-        "https://www.ebi.ac.uk/chebi/chebiOntology.do?chebiId=CHEBI:12345",
-    ):
-        assert identifier in prompt
-
-
-def test_the_prompt_format_prompt_asks_for_the_language_of_the_question() -> None:
-    """Justified text hyphenates only in a declared language."""
-    prompt = build_prompt_format_prompt(_QUESTION, image_files=[], other_files=[], tool_prefix="")
-    assert '<div lang="' in prompt
-
-
-def test_the_prompt_format_prompt_carries_the_writing_rules() -> None:
-    """Headings and captions the model writes follow the writing rules, the
-    em dashes in the question are re-punctuated, and the prompt itself shows
-    no em dash."""
-    from openscientist.prompts.common import WRITING_STYLE
-
-    for prompt in (
-        build_prompt_format_prompt(_QUESTION, image_files=[], other_files=[], tool_prefix=""),
-        build_prompt_format_retry_prompt(_QUESTION, image_files=[], other_files=[], tool_prefix=""),
-    ):
-        assert WRITING_STYLE in prompt
-        assert "Replace every em dash" in prompt
-        assert "\u2014" not in prompt
-
-
-def test_the_prompt_format_retry_prompt_restates_the_task() -> None:
-    prompt = build_prompt_format_retry_prompt(
-        _QUESTION, image_files=["figure.png"], other_files=[], tool_prefix=_PREFIX
-    )
-    assert "did NOT record" in prompt
-    assert f"`{_PREFIX}set_formatted_prompt`" in prompt
-    assert _QUESTION in prompt
-    assert "data/figure.png" in prompt
 
 
 def test_an_empty_prefix_changes_nothing() -> None:

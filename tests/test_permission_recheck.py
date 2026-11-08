@@ -627,13 +627,11 @@ async def test_viewer_whose_share_is_removed_stops_receiving_status_updates(
     timer = MagicMock()
     holder: dict[str, object] = {"timer": timer}
     render_job_stats = MagicMock()
-    render_prompt = MagicMock()
     timeline = iterations_module._Timeline(context)  # type: ignore[arg-type]
 
     await timeline_module._check_and_refresh(
         context,  # type: ignore[arg-type]
         render_job_stats,
-        render_prompt,
         timeline,
         holder,  # type: ignore[arg-type]
     )
@@ -657,7 +655,6 @@ async def test_viewer_whose_share_is_removed_stops_receiving_status_updates(
     await timeline_module._check_and_refresh(
         context,  # type: ignore[arg-type]
         render_job_stats,
-        render_prompt,
         timeline,
         holder,  # type: ignore[arg-type]
     )
