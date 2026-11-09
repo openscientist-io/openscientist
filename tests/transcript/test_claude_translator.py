@@ -8,6 +8,7 @@ transcripts, and a sweep across any local ``jobs/`` directory.
 
 import gzip
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -457,7 +458,25 @@ FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "transcripts" / "claud
 ALL_FIXTURES = sorted(FIXTURE_DIR.glob("*.json.gz"))
 REAL_FIXTURES = [p for p in ALL_FIXTURES if not p.stem.startswith("synthetic_")]
 SYNTHETIC_FIXTURE = FIXTURE_DIR / "synthetic_all_variants.json.gz"
-LIVE_JOBS_DIR = Path("/home/luca/github/shandy/jobs")
+#: Names a local jobs directory whose transcripts the opt-in sweep translates.
+LIVE_JOBS_DIR_ENV = "OPENSCIENTIST_TEST_LIVE_JOBS_DIR"
+
+
+def _live_jobs_dir() -> Path | None:
+    """The jobs directory the sweep reads, or None when none is named or it
+    cannot be read, so an unreadable path skips the sweep instead of failing
+    the collection of this file."""
+    value = os.environ.get(LIVE_JOBS_DIR_ENV)
+    if not value:
+        return None
+    path = Path(value)
+    try:
+        return path if path.is_dir() else None
+    except OSError:
+        return None
+
+
+LIVE_JOBS_DIR = _live_jobs_dir()
 
 
 def _load_fixture(path: Path) -> list[dict[str, Any]]:
@@ -753,15 +772,15 @@ class TestSyntheticFixture:
 
 
 class TestOnDiskTranscripts:
-    """Optional sweep across the developer's local ``jobs/`` directory.
-    Skipped on CI.
-    """
+    """Optional sweep across a local jobs directory, named through
+    OPENSCIENTIST_TEST_LIVE_JOBS_DIR."""
 
     @pytest.mark.skipif(
-        not LIVE_JOBS_DIR.exists(),
-        reason="local jobs/ directory not present",
+        LIVE_JOBS_DIR is None,
+        reason=f"set {LIVE_JOBS_DIR_ENV} to a readable jobs directory to sweep its transcripts",
     )
     def test_every_shape_a_transcript_translates_without_raising(self) -> None:
+        assert LIVE_JOBS_DIR is not None
         translated = 0
         for path in sorted(LIVE_JOBS_DIR.glob("*/provenance/iter*_transcript.json")):
             try:
@@ -779,6 +798,26 @@ class TestOnDiskTranscripts:
             TranscriptAdapter.dump_python(entries, mode="json")
             translated += 1
         assert translated > 0, "Expected at least one Shape-A transcript under jobs/"
+
+    def test_an_unreadable_jobs_directory_skips_the_sweep(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        locked = tmp_path / "locked"
+        (locked / "jobs").mkdir(parents=True)
+        locked.chmod(0)
+        try:
+            monkeypatch.setenv(LIVE_JOBS_DIR_ENV, str(locked / "jobs"))
+            assert _live_jobs_dir() is None
+        finally:
+            locked.chmod(0o700)
+
+    def test_no_jobs_directory_is_swept_unless_one_is_named(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv(LIVE_JOBS_DIR_ENV, raising=False)
+        assert _live_jobs_dir() is None
+        monkeypatch.setenv(LIVE_JOBS_DIR_ENV, str(tmp_path))
+        assert _live_jobs_dir() == tmp_path
 
 
 # ---- Forward-compatibility extras ---------------------------------------------------------------

@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi import FastAPI
 
 from openscientist import web_app
@@ -28,6 +29,7 @@ def _run_main(monkeypatch, tmp_path: Path) -> None:
     web_app.main(host="127.0.0.1", port=9999, jobs_dir=tmp_path / "jobs")
 
 
+@pytest.mark.usefixtures("web_main_environment")
 def test_main_quiets_the_http_client_loggers(monkeypatch, tmp_path: Path) -> None:
     """The launcher status poll runs on the launcher client's httpx logger, so the
     web keeps httpx and httpcore at warnings."""

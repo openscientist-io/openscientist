@@ -1,6 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import uvicorn
 from fastapi import FastAPI
 from fastapi.routing import APIRoute
@@ -57,6 +58,7 @@ def test_create_app_builds_host_app_once(monkeypatch, tmp_path: Path) -> None:
     assert run_with_calls[0][1]["mount_path"] == "/"
 
 
+@pytest.mark.usefixtures("web_main_environment")
 def test_main_reload_uses_factory_import_target(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(web_app, "_settings_error", None)
     monkeypatch.setattr(
@@ -93,6 +95,7 @@ def _restarts(config: uvicorn.Config, path: Path) -> bool:
     return watched and FileFilter(config)(path)
 
 
+@pytest.mark.usefixtures("web_main_environment")
 def test_main_reload_restarts_on_source_changes_only(monkeypatch, tmp_path: Path) -> None:
     """The dev server reloads on edits to its own source, wherever it is started from."""
     monkeypatch.setattr(web_app, "_settings_error", None)
@@ -126,6 +129,7 @@ def test_main_reload_restarts_on_source_changes_only(monkeypatch, tmp_path: Path
     assert not _restarts(config, tmp_path / ".nicegui" / "storage-user-0193.json")
 
 
+@pytest.mark.usefixtures("web_main_environment")
 def test_main_non_reload_runs_with_created_app(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(web_app, "_settings_error", None)
     monkeypatch.setattr(

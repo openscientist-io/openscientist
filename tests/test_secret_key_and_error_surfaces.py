@@ -138,6 +138,7 @@ def test_create_app_refuses_to_start_on_a_missing_key(monkeypatch, tmp_path: Pat
     assert excinfo.value.code == 1
 
 
+@pytest.mark.usefixtures("web_main_environment")
 def test_main_starts_with_a_generated_key(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("OPENSCIENTIST_SECRET_KEY", secrets.token_hex(32))
     web_app.get_settings.cache_clear()
