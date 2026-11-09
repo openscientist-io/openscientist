@@ -58,33 +58,54 @@ def _clear_settings_cache():
         pass
 
 
+#: Set in CI, where a test whose system requirement is missing fails instead of skipping.
+_REQUIRE_SYSTEM_TESTS = "OPENSCIENTIST_REQUIRE_SYSTEM_TESTS"
+#: Variables named with this prefix configure the test run itself, such as the
+#: executor image the Docker tests use.
+_TEST_RUN_PREFIX = "OPENSCIENTIST_TEST_"
+
+
+def _isolate_from_the_checkout() -> None:
+    """Read no .env and drop the OPENSCIENTIST_* configuration the shell
+    exported, so a deployed checkout's values never reach a test that does
+    not set them itself."""
+    from pydantic_settings import BaseSettings
+
+    from openscientist import settings
+
+    for value in vars(settings).values():
+        if isinstance(value, type) and issubclass(value, BaseSettings):
+            value.model_config["env_file"] = None
+    for name in list(os.environ):
+        if (
+            name.startswith("OPENSCIENTIST_")
+            and not name.startswith(_TEST_RUN_PREFIX)
+            and name != _REQUIRE_SYSTEM_TESTS
+        ):
+            del os.environ[name]
+
+
+_isolate_from_the_checkout()
+
 # Set up required env vars for Settings validation at import time.
 # The real DATABASE_URL comes from the testcontainer later.
 # The settings gate needs a 64-character key.
-if "OPENSCIENTIST_SECRET_KEY" not in os.environ:
-    os.environ["OPENSCIENTIST_SECRET_KEY"] = "0123456789abcdef" * 4
+os.environ["OPENSCIENTIST_SECRET_KEY"] = "0123456789abcdef" * 4
 if "DATABASE_URL" not in os.environ:
     os.environ["DATABASE_URL"] = "postgresql+asyncpg://test:test@localhost:5432/test"
 # There is no default provider, so tests that do not select one explicitly need a
 # valid OPENSCIENTIST_PROVIDER so Settings construction does not raise.
-if "OPENSCIENTIST_PROVIDER" not in os.environ:
-    os.environ["OPENSCIENTIST_PROVIDER"] = "anthropic"
+os.environ["OPENSCIENTIST_PROVIDER"] = "anthropic"
 # Pin the model context window so building report prompts never makes a live
 # Ollama probe during tests (the override path short-circuits Provider.model_profile),
 # keeping the suite hermetic and deterministic.
-if "OPENSCIENTIST_MODEL_CONTEXT_TOKENS" not in os.environ:
-    os.environ["OPENSCIENTIST_MODEL_CONTEXT_TOKENS"] = "131072"
+os.environ["OPENSCIENTIST_MODEL_CONTEXT_TOKENS"] = "131072"
 # openscientist_tools binds STATE at import, so give it dummy job values.
-if "OPENSCIENTIST_JOB_ID" not in os.environ:
-    os.environ["OPENSCIENTIST_JOB_ID"] = "test-job"
-if "OPENSCIENTIST_JOB_DIR" not in os.environ:
-    os.environ["OPENSCIENTIST_JOB_DIR"] = "/tmp/openscientist-test-job"
+os.environ["OPENSCIENTIST_JOB_ID"] = "test-job"
+os.environ["OPENSCIENTIST_JOB_DIR"] = "/tmp/openscientist-test-job"
 
 # Clear and reload settings cache after setting up test environment
 _clear_settings_cache()
-
-#: Set in CI, where a test whose system requirement is missing fails instead of skipping.
-_REQUIRE_SYSTEM_TESTS = "OPENSCIENTIST_REQUIRE_SYSTEM_TESTS"
 
 
 @cache
