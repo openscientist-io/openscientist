@@ -7,6 +7,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+import pytest
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.types import TextContent
@@ -40,9 +41,42 @@ def test_missing_required_env_var_fails(
     proc = subprocess.run(
         [sys.executable, "-m", "openscientist_tools"],
         env=env,
+        cwd=tmp_path,
         capture_output=True,
         text=True,
         timeout=10,
     )
     assert proc.returncode != 0
     assert "job_dir" in proc.stderr.lower()
+
+
+def test_a_dotenv_in_the_test_directory_does_not_reach_the_server(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    server_env: Callable[..., dict[str, str]],
+    server_params: Callable[[dict[str, str]], StdioServerParameters],
+) -> None:
+    """The server starts the way the fixtures start it, from a directory that
+    holds a deployed checkout's .env, and still builds the default settings."""
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / ".env").write_text(
+        "OPENSCIENTIST_EXECUTOR_IMAGE=openscientist-executor:staging\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(checkout)
+    params = server_params(server_env(tmp_path))
+    proc = subprocess.run(
+        [
+            params.command,
+            "-c",
+            "from openscientist.settings import ContainerSettings; "
+            "print(ContainerSettings().executor_image)",
+        ],
+        env=params.env,
+        cwd=params.cwd,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "openscientist-executor:latest"

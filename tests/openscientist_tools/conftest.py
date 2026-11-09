@@ -48,12 +48,19 @@ def server_env() -> Callable[..., dict[str, str]]:
 
 
 @pytest.fixture
-def server_params() -> Callable[[dict[str, str]], StdioServerParameters]:
+def server_params(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Callable[[dict[str, str]], StdioServerParameters]:
+    """Return a builder for the server's spawn parameters. The server runs in
+    an empty directory, so the settings it builds read no checkout's .env."""
+    cwd = tmp_path_factory.mktemp("tool-server-cwd")
+
     def _build(env: dict[str, str]) -> StdioServerParameters:
         return StdioServerParameters(
             command=sys.executable,
             args=["-m", "openscientist_tools"],
             env=env,
+            cwd=cwd,
         )
 
     return _build
