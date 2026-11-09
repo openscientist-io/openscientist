@@ -7,6 +7,8 @@ import pytest
 from openscientist import web_app
 from openscientist.settings import Settings, dev_mode_problems
 
+pytestmark = pytest.mark.usefixtures("web_main_environment")
+
 
 def _settings(
     monkeypatch: pytest.MonkeyPatch, dev_mode: bool, app_url: str, bind_address: str

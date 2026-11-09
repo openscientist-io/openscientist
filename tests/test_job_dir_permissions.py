@@ -14,6 +14,7 @@ import stat
 import sys
 from contextlib import suppress
 from pathlib import Path
+from typing import Generator
 from uuid import uuid4
 
 import pytest
@@ -310,11 +311,17 @@ class TestJobTreeAccessInContainers:
         # process on the host can traverse.
         jobs_dir.chmod(0o755)
         admin_url = login_url(test_database_url, "openscientist_admin", ADMIN_PASSWORD)
+        # The web (root here) seeds the job's data through the ownership
+        # helper, as it does for the chat request files.
         script = (
             "import os\n"
             "from pathlib import Path\n"
+            "from openscientist.job_container.identity import apply_job_ownership\n"
             "from openscientist.orchestrator.setup import create_job\n"
-            "create_job(os.environ['JOB_ID'], 'Question?', [], 5, jobs_dir=Path('/jobs'))\n"
+            "job = create_job(os.environ['JOB_ID'], 'Question?', [], 5, jobs_dir=Path('/jobs'))\n"
+            "seed = job / 'data' / 'seed.csv'\n"
+            "seed.write_text('topsecret-data\\n', encoding='utf-8')\n"
+            "apply_job_ownership(seed)\n"
             "print('setup ok')\n"
         )
         # host networking reaches the test database on the host's loopback, and
@@ -336,7 +343,19 @@ class TestJobTreeAccessInContainers:
         )
         assert "setup ok" in output.decode("utf-8"), output.decode("utf-8", errors="replace")
 
-        yield jobs_dir
+        try:
+            yield jobs_dir
+        finally:
+            # The tree is agent-owned, so a host user outside the jobs group
+            # cannot delete it.
+            docker_client.containers.run(
+                image=agent_image,
+                entrypoint=["sh", "-c", "find /jobs -mindepth 1 -delete"],
+                user="root",
+                volumes={str(jobs_dir): {"bind": "/jobs", "mode": "rw"}},
+                network_mode="none",
+                remove=True,
+            )
 
     @staticmethod
     def _job_dir(jobs_dir: Path) -> Path:
@@ -348,12 +367,12 @@ class TestJobTreeAccessInContainers:
         self, docker_client, agent_image, job_tree: Path
     ) -> None:
         job_dir = self._job_dir(job_tree)
-        (job_dir / "data" / "seed.csv").write_text("topsecret-data\n", encoding="utf-8")
         command = (
             "echo agent > /jobs/{name}/CLAUDE.md"
             " && echo a > /jobs/{name}/data/agent.csv"
             " && echo p > /jobs/{name}/provenance/agent.txt"
             " && cat /jobs/{name}/data/seed.csv"
+            " && cat /jobs/{name}/data/agent.csv"
             " && git -C /jobs/{name} status --short > /dev/null"
             " && echo AGENT_OK"
         ).format(name=job_dir.name)
@@ -367,14 +386,13 @@ class TestJobTreeAccessInContainers:
         )
         payload = output.decode("utf-8")
         assert "AGENT_OK" in payload
-        assert "topsecret-data" in payload
-        assert (job_dir / "data" / "agent.csv").read_text(encoding="utf-8").strip() == "a"
+        # The agent's own read-back of the seed and of the file it wrote.
+        assert "topsecret-data\na\nAGENT_OK" in payload, payload
 
     def test_executor_user_reads_data_and_writes_provenance(
         self, docker_client, agent_image, job_tree: Path
     ) -> None:
         job_dir = self._job_dir(job_tree)
-        (job_dir / "data" / "seed.csv").write_text("topsecret-data\n", encoding="utf-8")
         command = (
             "cat /jobs/{name}/data/seed.csv"
             " && echo e > /jobs/{name}/provenance/executor.txt"
@@ -394,7 +412,6 @@ class TestJobTreeAccessInContainers:
 
     def test_another_local_user_is_denied(self, docker_client, agent_image, job_tree: Path) -> None:
         job_dir = self._job_dir(job_tree)
-        (job_dir / "data" / "seed.csv").write_text("topsecret-data\n", encoding="utf-8")
         container = docker_client.containers.run(
             image=agent_image,
             entrypoint=["sh", "-c", "cat /jobs/{name}/data/seed.csv".format(name=job_dir.name)],
@@ -415,9 +432,11 @@ class TestJobTreeAccessInContainers:
         """The web runs as root and must keep being able to write into the
         agent-owned tree, for example the chat request files."""
         job_dir = self._job_dir(job_tree)
-        command = "echo '{{}}' > /jobs/{name}/.chat_request_1.json && echo WEB_OK".format(
-            name=job_dir.name
-        )
+        command = (
+            "echo '{{}}' > /jobs/{name}/.chat_request_1.json"
+            " && stat -c '%g' /jobs/{name}/.chat_request_1.json"
+            " && echo WEB_OK"
+        ).format(name=job_dir.name)
         output = docker_client.containers.run(
             image=agent_image,
             entrypoint=["sh", "-c", command],
@@ -426,11 +445,10 @@ class TestJobTreeAccessInContainers:
             network_mode="none",
             remove=True,
         )
-        assert "WEB_OK" in output.decode("utf-8")
-        request = job_dir / ".chat_request_1.json"
-        assert request.exists()
+        payload = output.decode("utf-8")
+        assert "WEB_OK" in payload, payload
         # The setgid job dir hands even the web's own files the jobs group.
-        assert request.stat().st_gid == AGENT_GID
+        assert f"{AGENT_GID}\nWEB_OK" in payload, payload
 
     def test_agent_entrypoints_umask_leaves_group_writable_files(
         self, docker_client, agent_image, job_tree: Path
@@ -476,7 +494,7 @@ class TestJobTreeAccessInContainers:
         assert "660 1001" in output.decode("utf-8"), output.decode("utf-8", errors="replace")
 
     def test_executor_entrypoint_umask_leaves_group_writable_provenance(
-        self, docker_client, executor_image, job_tree: Path
+        self, docker_client, agent_image, executor_image, job_tree: Path
     ) -> None:
         """A real run of the executor entrypoint writes its outputs under umask
         0007, so provenance files the agent user must read are not world
@@ -514,11 +532,25 @@ class TestJobTreeAccessInContainers:
         exit_code = int(container.wait(timeout=120)["StatusCode"])
         container.remove(force=True)
         assert exit_code == 0
-        probe = output_dir / "umask-probe.txt"
-        assert probe.read_text(encoding="utf-8") == "x"
-        st = probe.stat()
-        assert (st.st_mode & 0o777) == 0o660
-        assert st.st_gid == AGENT_GID
+        # The agent reads the probe back, so its content, mode, and group are
+        # checked in the view of the user who must read it.
+        check = (
+            "cat /output/umask-probe.txt"
+            " && stat -c '%a %g' /output/umask-probe.txt"
+            " && echo PROBE_OK"
+        )
+        output = docker_client.containers.run(
+            image=agent_image,
+            entrypoint=["sh", "-c", check],
+            user="agent",
+            volumes={str(output_dir): {"bind": "/output", "mode": "rw"}},
+            network_mode="none",
+            remove=True,
+        )
+        probe_payload = output.decode("utf-8", errors="replace")
+        lines = probe_payload.splitlines()
+        assert lines[0] == f"x{0o660:o} {AGENT_GID}", probe_payload
+        assert "PROBE_OK" in probe_payload, probe_payload
 
     def test_web_group_member_file_is_group_writable_to_agent(
         self, docker_client, agent_image, job_tree: Path
@@ -532,7 +564,7 @@ class TestJobTreeAccessInContainers:
             "from pathlib import Path; from openscientist.job_container.identity "
             "import apply_job_ownership; p = Path('/jobs/{name}/.chat_request_probe.json'); "
             "p.write_text('{{}}'); apply_job_ownership(p); "
-            "print(format(p.stat().st_mode & 0o777, 'o'))"
+            "print(format(p.stat().st_mode & 0o777, 'o'), p.stat().st_gid)"
         ).format(name=name)
         output = docker_client.containers.run(
             image=agent_image,
@@ -542,14 +574,14 @@ class TestJobTreeAccessInContainers:
             network_mode="none",
             remove=True,
         )
-        assert "660" in output.decode("utf-8"), output.decode("utf-8", errors="replace")
-        request = job_dir / ".chat_request_probe.json"
-        assert (request.stat().st_mode & 0o777) == 0o660
-        assert request.stat().st_gid == AGENT_GID
+        # The web's own view of the file it wrote through the helper.
+        assert output.decode("utf-8").strip() == f"{0o660:o} {AGENT_GID}", output
 
-        command = "echo more >> /jobs/{name}/.chat_request_probe.json && echo AGENT_OK".format(
-            name=name
-        )
+        command = (
+            "echo more >> /jobs/{name}/.chat_request_probe.json"
+            " && cat /jobs/{name}/.chat_request_probe.json"
+            " && echo AGENT_OK"
+        ).format(name=name)
         output = docker_client.containers.run(
             image=agent_image,
             entrypoint=["sh", "-c", command],
@@ -558,10 +590,11 @@ class TestJobTreeAccessInContainers:
             network_mode="none",
             remove=True,
         )
-        assert "AGENT_OK" in output.decode("utf-8")
+        payload = output.decode("utf-8")
+        assert "AGENT_OK" in payload, payload
         # The web's write carries no trailing newline, so the agent's append
         # lands on the same line.
-        assert request.read_text(encoding="utf-8") == "{}more\n"
+        assert "{}more\nAGENT_OK" in payload, payload
 
     def test_run_home_is_agent_private(
         self,
@@ -748,9 +781,24 @@ class TestNonRootWebRunHome:
     run homes take the agent's access from the group."""
 
     @pytest.fixture()
-    def jobs(self, deploy_test_image, deploy_docker, tmp_path_factory) -> Path:
+    def jobs(
+        self, deploy_test_image, deploy_docker, tmp_path_factory
+    ) -> Generator[Path, None, None]:
         jobs = tmp_path_factory.mktemp("deploy-jobs")
-        return _group_jobs_root(jobs, deploy_docker, deploy_test_image)
+        try:
+            yield _group_jobs_root(jobs, deploy_docker, deploy_test_image)
+        finally:
+            # The homes are the web's, so a host user outside the jobs group
+            # cannot delete them.
+            deploy_docker.containers.run(
+                deploy_test_image,
+                ["sh", "-c", "find /jobs -mindepth 1 -delete"],
+                user="root",
+                entrypoint=[],
+                volumes={str(jobs): {"bind": "/jobs", "mode": "rw"}},
+                network_mode="none",
+                remove=True,
+            )
 
     def test_agent_writes_a_web_created_run_home(
         self, deploy_test_image, deploy_docker, jobs: Path
@@ -788,6 +836,8 @@ class TestNonRootWebRunHome:
             f"echo omp-secret > /jobs/.run-homes/{role_omp}/models.yml"
             f" && mkdir -p /jobs/.run-homes/{role_codex}/.config"
             f" && echo codex-secret > /jobs/.run-homes/{role_codex}/.config/auth.json"
+            f" && cat /jobs/.run-homes/{role_omp}/models.yml"
+            f" && stat -c '%g' /jobs/.run-homes/{role_omp}/models.yml"
             f" && echo AGENT_OK"
         )
         output = deploy_docker.containers.run(
@@ -800,9 +850,8 @@ class TestNonRootWebRunHome:
             remove=True,
         ).decode("utf-8")
         assert "AGENT_OK" in output, output
-        omp_file = jobs / ".run-homes" / role_omp / "models.yml"
-        assert omp_file.read_text(encoding="utf-8").strip() == "omp-secret"
-        assert omp_file.stat().st_gid == AGENT_GID
+        # The agent's read-back and group of the file it wrote.
+        assert f"omp-secret\n{AGENT_GID}\nAGENT_OK" in output, output
 
         container = deploy_docker.containers.run(
             deploy_test_image,
@@ -832,7 +881,7 @@ class TestNonRootWebGit:
     meets the ownership guard without the entrypoint's trust."""
 
     @pytest.fixture()
-    def job_dir(self, deploy_test_image, deploy_docker, tmp_path) -> Path:
+    def job_dir(self, deploy_test_image, deploy_docker, tmp_path) -> Generator[Path, None, None]:
         jobs: Path = tmp_path / "jobs"
         jobs.mkdir()
         _group_jobs_root(jobs, deploy_docker, deploy_test_image)
@@ -849,7 +898,9 @@ class TestNonRootWebGit:
             "apply_job_ownership(job)\n"
             "subprocess.run(['git', 'init'], cwd=str(job), capture_output=True, check=True)\n"
             "apply_job_ownership_tree(job / '.git')\n"
+            "st = (job / '.git').stat()\n"
             "print('web setup ok')\n"
+            "print('git-owner', st.st_uid, st.st_gid)\n"
         )
         output = _run_deploy_snippet(
             deploy_docker,
@@ -860,11 +911,23 @@ class TestNonRootWebGit:
             environment={"JOB_ID": job_id},
         )
         assert "web setup ok" in output, output
-        job = jobs / job_id
         # The non-root web keeps the ownership git's guard then trips on.
-        assert (job / ".git").stat().st_uid == 1002
-        assert (job / ".git").stat().st_gid == AGENT_GID
-        return job
+        assert f"git-owner {1002} {AGENT_GID}" in output, output
+        job = jobs / job_id
+        try:
+            yield job
+        finally:
+            # The job dir is the web's, so a host user outside the jobs group
+            # cannot delete it.
+            deploy_docker.containers.run(
+                deploy_test_image,
+                ["sh", "-c", "find /jobs -mindepth 1 -delete"],
+                user="root",
+                entrypoint=[],
+                volumes={str(jobs): {"bind": "/jobs", "mode": "rw"}},
+                network_mode="none",
+                remove=True,
+            )
 
     def test_agent_git_runs_in_the_web_repo(
         self, deploy_test_image, deploy_docker, job_dir: Path

@@ -167,6 +167,52 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
         pytest.skip(reason)
 
 
+def _guarded_environment() -> dict[str, str]:
+    """The environment without the variable pytest rewrites at each test phase."""
+    return {name: value for name, value in os.environ.items() if name != "PYTEST_CURRENT_TEST"}
+
+
+@pytest.fixture(autouse=True)
+def _environment_guard() -> Generator[None, None, None]:
+    """Keep the checkout's .env out of the process environment, and fail a test
+    that leaves the environment changed, restoring it for the next test.
+
+    web_app.main() loads .env into os.environ, which no settings option can
+    stop, so it loads nothing here. The guard is set up before the test's own
+    fixtures and holds its own patch, so it compares after their teardown has
+    undone their changes.
+    """
+    patch = pytest.MonkeyPatch()
+    patch.setattr("openscientist.web_app.load_dotenv", lambda *_args, **_kwargs: False)
+    before = _guarded_environment()
+    try:
+        yield
+    finally:
+        patch.undo()
+    after = _guarded_environment()
+    if after == before:
+        return
+    changed = sorted(
+        name for name in before.keys() | after.keys() if before.get(name) != after.get(name)
+    )
+    for name in changed:
+        if name in before:
+            os.environ[name] = before[name]
+        else:
+            os.environ.pop(name, None)
+    pytest.fail(f"the test left the environment changed: {', '.join(changed)}")
+
+
+@pytest.fixture
+def web_main_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """For a test that runs web_app.main(), which exports the jobs directory for
+    uvicorn's reload workers. Setting the variable first records it, so the
+    test's undo removes what main() writes."""
+    from openscientist import web_app
+
+    monkeypatch.setenv(web_app.JOBS_DIR_ENV, str(tmp_path / "jobs"))
+
+
 @pytest.fixture
 def event_loop():
     """Create a new event loop for each test.
