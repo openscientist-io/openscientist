@@ -34,26 +34,18 @@ from openscientist.settings import clear_settings_cache
 from openscientist_tools import code_exec as code_exec_module
 from openscientist_tools.code_exec import execute_code
 from openscientist_tools.state import STATE
-from tests.launcher import EXECUTOR_IMAGE, Launcher, image_digest
+from tests.launcher import (
+    EXECUTOR_IMAGE,
+    Launcher,
+    executor_image_problem,
+    image_digest,
+    remove_instance_containers,
+)
 from tests.stored_log import last_logged_entry
 
+_EXECUTOR_PROBLEM = executor_image_problem()
 
-def _docker_available() -> bool:
-    try:
-        import docker
-
-        client = docker.from_env()
-        client.ping()
-        client.images.get("openscientist-executor:latest")
-        return True
-    except Exception:
-        return False
-
-
-DOCKER_REQUIRED = pytest.mark.skipif(
-    not _docker_available(),
-    reason="Docker daemon and openscientist-executor:latest image required",
-)
+DOCKER_REQUIRED = pytest.mark.skipif(_EXECUTOR_PROBLEM is not None, reason=_EXECUTOR_PROBLEM or "")
 
 
 @pytest.fixture
@@ -109,6 +101,7 @@ def exec_broker_url(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Generato
         container_manager._container_manager = previous_manager
         clear_settings_cache()
         launcher.close()
+        remove_instance_containers(docker_client)
 
 
 #: Login roles of the runs :func:`_broker_env` started, ended with the broker.

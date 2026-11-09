@@ -7,6 +7,7 @@ knows how.
 
 from __future__ import annotations
 
+import functools
 import os
 import subprocess
 import time
@@ -14,6 +15,9 @@ from pathlib import Path
 
 import httpx
 import pytest
+
+import docker
+from openscientist_launcher.templates import FIREWALL_ENTRYPOINT, MARKER_LABEL
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VENV_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
@@ -23,7 +27,57 @@ VENV_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
 #: list each other's containers.
 LAUNCHER_INSTANCE_ID = f"test-instance-{os.getpid()}"
 
-EXECUTOR_IMAGE = "openscientist-executor:latest"
+#: The executor image the tests run: the tag `uv run openscientist` builds,
+#: unless OPENSCIENTIST_TEST_EXECUTOR_IMAGE names another build.
+EXECUTOR_IMAGE = os.environ.get("OPENSCIENTIST_TEST_EXECUTOR_IMAGE") or (
+    "openscientist-executor:latest"
+)
+
+
+@functools.cache
+def executor_image_problem() -> str | None:
+    """Why the executor image cannot run this checkout's tests, or None.
+
+    A build older than the checkout lacks the firewall entrypoint the launcher
+    starts every networked executor behind, so it is reported here instead of
+    failing inside the launcher.
+    """
+    try:
+        client = docker.from_env()
+        client.ping()
+    except docker.errors.DockerException as exc:
+        return f"Docker daemon not reachable: {exc}"
+    rebuild = "Rebuild it with 'uv run openscientist' or set OPENSCIENTIST_TEST_EXECUTOR_IMAGE."
+    try:
+        client.images.get(EXECUTOR_IMAGE)
+    except docker.errors.ImageNotFound:
+        return f"{EXECUTOR_IMAGE} is not built. {rebuild}"
+    entrypoint = FIREWALL_ENTRYPOINT[0]
+    probe = client.containers.create(
+        EXECUTOR_IMAGE,
+        command=["true"],
+        entrypoint=[],
+        labels={MARKER_LABEL: LAUNCHER_INSTANCE_ID},
+    )
+    try:
+        probe.get_archive(entrypoint)
+    except docker.errors.NotFound:
+        return f"{EXECUTOR_IMAGE} predates this checkout, it has no {entrypoint}. {rebuild}"
+    finally:
+        probe.remove(force=True)
+    return None
+
+
+def remove_instance_containers(docker_client: docker.DockerClient) -> None:
+    """Remove every container this process's test launchers labelled,
+    including ones created but never started."""
+    for container in docker_client.containers.list(
+        all=True, filters={"label": f"{MARKER_LABEL}={LAUNCHER_INSTANCE_ID}"}
+    ):
+        try:
+            container.remove(force=True)
+        except docker.errors.NotFound:
+            pass
 
 
 def image_digest(docker_client, tag: str) -> str:

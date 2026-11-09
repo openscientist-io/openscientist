@@ -31,6 +31,7 @@ from tests.launcher import (
     EXECUTOR_IMAGE,
     LAUNCHER_INSTANCE_ID,
     Launcher,
+    executor_image_problem,
     image_digest,
 )
 
@@ -454,12 +455,8 @@ class TestContainerManagerLauncherIntegration:
 
     @pytest.fixture(autouse=True)
     def check_docker(self):
-        try:
-            client = docker.from_env()
-            client.ping()
-            client.images.get(EXECUTOR_IMAGE)
-        except docker.errors.DockerException:
-            pytest.skip("Docker and the executor image are required")
+        if problem := executor_image_problem():
+            pytest.skip(problem)
 
     @pytest.fixture
     def jobs_root(self, tmp_path: Path) -> Path:
