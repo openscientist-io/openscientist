@@ -79,6 +79,8 @@ Deploying means running the CLI on the server. Clone the repository there, and t
 uv run openscientist
 ```
 
+The setup wizard hides keys and other secrets as you type or paste them, so press Enter when finished.
+
 ## Code Quality
 
 All PRs must pass:

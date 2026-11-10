@@ -226,6 +226,9 @@ def ask(question: Question, current: str | None) -> str:
         console.print(f"[dim]{question.help}[/dim]")
     default = current or question.default
     if question.kind == "secret":
+        console.print(
+            "[dim]Input is hidden as you type or paste, so press Enter when finished.[/dim]"
+        )
         # Never show a secret as the prompt default, and let Enter mean "keep
         # the current" or "leave empty", which click's prompt would re-ask for.
         if current:
