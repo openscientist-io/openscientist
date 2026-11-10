@@ -8,6 +8,7 @@ import argparse
 import asyncio
 import importlib
 import logging
+import mimetypes
 import os
 import secrets
 import threading
@@ -690,6 +691,9 @@ def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
     _register_openapi_docs(host_app)
     # The admin settings icons load the vendored Font Awesome stylesheets and
     # webfonts same-origin, the way the docs pages load their bundles.
+    # The web image has no /etc/mime.types, and Python's built-in map lacks these.
+    mimetypes.add_type("font/woff2", ".woff2")
+    mimetypes.add_type("font/woff", ".woff")
     host_app.mount("/fa", StaticFiles(directory=str(FA_ASSETS_DIR)))
     _register_health_endpoint(host_app)
     _register_robots_txt(host_app)

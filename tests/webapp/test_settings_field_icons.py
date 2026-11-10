@@ -3,7 +3,8 @@ inputs, and the vendored stylesheets and webfont the page loads for them."""
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+import mimetypes
+from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -76,6 +77,19 @@ def _host_app(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FastAPI:
     return web_app.create_app(tmp_path / "jobs")
 
 
+@pytest.fixture
+def without_system_mime_types(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """The web image has no /etc/mime.types, so its types come from Python's
+    built-in map alone. init() appends its files argument to knownfiles, so
+    the list itself is emptied."""
+    monkeypatch.setattr(mimetypes, "knownfiles", [])
+    mimetypes.init()
+    yield
+    monkeypatch.undo()
+    mimetypes.init()
+
+
+@pytest.mark.usefixtures("without_system_mime_types")
 @pytest.mark.parametrize(
     ("path", "content_type"),
     [
