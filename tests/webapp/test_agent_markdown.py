@@ -1,14 +1,18 @@
-"""Agent markdown cannot add styles or interactive HTML to the job page."""
+"""Agent markdown preserves formatting without active HTML."""
 
 from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
 from nicegui import ui
+from nicegui.elements.markdown import prepare_content
 from nicegui.testing.user_simulation import user_simulation
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.database.models import Job, JobChatMessage, User
+from openscientist.report.icons import REPORT_ICONS
+from openscientist.webapp_components.components.agent_markdown import _CLEANER
+from openscientist.webapp_components.components.badges import transform_pmid_references
 from openscientist.webapp_components.pages.job_detail.chat import _ChatTabController
 from openscientist.webapp_components.pages.job_detail.common import _JobDetailContext
 from openscientist.webapp_components.pages.job_detail.report import _render_report_markdown
@@ -16,7 +20,7 @@ from openscientist.webapp_components.pages.job_detail.report import _render_repo
 _PAYLOAD = """# Findings
 
 <style>body { display: none; }</style>
-<form action="https://example.org/steal"><input name="password"><button>Sign in</button>
+<form action="https://example.org/submit"><input name="password"><button>Sign in</button>
 <textarea>Secret</textarea><select><option>Secret</option></select></form>
 <script>alert('secret')</script>
 <p style="position:fixed" onclick="alert(1)">Safe paragraph</p>
@@ -119,3 +123,81 @@ async def test_agent_markdown_removes_active_html_and_preserves_markdown(
         assert "https://example.org/remote" not in image_sources
         assert "/web/jobs/example/files/plot.png" in image_sources
         assert "data:image/png;base64,iVBORw0KGgo=" in image_sources
+
+
+def test_highlighted_code_keeps_token_classes() -> None:
+    html = prepare_content(
+        '```python\nprint("result", 42)\n```', extras="fenced-code-blocks tables"
+    )
+    expected = [
+        attrs["class"]
+        for tag, attrs in _Fragment(html).elements
+        if tag == "span" and attrs.get("class")
+    ]
+    assert expected
+    cleaned = _Fragment(_CLEANER.clean(html))
+    assert [
+        attrs["class"] for tag, attrs in cleaned.elements if tag == "span" and attrs.get("class")
+    ] == expected
+    assert ("div", {"class": "codehilite"}) in cleaned.elements
+
+
+def test_aligned_table_keeps_only_text_alignment() -> None:
+    html = prepare_content(
+        "| Left | Center | Right |\n| :--- | :---: | ---: |\n| a | b | c |", extras="tables"
+    )
+    html = html.replace('style="', 'style="position:fixed;color:red;')
+    cells = [
+        attrs for tag, attrs in _Fragment(_CLEANER.clean(html)).elements if tag in {"th", "td"}
+    ]
+    assert [attrs.get("style") for attrs in cells] == [
+        f"text-align:{alignment}" for alignment in ("left", "center", "right") * 2
+    ]
+
+
+@pytest.mark.parametrize("icon", REPORT_ICONS)
+def test_report_icons_and_pubmed_badges_keep_their_markup(icon: str) -> None:
+    html = prepare_content(
+        transform_pmid_references(f'<i class="fa-solid fa-{icon}"></i> PMID: 12345678'),
+        extras="fenced-code-blocks tables",
+    )
+    expected = [
+        (tag, {name: value for name, value in attrs.items() if name != "style"})
+        for tag, attrs in _Fragment(html).elements
+    ]
+    cleaned = _CLEANER.clean(html)
+    assert _Fragment(cleaned).elements == expected
+    assert ">P</text>" in cleaned
+    assert ">12345678</a>" in cleaned
+    [text] = [attrs for tag, attrs in _Fragment(cleaned).elements if tag == "text"]
+    assert text["fill"] == "white"
+    assert text["font-size"] == "11px"
+    assert text["font-weight"] == "bold"
+    assert text["font-family"] == "Arial,sans-serif"
+
+
+def test_svg_removes_active_content_and_external_references() -> None:
+    html = prepare_content(
+        '<svg onload="alert(1)" href="https://example.org/icon" '
+        'xlink:href="https://example.org/icon">'
+        '<rect x="1" fill="url(https://example.org/paint)" onclick="alert(1)"/>'
+        '<text x="8" href="javascript:alert(1)" xlink:href="https://example.org/text">P</text>'
+        "<foreignObject><p>Embedded content</p></foreignObject>"
+        "<script>alert(1)</script></svg>",
+        extras="tables",
+    )
+    cleaned = _CLEANER.clean(html)
+    elements = _Fragment(cleaned).elements
+    assert {"svg", "rect", "text"} <= {tag for tag, _ in elements}
+    assert not {"foreignobject", "script"} & {tag for tag, _ in elements}
+    assert "Embedded content" not in cleaned
+    assert "alert(1)" not in cleaned
+    for tag, attrs in elements:
+        assert not any(name.startswith("on") for name in attrs)
+        if tag in {"svg", "rect", "text"}:
+            assert not {"href", "xlink:href", "fill"} & attrs.keys()
+
+
+def test_unrecognized_formatting_classes_are_removed() -> None:
+    html = '<div class="overlay"><span class="overlay">Text</span><i class="fa-unknown"></i></div>'
+    assert all(not attrs.get("class") for _, attrs in _Fragment(_CLEANER.clean(html)).elements)

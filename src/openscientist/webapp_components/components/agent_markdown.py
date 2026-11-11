@@ -4,6 +4,9 @@ from urllib.parse import urlsplit
 
 import nh3
 from nicegui import ui
+from pygments.token import STANDARD_TYPES  # type: ignore[import-untyped]
+
+from openscientist.report.icons import REPORT_ICONS
 
 
 def _filter_url(tag: str, attribute: str, value: str) -> str | None:
@@ -62,16 +65,39 @@ _CLEANER = nh3.Cleaner(
         "img",
         "div",
         "span",
+        "svg",
+        "rect",
+        "text",
     },
-    clean_content_tags={"script", "style", "form", "input", "button", "textarea", "select"},
+    clean_content_tags={
+        "script",
+        "style",
+        "form",
+        "input",
+        "button",
+        "textarea",
+        "select",
+        "foreignObject",
+    },
     attributes={
         "a": {"href", "title"},
         "img": {"src", "alt", "title"},
-        "th": {"colspan", "rowspan", "scope"},
-        "td": {"colspan", "rowspan"},
+        "th": {"colspan", "rowspan", "scope", "style"},
+        "td": {"colspan", "rowspan", "style"},
         "ol": {"start"},
+        "svg": {"xmlns", "viewBox", "width", "height"},
+        "rect": {"x", "y", "width", "height", "rx"},
+        "text": {"x", "y", "text-anchor", "font-size", "font-weight", "font-family"},
     },
-    allowed_classes={"div": {"codehilite"}},
+    allowed_classes={
+        "div": {"codehilite"},
+        "span": set(STANDARD_TYPES.values()),
+        "a": {"pubmed-badge"},
+        "i": {"fa-solid", *(f"fa-{name}" for name in REPORT_ICONS)},
+        "svg": {"pubmed-icon"},
+    },
+    tag_attribute_values={"rect": {"fill": {"#326599"}}, "text": {"fill": {"white"}}},
+    filter_style_properties={"text-align"},
     attribute_filter=_filter_url,
     url_schemes={"http", "https", "mailto", "data"},
     link_rel="noopener noreferrer",
@@ -79,5 +105,5 @@ _CLEANER = nh3.Cleaner(
 
 
 def render_agent_markdown(content: str) -> ui.markdown:
-    """Render agent text without styles, forms, scripts or remote images."""
+    """Render agent text with formatting and without active HTML or remote images."""
     return ui.markdown(content, sanitize=_CLEANER.clean)
