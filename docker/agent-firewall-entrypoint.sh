@@ -16,6 +16,7 @@ resolve_ipv4() {
 }
 
 accept_rules=""
+host_records=""
 for entry in $ALLOW; do
     host="${entry%:*}"
     port="${entry##*:}"
@@ -28,8 +29,14 @@ for entry in $ALLOW; do
     for ip in $(resolve_ipv4 "$host"); do
         accept_rules="${accept_rules}        ip daddr ${ip} tcp dport ${port} accept
 "
+        host_records="${host_records}${ip} ${host}
+"
     done
 done
+
+if [ "$MODE" != "restrict" ] && [ -n "$host_records" ]; then
+    printf '%s' "$host_records" | tee -a /etc/hosts > /dev/null
+fi
 
 # /proc/net/route stores the gateway little-endian, so the octets read reversed.
 gateway_rule=""
@@ -92,14 +99,12 @@ ${gateway_rule}    }
 }
 NFT
 else
-    # No port 53 rule: the resolver on 127.0.0.11 is reached over lo, and the allowlist
-    # pins destinations by IP, so an open 53 buys no reachability while letting a job pick
-    # its own nameserver and exfiltrate in the query name. Names that resolver forwards
-    # upstream still leave, from outside this namespace where no rule here sees them.
+    # Docker forwards embedded DNS outside this namespace, including after DNAT.
     nft -f - <<NFT
 table inet airgap {
     chain output {
         type filter hook output priority 0; policy drop;
+        ip daddr 127.0.0.11 drop
         oif "lo" accept
         ct state established,related accept
 ${accept_rules}    }

@@ -65,7 +65,9 @@ class Rendered:
 
     @property
     def accepts(self) -> list[str]:
-        return [rule for rule in self.rules if rule.startswith("ip daddr")]
+        return [
+            rule for rule in self.rules if rule.startswith("ip daddr") and rule.endswith("accept")
+        ]
 
     @property
     def command(self) -> list[str]:
@@ -122,7 +124,7 @@ def _render(
     mode: str | None = None,
     run_as: str | None = None,
 ) -> Rendered:
-    """Run the entrypoint with its three privileged commands stubbed out.
+    """Run the entrypoint with privileged commands and host-file writes stubbed out.
 
     `allow=None` leaves the env var unset.
     """
@@ -151,6 +153,10 @@ def _render(
     _write_stub(
         bin_dir / "setpriv",
         f'echo setpriv >> {trace}\nprintf "%s\\n" "$@" > {setpriv_args}\n',
+    )
+    _write_stub(
+        bin_dir / "tee",
+        f'test "$1" = "-a" && test "$2" = "/etc/hosts" || exit 1\ncat > {tmp_path / "hosts"}\n',
     )
 
     env = {"PATH": f"{bin_dir}:{os.environ['PATH']}"}
@@ -190,6 +196,7 @@ class TestRulesetRendering:
             table inet airgap {
                 chain output {
                     type filter hook output priority 0; policy drop;
+                    ip daddr 127.0.0.11 drop
                     oif "lo" accept
                     ct state established,related accept
                     ip daddr 172.26.0.2 tcp dport 5432 accept
@@ -225,6 +232,7 @@ class TestRulesetRendering:
         rendered = _render(tmp_path, "")
         assert rendered.rules == [
             "type filter hook output priority 0; policy drop;",
+            "ip daddr 127.0.0.11 drop",
             'oif "lo" accept',
             "ct state established,related accept",
         ]
@@ -750,6 +758,46 @@ def firewall_image(docker_client: Any) -> str:
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("transport", ["tcp", "udp"])
+def test_airgap_blocks_embedded_resolver(
+    docker_client: Any, firewall_image: str, transport: str
+) -> None:
+    source = _HELPERS + dedent(
+        """
+        import struct
+
+        query = struct.pack("!6H", 20299, 256, 1, 0, 0, 0)
+        query += b"".join(bytes([len(part)]) + part.encode() for part in target.split("."))
+        query += b"\\x00\\x00\\x01\\x00\\x01"
+        transport = os.environ["PROBE_TRANSPORT"]
+        kind = socket.SOCK_STREAM if transport == "tcp" else socket.SOCK_DGRAM
+        with socket.socket(socket.AF_INET, kind) as resolver:
+            resolver.settimeout(2)
+            try:
+                resolver.connect(("127.0.0.11", 53))
+                if transport == "tcp":
+                    query = struct.pack("!H", len(query)) + query
+                resolver.sendall(query)
+                response = resolver.recv(4096)
+                reached = bool(response)
+            except OSError:
+                reached = False
+        print(json.dumps({"resolver_reachable": reached}))
+        """
+    )
+    with _lab(docker_client) as lab:
+        target = lab.start_listener("dns-target", [8000])
+        probe = lab.run_probe(
+            f"{target}:8000",
+            source,
+            target,
+            mode="airgap",
+            extra_environment={"PROBE_TRANSPORT": transport},
+        )
+    assert probe["resolver_reachable"] is False
+
+
+@pytest.mark.integration
 class TestFirewallBehaviour:
     @pytest.fixture(scope="class")
     def probe(self, docker_client: Any, firewall_image: str) -> Iterator[dict[str, Any]]:
@@ -757,10 +805,15 @@ class TestFirewallBehaviour:
             # Two listeners, so a blocked connect is not confused with nothing
             # listening on the unallowlisted port.
             target = lab.start_listener("target", [8000, 9000])
-            yield lab.run_probe(f"{target}:8000", _PROBE, target, mode="airgap")
+            yield lab.run_probe(
+                f"{target}:8000",
+                _PROBE,
+                target,
+                mode="airgap",
+                extra_environment={"RES_OPTIONS": "attempts:1 timeout:1"},
+            )
 
     def test_service_names_still_resolve(self, probe: dict[str, Any]) -> None:
-        """No rule opens port 53. The embedded resolver is reached over lo."""
         assert probe["resolved_target"] is not None
 
     def test_an_allowlisted_endpoint_is_reachable(self, probe: dict[str, Any]) -> None:
@@ -801,7 +854,6 @@ class TestMultiAddressAllowlist:
             yield lab.run_probe(f"{alias}:8000", _REPLICA_PROBE, alias, mode="airgap")
 
     def test_the_name_resolves_to_several_addresses(self, probe: dict[str, Any]) -> None:
-        """Guards the fixture: with one address the test below passes either way."""
         assert len(probe["addresses"]) >= 2
 
     def test_every_address_is_reachable(self, probe: dict[str, Any]) -> None:
