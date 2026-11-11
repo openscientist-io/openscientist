@@ -75,15 +75,19 @@ async def spend_job(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str]]:
                 _cost(job.id, 0.73),
             ]
         )
-        owner_login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
-        reader_login = Session(user_id=reader.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        owner_login, owner_login_token = Session.issue(
+            user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
+        reader_login, reader_login_token = Session.issue(
+            user_id=reader.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add_all([owner_login, reader_login])
         await db.commit()
     yield {
         "job_id": str(job.id),
         "question": job.research_question,
-        "owner_token": str(owner_login.id),
-        "reader_token": str(reader_login.id),
+        "owner_token": owner_login_token,
+        "reader_token": reader_login_token,
     }
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(Job).where(Job.id == job.id))
@@ -107,10 +111,12 @@ async def no_cost_job(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str]]
         )
         db.add(job)
         await db.flush()
-        owner_login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        owner_login, owner_login_token = Session.issue(
+            user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(owner_login)
         await db.commit()
-    yield {"job_id": str(job.id), "owner_token": str(owner_login.id)}
+    yield {"job_id": str(job.id), "owner_token": owner_login_token}
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(Job).where(Job.id == job.id))
         await db.execute(delete(User).where(User.id == owner.id))
@@ -139,12 +145,12 @@ async def shared_spend_job(test_engine: AsyncEngine) -> AsyncIterator[dict[str, 
         await db.flush()
         db.add(_cost(job.id, 0.50))
         db.add(JobShare(job_id=job.id, shared_with_user_id=recipient.id, permission_level="view"))
-        recipient_login = Session(
+        recipient_login, recipient_login_token = Session.issue(
             user_id=recipient.id, expires_at=datetime.now(UTC) + timedelta(days=1)
         )
         db.add(recipient_login)
         await db.commit()
-    yield {"job_id": str(job.id), "recipient_token": str(recipient_login.id)}
+    yield {"job_id": str(job.id), "recipient_token": recipient_login_token}
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(Job).where(Job.id == job.id))
         await db.execute(delete(User).where(User.id.in_([owner.id, recipient.id])))
@@ -171,13 +177,15 @@ async def public_spend_job(test_engine: AsyncEngine) -> AsyncIterator[dict[str, 
         db.add(job)
         await db.flush()
         db.add(_cost(job.id, 0.50))
-        reader_login = Session(user_id=reader.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        reader_login, reader_login_token = Session.issue(
+            user_id=reader.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(reader_login)
         await db.commit()
     yield {
         "job_id": str(job.id),
         "question": job.research_question,
-        "reader_token": str(reader_login.id),
+        "reader_token": reader_login_token,
     }
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(Job).where(Job.id == job.id))

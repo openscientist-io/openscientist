@@ -53,12 +53,14 @@ async def feedback_job(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str]
         )
         db.add(job)
         await db.flush()
-        login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         await db.commit()
     yield {
         "job_id": str(job.id),
-        "token": str(login.id),
+        "token": login_token,
     }
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(FeedbackHistory).where(FeedbackHistory.job_id == job.id))

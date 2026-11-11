@@ -81,11 +81,10 @@ class AzureOpenAIProvider(CodexCompatible):
             return LiveCheckResult(
                 ok=True, detail="No Azure OpenAI resource or key to check with; skipped."
             )
-        api_version = p.azure_openai_api_version or "2025-04-01-preview"
-        url = (
-            f"https://{p.azure_openai_resource}.openai.azure.com/openai/deployments"
-            f"?api-version={api_version}"
-        )
+        # The same v1 surface and query parameters the codex harness uses.
+        url = f"https://{p.azure_openai_resource}.openai.azure.com/openai/v1/models"
+        if p.azure_openai_api_version:
+            url += f"?api-version={p.azure_openai_api_version}"
         headers = {"api-key": p.azure_openai_api_key}
         return _listing_live_check(url, headers, cls.display_name)
 

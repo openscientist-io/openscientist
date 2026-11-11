@@ -790,7 +790,7 @@ async def _create_redeemed_reviewer(
         redeemed_by_id=reviewer.id,
     )
     db_session.add(token)
-    session = Session(
+    session, session_token = Session.issue(
         user_id=reviewer.id,
         expires_at=datetime.now(UTC) + timedelta(days=1),
     )

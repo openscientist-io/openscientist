@@ -72,6 +72,8 @@ class LauncherConfig:
     executor_max_cpu: float
     max_lifetime_seconds: int
     max_egress_entries: int
+    agent_max_pids: int = 4096
+    executor_max_pids: int = 4096
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "LauncherConfig":
@@ -92,6 +94,10 @@ class LauncherConfig:
         executor_max_cpu = _float(env, "EXECUTOR_MAX_CPU")
         if agent_max_cpu <= 0 or executor_max_cpu <= 0:
             raise ConfigError("the CPU bounds must be positive")
+        agent_max_pids = _int(env, "AGENT_MAX_PIDS", default="4096")
+        executor_max_pids = _int(env, "EXECUTOR_MAX_PIDS", default="4096")
+        if agent_max_pids <= 0 or executor_max_pids <= 0:
+            raise ConfigError("the PID bounds must be positive")
         return cls(
             jobs_root=Path(_require(env, "JOBS_ROOT")),
             agent_image=_require(env, "AGENT_IMAGE"),
@@ -109,6 +115,8 @@ class LauncherConfig:
             agent_max_cpu=agent_max_cpu,
             executor_max_memory_mib=executor_max_memory_mib,
             executor_max_cpu=executor_max_cpu,
+            agent_max_pids=agent_max_pids,
+            executor_max_pids=executor_max_pids,
             max_lifetime_seconds=max_lifetime_seconds,
             max_egress_entries=max_egress_entries,
         )

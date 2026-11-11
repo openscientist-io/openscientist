@@ -148,7 +148,9 @@ async def dialog_world(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str]
         db.add(
             JobShare(job_id=shared_job.id, shared_with_user_id=holder.id, permission_level="view")
         )
-        login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         await db.commit()
     yield {
@@ -156,7 +158,7 @@ async def dialog_world(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str]
         "plain_job": str(plain_job.id),
         "holder_name": holder.name,
         "holder_email": holder.email,
-        "token": str(login.id),
+        "token": login_token,
     }
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(JobShare).where(JobShare.job_id == shared_job.id))

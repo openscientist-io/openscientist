@@ -65,6 +65,7 @@ def _launcher_settings() -> SimpleNamespace:
             agent_network=None,
             agent_platform=None,
             agent_image="openscientist-agent:latest",
+            agent_pids_limit=512,
         ),
         provider=provider,
         database=SimpleNamespace(
@@ -82,6 +83,7 @@ def _executor_settings() -> SimpleNamespace:
             host_project_dir=None,
             agent_network="bridge",
             executor_image="openscientist-executor:latest",
+            executor_pids_limit=512,
         ),
         airgap=SimpleNamespace(enabled=False),
     )
@@ -322,11 +324,11 @@ async def test_a_login_session_lasting_the_rows_days(
     test_engine: AsyncEngine, admin_row: None, db_session: AsyncSession, test_user: User
 ) -> None:
     await set_admin_settings_row(test_engine, session_duration_days=30)
-    first = await create_session(db_session, str(test_user.id))
+    first, _ = await create_session(db_session, str(test_user.id))
     assert abs((first.expires_at - datetime.now(UTC)) - timedelta(days=30)) < timedelta(minutes=1)
 
     await set_admin_settings_row(test_engine, session_duration_days=7)
-    second = await create_session(db_session, str(test_user.id))
+    second, _ = await create_session(db_session, str(test_user.id))
     assert abs((second.expires_at - datetime.now(UTC)) - timedelta(days=7)) < timedelta(minutes=1)
 
 

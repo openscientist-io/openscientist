@@ -2,7 +2,6 @@
 
 import contextlib
 from collections.abc import Iterator
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -18,6 +17,7 @@ from openscientist.ntfy import (
     notify_job_status_change,
     send_notification,
 )
+from openscientist.settings import get_settings
 
 
 @contextlib.contextmanager
@@ -70,6 +70,55 @@ class TestGetSubscriptionUrl:
 
 class TestSendNotification:
     """Tests for send_notification()."""
+
+    @pytest.mark.asyncio
+    async def test_airgap_does_not_open_http_client(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(get_settings().airgap, "enabled", True)
+        mock_client = AsyncMock()
+        mock_client.__aenter__.return_value = mock_client
+        mock_client.post.return_value = httpx.Response(
+            200, request=httpx.Request("POST", "https://ntfy.sh/topic1")
+        )
+
+        with patch("openscientist.ntfy.httpx.AsyncClient", return_value=mock_client) as factory:
+            result = await send_notification(
+                "topic1",
+                "Title",
+                "Message",
+                priority="high",
+                tags=["rocket"],
+                click_url="https://app.test/job/job-123",
+            )
+
+        assert result is False
+        factory.assert_not_called()
+        mock_client.__aenter__.assert_not_awaited()
+        mock_client.post.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_non_airgap_sends_notification(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(get_settings().airgap, "enabled", False)
+
+        with recorded_ntfy() as requests:
+            result = await send_notification(
+                "topic1",
+                "Title",
+                "Message",
+                priority="high",
+                tags=["rocket", "fire"],
+                click_url="https://app.test/job/job-123",
+            )
+
+        assert result is True
+        assert len(requests) == 1
+        request = requests[0]
+        assert request.method == "POST"
+        assert request.url == "https://ntfy.sh/topic1"
+        assert request.content == b"Message"
+        assert request.headers["Title"] == "Title"
+        assert request.headers["Priority"] == "high"
+        assert request.headers["Tags"] == "rocket,fire"
+        assert request.headers["Click"] == "https://app.test/job/job-123"
 
     @pytest.mark.asyncio
     async def test_success(self):
@@ -244,7 +293,7 @@ class TestNotifyJobStatusChange:
         self, new_status, expected_title, message_fragment, extra_kwargs
     ):
         """Each job status is routed to the matching notification with the right title and message."""
-        mock_settings = SimpleNamespace(base_url="https://app.test")
+        mock_settings = get_settings().model_copy(update={"base_url": "https://app.test"})
         with (
             patch("openscientist.ntfy.get_settings", return_value=mock_settings),
             recorded_ntfy() as requests,
@@ -268,7 +317,7 @@ class TestNotifyJobStatusChange:
     @pytest.mark.asyncio
     async def test_completed_names_the_stop_note(self):
         """The note rides the existing completed notification, no second one."""
-        mock_settings = SimpleNamespace(base_url="https://app.test")
+        mock_settings = get_settings().model_copy(update={"base_url": "https://app.test"})
         with (
             patch("openscientist.ntfy.get_settings", return_value=mock_settings),
             recorded_ntfy() as requests,
@@ -289,7 +338,7 @@ class TestNotifyJobStatusChange:
     @pytest.mark.asyncio
     async def test_truncates_long_title(self):
         """Titles longer than 50 chars are truncated to 50 chars plus an ellipsis before routing."""
-        mock_settings = SimpleNamespace(base_url="https://app.test")
+        mock_settings = get_settings().model_copy(update={"base_url": "https://app.test"})
         with (
             patch("openscientist.ntfy.get_settings", return_value=mock_settings),
             recorded_ntfy() as requests,
@@ -311,7 +360,7 @@ class TestNotifyJobStatusChange:
 
     @pytest.mark.asyncio
     async def test_unknown_status_returns_false(self):
-        mock_settings = SimpleNamespace(base_url="https://app.test")
+        mock_settings = get_settings().model_copy(update={"base_url": "https://app.test"})
         with (
             patch("openscientist.ntfy.get_settings", return_value=mock_settings),
             recorded_ntfy() as requests,
