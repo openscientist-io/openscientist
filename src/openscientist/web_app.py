@@ -490,7 +490,7 @@ async def _ensure_default_skill_sources() -> None:
             "name": "Claude Scientific Skills",
             "url": "https://github.com/K-Dense-AI/scientific-agent-skills",
             "branch": "main",
-            "skills_path": "scientific-skills",
+            "skills_path": "skills",
             "is_enabled": True,
         },
         {
@@ -516,6 +516,14 @@ async def _ensure_default_skill_sources() -> None:
                     new_path = source_data.get("path")
                     if isinstance(new_path, str) and existing.path != new_path:
                         existing.path = new_path
+                    if (
+                        existing.source_type == "github"
+                        and existing.url == source_data.get("url")
+                        and existing.branch == source_data.get("branch")
+                        and existing.skills_path == "scientific-skills"
+                    ):
+                        existing.skills_path = str(source_data["skills_path"])
+                        existing.last_commit_sha = None
 
             await session.commit()
     except Exception as e:
