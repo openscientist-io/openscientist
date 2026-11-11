@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette import formparsers
 
 from openscientist import web_app
+from openscientist.upload_limits import UploadLimitsMiddleware
 from tests.admin_row import set_admin_settings_row
 
 
@@ -117,8 +118,20 @@ async def test_upload_rejected_before_spooling_finishes(
         assert list(spool_dir.iterdir()) == []
 
 
+@pytest.mark.parametrize(
+    ("declared_length", "status", "detail"),
+    [
+        (str(3 * 1024 * 1024), 413, "Upload body exceeds the size limit"),
+        ("invalid", 400, "Invalid Content-Length"),
+    ],
+)
 async def test_content_length_rejected_without_reading_body(
-    test_engine: AsyncEngine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    test_engine: AsyncEngine,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    declared_length: str,
+    status: int,
+    detail: str,
 ) -> None:
     await set_admin_settings_row(test_engine, max_file_size_mb=1)
     spool_dir = tmp_path / "spools"
@@ -129,7 +142,7 @@ async def test_content_length_rejected_without_reading_body(
         ui.upload()
 
     async def unread_body() -> AsyncIterator[bytes]:
-        pytest.fail("Oversized Content-Length body was read")
+        pytest.fail("Rejected Content-Length body was read")
         yield b""
 
     async with user_simulation(root=root):
@@ -140,9 +153,10 @@ async def test_content_length_rejected_without_reading_body(
             response = await client.post(
                 "/_nicegui/client/unused/upload/1",
                 content=unread_body(),
-                headers={"content-length": str(3 * 1024 * 1024)},
+                headers={"content-length": declared_length},
             )
-        assert response.status_code == 413
+        assert response.status_code == status
+        assert response.json() == {"detail": detail}
         assert list(spool_dir.iterdir()) == []
 
 
@@ -170,3 +184,57 @@ async def test_within_limit_upload_reaches_page_handler(
             )
         assert response.status_code == 200
         await browser.should_see(f"Received {size} bytes")
+
+
+@pytest.mark.parametrize("declared_length", [None, "1"])
+@pytest.mark.parametrize("extra_bytes", [0, 1])
+async def test_streamed_body_limit(
+    test_engine: AsyncEngine, declared_length: str | None, extra_bytes: int
+) -> None:
+    await set_admin_settings_row(test_engine, max_file_size_mb=1)
+    host = FastAPI()
+    host.add_middleware(UploadLimitsMiddleware)
+    body_limit = 2 * 1024 * 1024
+
+    @host.post("/api/v1/jobs")
+    async def read_body(request: Request) -> dict[str, int]:
+        return {"size": len(await request.body())}
+
+    async def body() -> AsyncIterator[bytes]:
+        for _ in range(body_limit // 65536):
+            yield b"x" * 65536
+        if extra_bytes:
+            yield b"x" * extra_bytes
+
+    headers = {} if declared_length is None else {"content-length": declared_length}
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(host), base_url="http://test"
+    ) as client:
+        response = await client.post("/api/v1/jobs", content=body(), headers=headers)
+    if extra_bytes:
+        assert response.status_code == 413
+        assert response.json() == {"detail": "Upload body exceeds the size limit"}
+    else:
+        assert response.status_code == 200
+        assert response.json() == {"size": body_limit}
+
+
+async def test_downstream_error_propagates_without_upload_rejection(
+    test_engine: AsyncEngine,
+) -> None:
+    await set_admin_settings_row(test_engine, max_file_size_mb=1)
+    host = FastAPI()
+    host.add_middleware(UploadLimitsMiddleware)
+    error = RuntimeError("Upload handler failed")
+
+    @host.post("/api/v1/jobs")
+    async def fail(request: Request) -> None:
+        assert await request.body() == b"data"
+        raise error
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(host), base_url="http://test"
+    ) as client:
+        with pytest.raises(RuntimeError, match="Upload handler failed") as raised:
+            await client.post("/api/v1/jobs", content=b"data")
+    assert raised.value is error
