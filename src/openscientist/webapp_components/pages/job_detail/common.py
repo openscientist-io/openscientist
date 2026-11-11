@@ -140,7 +140,7 @@ class _JobDetailContext:
     action_counts: ActionCounts
     ks_load_error: str | None
     spend: float
-    spend_visible: bool
+    direct_access: bool
     state: dict[str, Any]
     share_dialog: Any
     delete_dialog: Any

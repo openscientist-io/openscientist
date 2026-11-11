@@ -175,7 +175,7 @@ async def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
         action_counts=action_counts,
         ks_load_error=ks_load_error,
         spend=spend,
-        spend_visible=direct_access,
+        direct_access=direct_access,
         state=_initial_job_state(
             job_info,
             _stats_model(job_info, ks_data, spend if direct_access else None),

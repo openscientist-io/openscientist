@@ -136,7 +136,7 @@ def _render_job_stats_content(context: _JobDetailContext) -> None:
     hyp_count = len(latest_ks.get("hypotheses", [])) if latest_ks else 0
     badges_row = render_stat_badges(
         _stats_badges(
-            latest_job, lit_count, hyp_count, context.spend if context.spend_visible else None
+            latest_job, lit_count, hyp_count, context.spend if context.direct_access else None
         )
     )
     run_environment = run_environment_text(latest_job.version_info)
@@ -278,7 +278,7 @@ async def _check_and_refresh(
     stats_model = _stats_model(
         latest_job,
         latest_ks,
-        context.spend if context.spend_visible else None,
+        context.spend if context.direct_access else None,
     )
     if stats_model != context.state["stats_model"]:
         context.state["stats_model"] = stats_model
