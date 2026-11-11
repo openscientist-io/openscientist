@@ -187,7 +187,7 @@ def _endpoint_allowed(
             and re.fullmatch(
                 rf"/projects/{re.escape(project or '')}/locations/[a-z0-9-]+/"
                 r"publishers/anthropic/models/[A-Za-z0-9._@-]+"
-                r"(?::rawPredict|:streamRawPredict|:count-tokens:rawPredict)",
+                r"(?::rawPredict|:streamRawPredict)",
                 path,
             )
             is not None
@@ -326,7 +326,7 @@ def create_llm_proxy_app(
         if request.method == "POST":
             model = _model_from_body(body) or _model_from_path(request.url.path)
             if model != "unknown" and not request.url.path.endswith(
-                ("/count_tokens", ":count-tokens:rawPredict")
+                ("/count_tokens", "/count-tokens:rawPredict")
             ):
                 refusal = await unpriced_model_violation(provider_id=provider(), model=model)
                 if refusal is not None:

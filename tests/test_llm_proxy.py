@@ -1698,7 +1698,11 @@ class TestHarnessRouting:
         # Published by the container env once the proxy override applies.
         monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "job-1.tok")
         env = p.harness_env(proxy="http://openscientist:8081")
-        assert env == {"GOOGLE_CLOUD_ACCESS_TOKEN": "job-1.tok"}
+        assert env == {
+            "GOOGLE_CLOUD_ACCESS_TOKEN": "job-1.tok",
+            "GOOGLE_CLOUD_PROJECT": "proj-1",
+            "GOOGLE_CLOUD_LOCATION": "us-east5",
+        }
         assert "GOOGLE_APPLICATION_CREDENTIALS" not in env
         assert str(creds) not in env.values()
 
