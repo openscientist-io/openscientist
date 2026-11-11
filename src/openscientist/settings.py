@@ -707,6 +707,23 @@ class FileSettings(BaseSettings):
         return v
 
 
+class PublicReportSettings(BaseSettings):
+    """Resource limits for public PDF rendering."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    memory_mb: int = Field(default=1024, gt=0, alias="OPENSCIENTIST_PUBLIC_PDF_MEMORY_MB")
+    cpu_seconds: int = Field(default=15, gt=0, alias="OPENSCIENTIST_PUBLIC_PDF_CPU_SECONDS")
+    timeout_seconds: float = Field(
+        default=30, gt=0, allow_inf_nan=False, alias="OPENSCIENTIST_PUBLIC_PDF_TIMEOUT_SECONDS"
+    )
+    max_concurrent: int = Field(default=2, gt=0, alias="OPENSCIENTIST_PUBLIC_PDF_MAX_CONCURRENT")
+
+
 class ContainerSettings(BaseSettings):
     """Container isolation configuration."""
 
@@ -1048,6 +1065,7 @@ class Settings(BaseSettings):
     auth: AuthSettings = Field(default_factory=AuthSettings)
     budget: BudgetSettings = Field(default_factory=BudgetSettings)
     file: FileSettings = Field(default_factory=FileSettings)
+    public_report: PublicReportSettings = Field(default_factory=PublicReportSettings)
     container: ContainerSettings = Field(default_factory=ContainerSettings)
     phenix: PhenixSettings = Field(default_factory=PhenixSettings)
     berkeley_lab: BerkeleyLabSettings = Field(default_factory=BerkeleyLabSettings)

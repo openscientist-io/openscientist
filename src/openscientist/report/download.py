@@ -17,7 +17,11 @@ from openscientist.job_files import (
     serve_job_file,
     try_open_job_file,
 )
-from openscientist.report.pdf import render_public_report_pdf
+from openscientist.report.pdf import (
+    PublicReportBusyError,
+    PublicReportLimitError,
+    render_public_report_pdf_isolated,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,14 +35,41 @@ async def report_download_response(
 ) -> Response:
     """Serve a saved report to direct viewers or render an uncached public PDF."""
     if excluded_top_level_dirs:
+        source = try_open_job_file(
+            job_dir, "final_report.md", max_size=MAX_ARTIFACT_FILE_SIZE_BYTES
+        )
+        if source is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+        source.close()
         try:
-            rendered = await asyncio.to_thread(
-                render_public_report_pdf, job_dir, excluded_top_level_dirs, run_environment
+            rendered = await render_public_report_pdf_isolated(
+                job_dir, excluded_top_level_dirs, run_environment
             )
+        except PublicReportBusyError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Public report rendering is busy. Try again later.",
+                headers={"Retry-After": "5"},
+            ) from exc
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="The public report took too long to render.",
+            ) from exc
+        except PublicReportLimitError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="The public report exceeds the rendering limits.",
+            ) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Report not found"
+            ) from exc
         except Exception as exc:
             logger.warning("Public report rendering failed for %s: %s", job_dir.name, exc)
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Report not found"
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="The public report could not be rendered.",
             ) from exc
         filename = quote(f"{download_label}_final_report.pdf")
         return Response(
