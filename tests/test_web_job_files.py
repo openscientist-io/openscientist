@@ -27,6 +27,7 @@ from openscientist.admin.orphan_jobs import assign_orphaned_job
 from openscientist.database.models import Administrator, Job, JobShare, Session, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
+from openscientist.report.renderer import render_report_html
 from openscientist.webapp_components.artifact_routes import router
 from tests.helpers import enable_rls
 
@@ -232,6 +233,7 @@ async def test_agent_documents_allow_only_required_resources(
         "connect-src": "'none'",
         "img-src": "'self' data:",
         "style-src": "'unsafe-inline'",
+        "font-src": "data:",
         "base-uri": "'none'",
         "form-action": "'none'",
         "frame-src": "'none'",
@@ -241,11 +243,30 @@ async def test_agent_documents_allow_only_required_resources(
         expected.update(
             {
                 "sandbox": "allow-scripts allow-popups allow-popups-to-escape-sandbox",
-                "font-src": "data:",
                 "script-src": "'sha256-EsRwroiN/qKSiUMwcn6OHlw7bX69hIkv5S44ih9Moks='",
             }
         )
     assert directives == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["files/final_report.html", "report.html"])
+async def test_the_report_font_is_embedded_and_allowed(
+    shared_job: _SharedJob, request_as, path: str
+) -> None:
+    markdown_path = shared_job.job_dir / "final_report.md"
+    markdown_path.write_text('# <i class="fa-solid fa-flask"></i> Experiment\n')
+    html = render_report_html(markdown_path, shared_job.job_dir)
+    (shared_job.job_dir / "final_report.html").write_text(html)
+
+    response = await request_as(shared_job.owner, f"/web/jobs/{shared_job.job_id}/{path}")
+
+    assert response.status_code == 200
+    assert '<i class="fa-solid fa-flask"></i>' in response.text
+    font = response.text.split("url(data:font/woff2;base64,", 1)[1].split(")", 1)[0]
+    assert base64.b64decode(font, validate=True).startswith(b"wOF2")
+    directives = _csp_directives(response.headers["content-security-policy"])
+    assert directives["font-src"] == "data:"
 
 
 @pytest.mark.asyncio

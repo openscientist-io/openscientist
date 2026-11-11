@@ -33,7 +33,7 @@ SESSION_DEP = Depends(get_session)
 
 _CONTENT_CSP = (
     "default-src 'none'; connect-src 'none'; img-src 'self' data:; "
-    "style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; "
+    "style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'; "
     "frame-src 'none'; frame-ancestors 'self'"
 )
 _SANDBOX = f"{_CONTENT_CSP}; sandbox"
@@ -41,7 +41,7 @@ _SANDBOX = f"{_CONTENT_CSP}; sandbox"
 _REPORT_SANDBOX = (
     f"{_CONTENT_CSP}; "
     "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; "
-    "font-src data:; script-src 'sha256-EsRwroiN/qKSiUMwcn6OHlw7bX69hIkv5S44ih9Moks='"
+    "script-src 'sha256-EsRwroiN/qKSiUMwcn6OHlw7bX69hIkv5S44ih9Moks='"
 )
 
 _OPEN_LINKS_IN_NEW_TABS = """<script>
