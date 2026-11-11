@@ -39,10 +39,12 @@ async def skills_reader(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str
         )
         db.add_all([user, skill])
         await db.flush()
-        login = Session(user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         await db.commit()
-    yield {"token": str(login.id), "skill_id": str(skill.id), "category": category}
+    yield {"token": login_token, "skill_id": str(skill.id), "category": category}
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(Skill).where(Skill.id == skill.id))
         await db.execute(delete(User).where(User.id == user.id))

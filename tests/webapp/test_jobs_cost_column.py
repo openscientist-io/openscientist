@@ -60,14 +60,16 @@ async def cost_owner(test_engine: AsyncEngine) -> AsyncIterator[dict[str, Any]]:
             ]
         )
         db.add(JobShare(job_id=shared.id, shared_with_user_id=owner.id, permission_level="view"))
-        owner_login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        owner_login, owner_login_token = Session.issue(
+            user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(owner_login)
         await db.commit()
     yield {
         "costed": str(costed.id),
         "plain": str(plain.id),
         "shared": str(shared.id),
-        "owner_token": str(owner_login.id),
+        "owner_token": owner_login_token,
     }
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(Job).where(Job.id.in_([costed.id, plain.id, shared.id])))

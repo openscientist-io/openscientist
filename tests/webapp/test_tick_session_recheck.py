@@ -32,6 +32,7 @@ from openscientist.database.models import (
     Session,
     User,
 )
+from openscientist.database.models.session import hash_session_token
 from openscientist.job.types import JobStatus
 from openscientist.webapp_components.pages.admin import render_containers_panel
 from openscientist.webapp_components.pages.job_detail import job_detail_page
@@ -55,10 +56,12 @@ async def tick_user(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str]]:
         job = Job(owner_id=user.id, research_question="Tick question", status="running")
         db.add(job)
         await db.flush()
-        login = Session(user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         await db.commit()
-    yield {"user_id": str(user.id), "job_id": str(job.id), "token": str(login.id)}
+    yield {"user_id": str(user.id), "job_id": str(job.id), "token": login_token}
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(Session).where(Session.user_id == user.id))
         # Every job the user owns, including those a test inserts.
@@ -75,10 +78,12 @@ async def tick_admin(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str]]:
         db.add(admin)
         await db.flush()
         db.add(Administrator(user_id=admin.id))
-        login = Session(user_id=admin.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=admin.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         await db.commit()
-    yield {"token": str(login.id), "user_id": str(admin.id)}
+    yield {"token": login_token, "user_id": str(admin.id)}
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(Session).where(Session.user_id == admin.id))
         await db.execute(delete(Administrator).where(Administrator.user_id == admin.id))
@@ -106,10 +111,12 @@ async def feedback_viewer(
         db.add(job)
         await db.flush()
         db.add(JobShare(job_id=job.id, shared_with_user_id=viewer.id, permission_level="view"))
-        login = Session(user_id=viewer.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=viewer.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         await db.commit()
-    yield {"job_id": str(job.id), "viewer_id": str(viewer.id), "token": str(login.id)}
+    yield {"job_id": str(job.id), "viewer_id": str(viewer.id), "token": login_token}
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(Session).where(Session.user_id == viewer.id))
         await db.execute(delete(JobShare).where(JobShare.job_id == job.id))
@@ -182,7 +189,7 @@ def _row_ids(table: ui.table) -> set[str]:
 
 async def _drop_session_row(test_engine: AsyncEngine, token: str) -> None:
     async with AsyncSession(test_engine) as db:
-        await db.execute(delete(Session).where(Session.id == UUID(token)))
+        await db.execute(delete(Session).where(Session.token_hash == hash_session_token(token)))
         await db.commit()
 
 

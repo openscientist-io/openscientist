@@ -58,12 +58,14 @@ async def chat_job(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str]]:
                     created_at=base + timedelta(seconds=i),
                 )
             )
-        owner_login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        owner_login, owner_login_token = Session.issue(
+            user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(owner_login)
         await db.commit()
     yield {
         "job_id": str(job.id),
-        "owner_token": str(owner_login.id),
+        "owner_token": owner_login_token,
     }
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(JobChatMessage).where(JobChatMessage.job_id == job.id))
@@ -83,12 +85,14 @@ async def empty_chat_job(test_engine: AsyncEngine) -> AsyncIterator[dict[str, st
         job = Job(owner_id=owner.id, research_question="Chat question", status="completed")
         db.add(job)
         await db.flush()
-        owner_login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        owner_login, owner_login_token = Session.issue(
+            user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(owner_login)
         await db.commit()
     yield {
         "job_id": str(job.id),
-        "owner_token": str(owner_login.id),
+        "owner_token": owner_login_token,
     }
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(JobChatMessage).where(JobChatMessage.job_id == job.id))
