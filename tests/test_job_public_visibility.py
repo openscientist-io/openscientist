@@ -114,8 +114,12 @@ async def committed_public_job(
         db.add(owner)
         db.add(viewer)
         await db.flush()
-        owner_login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
-        viewer_login = Session(user_id=viewer.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        owner_login, owner_login_token = Session.issue(
+            user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
+        viewer_login, viewer_login_token = Session.issue(
+            user_id=viewer.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         job = Job(
             owner_id=owner.id,
             research_question="Public visibility job",
@@ -128,7 +132,7 @@ async def committed_public_job(
         db.add(job)
         await db.commit()
         await db.refresh(job)
-    yield owner, viewer, job, str(owner_login.id), str(viewer_login.id)
+    yield owner, viewer, job, owner_login_token, viewer_login_token
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(Job).where(Job.id == job.id))
         await db.execute(delete(User).where(User.id.in_([owner.id, viewer.id])))

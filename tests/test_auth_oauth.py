@@ -293,7 +293,7 @@ async def test_bootstrap_admin_grant_is_non_revoking(
 @pytest.mark.asyncio
 async def test_create_session(db_session: AsyncSession, test_user: User):
     """Test creating a session for a user."""
-    session = await create_session(db_session, str(test_user.id))
+    session, _ = await create_session(db_session, str(test_user.id))
 
     assert isinstance(session.id, UUID)
     assert session.user_id == test_user.id
@@ -310,8 +310,8 @@ async def test_session_token_uniqueness(
     db_session: AsyncSession, test_user: User, test_user2: User
 ):
     """Test that session IDs are unique."""
-    session1 = await create_session(db_session, str(test_user.id))
-    session2 = await create_session(db_session, str(test_user2.id))
+    session1, _ = await create_session(db_session, str(test_user.id))
+    session2, _ = await create_session(db_session, str(test_user2.id))
 
     assert session1.id != session2.id
 
@@ -320,7 +320,7 @@ async def test_session_token_uniqueness(
 async def test_expired_session(db_session: AsyncSession, test_user: User):
     """Test that expired sessions are not valid."""
     # Create session with past expiry
-    session = DBSession(
+    session, _ = DBSession.issue(
         user_id=test_user.id,
         expires_at=datetime.now(UTC) - timedelta(days=1),
     )
@@ -346,7 +346,7 @@ async def test_expired_session(db_session: AsyncSession, test_user: User):
 async def test_valid_session(db_session: AsyncSession, test_user: User):
     """Test that valid sessions return the correct user."""
     # Create valid session
-    session = DBSession(
+    session, _ = DBSession.issue(
         user_id=test_user.id,
         expires_at=datetime.now(UTC) + timedelta(days=7),
     )
@@ -372,8 +372,8 @@ async def test_valid_session(db_session: AsyncSession, test_user: User):
 @pytest.mark.asyncio
 async def test_multiple_sessions_same_user(db_session: AsyncSession, test_user: User):
     """Test that a user can have multiple active sessions."""
-    session1 = await create_session(db_session, str(test_user.id))
-    session2 = await create_session(db_session, str(test_user.id))
+    session1, _ = await create_session(db_session, str(test_user.id))
+    session2, _ = await create_session(db_session, str(test_user.id))
 
     # Both sessions should be valid and different
     assert session1.id != session2.id
@@ -383,7 +383,7 @@ async def test_multiple_sessions_same_user(db_session: AsyncSession, test_user: 
 @pytest.mark.asyncio
 async def test_delete_session(db_session: AsyncSession, test_user: User):
     """Test deleting a session (logout)."""
-    session = await create_session(db_session, str(test_user.id))
+    session, _ = await create_session(db_session, str(test_user.id))
     session_id = session.id
 
     # Delete session

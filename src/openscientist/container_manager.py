@@ -188,6 +188,7 @@ class ContainerManager:
             "timeout_seconds": timeout + 30,
             "memory_mib": memory_mib,
             "cpu": cpu_limit,
+            "pids_limit": cs.executor_pids_limit,
             "airgapped": admin.airgapped,
             "input": {
                 "code": code,

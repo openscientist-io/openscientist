@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from openscientist.auth.fastapi_routes import router
 from openscientist.auth.providers import GoogleProvider
 from openscientist.database.models import Administrator, OAuthAccount, Session, User
+from openscientist.database.models.session import hash_session_token
 from openscientist.settings import Settings, get_settings
 
 MOCK_LOGIN_EMAIL = re.compile(r"^dev-[0-9a-f]{8}@example\.com$")
@@ -169,7 +170,11 @@ async def test_mock_login_creates_user_session_and_cookie(db_session: AsyncSessi
     assert cookie is not None
 
     session = (
-        (await db_session.execute(select(Session).where(Session.id == UUID(cookie))))
+        (
+            await db_session.execute(
+                select(Session).where(Session.token_hash == hash_session_token(cookie))
+            )
+        )
         .scalars()
         .one()
     )
@@ -220,7 +225,11 @@ async def test_mock_admin_login_marks_user_as_administrator(
     cookie = response.cookies.get("session_token")
     assert cookie is not None
     session = (
-        (await db_session.execute(select(Session).where(Session.id == UUID(cookie))))
+        (
+            await db_session.execute(
+                select(Session).where(Session.token_hash == hash_session_token(cookie))
+            )
+        )
         .scalars()
         .one()
     )
@@ -257,7 +266,11 @@ async def test_mock_admin_login_reuses_identity_between_calls(
     assert first_cookie is not None and second_cookie is not None
     assert first_cookie != second_cookie
     session = (
-        (await db_session.execute(select(Session).where(Session.id == UUID(second_cookie))))
+        (
+            await db_session.execute(
+                select(Session).where(Session.token_hash == hash_session_token(second_cookie))
+            )
+        )
         .scalars()
         .one()
     )
@@ -301,7 +314,11 @@ async def test_mock_callback_uses_posted_form_data(db_session: AsyncSession) -> 
     cookie = response.cookies.get("session_token")
     assert cookie is not None
     session = (
-        (await db_session.execute(select(Session).where(Session.id == UUID(cookie))))
+        (
+            await db_session.execute(
+                select(Session).where(Session.token_hash == hash_session_token(cookie))
+            )
+        )
         .scalars()
         .one()
     )
@@ -323,7 +340,11 @@ async def test_mock_callback_defaults_for_missing_form_fields(
     cookie = response.cookies.get("session_token")
     assert cookie is not None
     session = (
-        (await db_session.execute(select(Session).where(Session.id == UUID(cookie))))
+        (
+            await db_session.execute(
+                select(Session).where(Session.token_hash == hash_session_token(cookie))
+            )
+        )
         .scalars()
         .one()
     )
@@ -483,7 +504,11 @@ async def test_oauth_callback_creates_user_link_and_session(
     cookie = response.cookies.get("session_token")
     assert cookie is not None
     session = (
-        (await db_session.execute(select(Session).where(Session.id == UUID(cookie))))
+        (
+            await db_session.execute(
+                select(Session).where(Session.token_hash == hash_session_token(cookie))
+            )
+        )
         .scalars()
         .one()
     )
@@ -536,7 +561,11 @@ async def test_oauth_callback_second_login_reuses_user(db_session: AsyncSession)
     assert first_cookie is not None and second_cookie is not None
     assert first_cookie != second_cookie
     session = (
-        (await db_session.execute(select(Session).where(Session.id == UUID(second_cookie))))
+        (
+            await db_session.execute(
+                select(Session).where(Session.token_hash == hash_session_token(second_cookie))
+            )
+        )
         .scalars()
         .one()
     )
@@ -775,7 +804,11 @@ async def test_oauth_callback_linked_identity_signs_in_despite_unverified_email(
     cookie = response.cookies.get("session_token")
     assert cookie is not None
     session = (
-        (await db_session.execute(select(Session).where(Session.id == UUID(cookie))))
+        (
+            await db_session.execute(
+                select(Session).where(Session.token_hash == hash_session_token(cookie))
+            )
+        )
         .scalars()
         .one()
     )

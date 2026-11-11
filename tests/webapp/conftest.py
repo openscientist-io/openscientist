@@ -54,7 +54,7 @@ async def webapp_user(db_session: AsyncSession) -> User:
 @pytest_asyncio.fixture
 async def webapp_session(db_session: AsyncSession, webapp_user: User) -> Session:
     """Create a valid session for the webapp test user."""
-    session = Session(
+    session, session_token = Session.issue(
         user_id=webapp_user.id,
         expires_at=datetime.now(UTC) + timedelta(hours=24),
     )

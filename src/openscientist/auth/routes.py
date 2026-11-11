@@ -161,12 +161,12 @@ async def create_or_update_user(
     return user
 
 
-async def create_session(db: AsyncSession, user_id: str) -> Session:
-    """Create a new session for a user."""
+async def create_session(db: AsyncSession, user_id: str) -> tuple[Session, str]:
+    """Create a session and return its row and plaintext cookie."""
     admin = await current_admin_settings()
     expires_at = datetime.now(UTC) + timedelta(days=admin.session_duration_days)
 
-    session = Session(
+    session, token = Session.issue(
         user_id=_UUID(user_id) if isinstance(user_id, str) else user_id,
         expires_at=expires_at,
     )
@@ -174,4 +174,4 @@ async def create_session(db: AsyncSession, user_id: str) -> Session:
     await db.commit()
 
     logger.info("Created session for user %s, expires %s", user_id, expires_at)
-    return session
+    return session, token

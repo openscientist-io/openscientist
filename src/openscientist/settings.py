@@ -135,7 +135,7 @@ class ProviderSettings(BaseSettings):
     azure_openai_api_version: str | None = Field(
         default=None,
         alias="AZURE_OPENAI_API_VERSION",
-        description="Azure OpenAI API version for requests, defaulting to 2025-04-01-preview.",
+        description="Azure OpenAI api-version query parameter, sent on every request when set.",
     )
     # Azure streams cut off mid-turn (openai/codex#9936), so codex reconnects here.
     azure_openai_stream_max_retries: int = Field(
@@ -745,6 +745,19 @@ class ContainerSettings(BaseSettings):
         alias="OPENSCIENTIST_EXECUTOR_TIMEOUT",
         description="Executor timeout in seconds.",
     )
+    executor_pids_limit: int = Field(
+        default=4096,
+        ge=1,
+        alias="OPENSCIENTIST_EXECUTOR_PIDS_LIMIT",
+        description="Maximum processes and threads in an executor container.",
+    )
+    executor_max_concurrent_per_job: int = Field(
+        default=2,
+        ge=1,
+        le=16,
+        alias="OPENSCIENTIST_EXECUTOR_MAX_CONCURRENT_PER_JOB",
+        description="Maximum simultaneous executor calls from one job.",
+    )
 
     agent_memory: str = Field(
         default="8g",
@@ -755,6 +768,12 @@ class ContainerSettings(BaseSettings):
         default=2.0,
         alias="OPENSCIENTIST_AGENT_CPU",
         description="CPU limit for agent containers.",
+    )
+    agent_pids_limit: int = Field(
+        default=4096,
+        ge=1,
+        alias="OPENSCIENTIST_AGENT_PIDS_LIMIT",
+        description="Maximum processes and threads in an agent container.",
     )
     agent_network: str | None = Field(
         default=None,
@@ -996,6 +1015,12 @@ class Settings(BaseSettings):
         default=1,
         alias="OPENSCIENTIST_MAX_CONCURRENT_JOBS",
         description="Max jobs running at the same time.",
+    )
+    max_concurrent_chats: int = Field(
+        default=4,
+        ge=1,
+        alias="OPENSCIENTIST_MAX_CONCURRENT_CHATS",
+        description="Max chat replies running at the same time.",
     )
     scheduler_window_hours: float = Field(
         default=24,
