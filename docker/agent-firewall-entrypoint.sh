@@ -10,13 +10,12 @@ RUN_AS=${OPENSCIENTIST_FIREWALL_RUN_AS:-agent}
 # rejected as a rule spanning several lines.
 ALLOW=$(printf '%s' "${OPENSCIENTIST_FIREWALL_ALLOW:-}" | tr ',' '\n')
 
-# Resolve hosts to IPv4 now (network still open) and pin the IPs.
+# Read IPv4 addresses, including the launcher's pinned host entries.
 resolve_ipv4() {
     getent ahostsv4 "$1" 2>/dev/null | awk '{ print $1 }' | sort -u
 }
 
 accept_rules=""
-host_records=""
 for entry in $ALLOW; do
     host="${entry%:*}"
     port="${entry##*:}"
@@ -29,14 +28,8 @@ for entry in $ALLOW; do
     for ip in $(resolve_ipv4 "$host"); do
         accept_rules="${accept_rules}        ip daddr ${ip} tcp dport ${port} accept
 "
-        host_records="${host_records}${ip} ${host}
-"
     done
 done
-
-if [ "$MODE" != "restrict" ] && [ -n "$host_records" ]; then
-    printf '%s' "$host_records" | tee -a /etc/hosts > /dev/null
-fi
 
 # /proc/net/route stores the gateway little-endian, so the octets read reversed.
 gateway_rule=""
