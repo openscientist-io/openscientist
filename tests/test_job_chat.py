@@ -27,10 +27,10 @@ from openscientist.exceptions import BudgetExceededError
 from openscientist.job_chat import (
     _build_chat_request,
     _chat_turn_files,
+    _load_chat_context,
     _send_message_via_container,
     get_chat_history,
     has_older_chat_message,
-    load_job_context,
     run_chat_turn_async,
     send_chat_message,
 )
@@ -43,12 +43,7 @@ from tests.helpers import enable_rls
 def _build_agent_recorder(
     captured: dict[str, AgentConfig], result: IterationResult
 ) -> Callable[[AgentConfig, Provider], AbstractAgent[Provider]]:
-    """A `factory.build_agent` replacement for chat tests.
-
-    Builds the real agent (so the backend's chat prep -- chat_system_prompt /
-    write_chat_context -- runs for real) but mocks `run_iteration`, and records
-    the `AgentConfig` the executor was built with.
-    """
+    """Build the real chat agent, record its configuration, and mock `run_iteration`."""
     from openscientist.agent import factory
 
     real_build_agent = factory.build_agent
@@ -428,7 +423,7 @@ async def test_load_job_context_empty_dir():
     """Test loading context when no knowledge state exists in the DB."""
     job_id = "not-a-valid-uuid"
 
-    context = await load_job_context(job_id, AsyncMock())
+    context = (await _load_chat_context(job_id, AsyncMock()))[0]
 
     # Should return empty or minimal context
     assert isinstance(context, str)
@@ -448,7 +443,7 @@ async def test_load_job_context_with_knowledge_state_config():
         "openscientist.job_chat.KnowledgeState.load_from_database",
         AsyncMock(return_value=ks),
     ):
-        context = await load_job_context(job_id, AsyncMock())
+        context = (await _load_chat_context(job_id, AsyncMock()))[0]
 
     assert "What is the crystal structure?" in context
     assert "Research Question" in context
@@ -500,7 +495,7 @@ async def test_load_job_context_with_knowledge_state():
         "openscientist.job_chat.KnowledgeState.load_from_database",
         AsyncMock(return_value=ks),
     ):
-        context = await load_job_context(job_id, AsyncMock())
+        context = (await _load_chat_context(job_id, AsyncMock()))[0]
 
     # Check findings are included
     assert "The protein shows high binding affinity" in context
@@ -544,7 +539,7 @@ async def test_load_job_context_supports_modern_knowledge_state_keys():
         "openscientist.job_chat.KnowledgeState.load_from_database",
         AsyncMock(return_value=ks),
     ):
-        context = await load_job_context(job_id, AsyncMock())
+        context = (await _load_chat_context(job_id, AsyncMock()))[0]
     assert "Modern finding title" in context
     assert "Modern hypothesis statement" in context
 

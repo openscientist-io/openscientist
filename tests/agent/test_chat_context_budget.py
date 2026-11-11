@@ -16,11 +16,11 @@ from openscientist.database.models import Job, Skill
 from openscientist.job_chat import (
     _build_chat_request,
     _chat_turn_files,
-    load_job_context,
+    _load_chat_context,
     run_chat_turn_async,
 )
 from openscientist.knowledge_state import KnowledgeState
-from openscientist.skill_ingestion import GitHubSkillIngester, SkillParser
+from openscientist.skill_ingestion import SkillParser
 from tests.agent.fake_anthropic_api import ReadFile, Say, answered_tool, serving
 from tests.helpers import StubClaudeProvider
 
@@ -52,30 +52,13 @@ async def large_chat_job(tmp_path: Path, db_session: AsyncSession, test_job: Job
     agent._write_job_claude_md(use_hypotheses=True)
     parser = SkillParser()
     sources = [
-        (str(path), path.read_text())
-        for path in (Path(__file__).parents[2] / "skills").rglob("SKILL.md")
-    ]
-    archive = os.environ.get("OPENSCIENTIST_TEST_SKILL_ARCHIVE")
-    if archive:
-        ingester = GitHubSkillIngester()
-        try:
-            sources.extend(
-                (entry["path"], entry["content_bytes"].decode())
-                for entry in ingester._extract_skill_files_from_archive(
-                    Path(archive).read_bytes(), "skills"
-                )
-            )
-        finally:
-            await ingester.close()
-    else:
-        sources.extend(
-            (
-                f"scientific-skills/method-{i}/SKILL.md",
-                f"---\nname: method-{i}\ndescription: Scientific analysis of cohort data\n---\n"
-                + evidence * 200,
-            )
-            for i in range(177)
+        (
+            f"scientific-skills/method-{i}/SKILL.md",
+            f"---\nname: method-{i}\ndescription: Scientific analysis of cohort data\n---\n"
+            + evidence * 200,
         )
+        for i in range(177)
+    ]
     for path, content in sources:
         parsed = parser.parse_content(content, path)
         skill = Skill(
@@ -86,7 +69,6 @@ async def large_chat_job(tmp_path: Path, db_session: AsyncSession, test_job: Job
             content=parsed.content,
         )
         agent._write_skill(job / ".claude" / "skills", skill)
-    print(f"Materialised {len(sources)} default-source skills")
     return job
 
 
@@ -139,12 +121,8 @@ async def test_large_job_chat_request_budget(
             status = await run_chat_turn_async(large_chat_job, "budget", str(test_job.id))
     assert status == {"status": "completed"}, response_path.read_text()
     body = api.requests[0]
-    (large_chat_job / "recorded_request.json").write_text(json.dumps(body, indent=2))
-    print(f"Recorded request {large_chat_job / 'recorded_request.json'}")
-    print(json.dumps({key: _bytes(value) for key, value in body.items()}, sort_keys=True))
     tools = body.get("tools", [])
     assert isinstance(tools, list)
-    print(json.dumps({tool["name"]: _bytes(tool) for tool in tools}, sort_keys=True))
     assert _bytes(body) < 100_000
     assert "1,0.25" not in json.dumps(body)
 
@@ -165,9 +143,6 @@ async def test_large_job_prompt_budget(
     request = await _build_chat_request(db_session, test_job.id, "What is the main result?")
     prompt = request["prompt"] or ""
     instructions = request["system_prompt"] or ""
-    print(
-        f"{agent_type.__name__} prompt={len(prompt.encode())} instructions={len(instructions.encode())}"
-    )
     assert len(prompt.encode()) < 20_000
     assert len(instructions.encode()) < 10_000
 
@@ -229,19 +204,23 @@ async def test_evidence_text_is_not_split_into_character_bullets(
     state = KnowledgeState(str(test_job.id), "Evidence?", 1)
     state.add_finding("Effect", "The confidence interval excludes zero.")
     await state.save_to_database(str(test_job.id), db_session)
-    context = await load_job_context(str(test_job.id), db_session)
+    context = (await _load_chat_context(str(test_job.id), db_session))[0]
     assert "The confidence interval excludes zero." in context
-    assert "- T\\n- h\\n" not in context
+    assert "- T\n- h\n" not in context
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("prefix", ["", "x"])
 async def test_non_ascii_context_is_bounded_in_bytes(
     db_session: AsyncSession,
     test_job: Job,
+    prefix: str,
 ) -> None:
     state = KnowledgeState(str(test_job.id), "Evidence?", 20)
     for _ in range(20):
-        state.add_finding("\\U0001f9ec" * 1000, "\\U0001f9ec" * 1000)
+        state.add_finding(prefix + "\U0001f9ec" * 1000, prefix + "\U0001f9ec" * 1000)
     await state.save_to_database(str(test_job.id), db_session)
-    context = await load_job_context(str(test_job.id), db_session)
+    context = (await _load_chat_context(str(test_job.id), db_session))[0]
+    assert "\U0001f9ec" in context
+    assert "\ufffd" not in context
     assert len(context.encode()) <= 12000

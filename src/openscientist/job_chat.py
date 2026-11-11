@@ -182,12 +182,6 @@ async def _load_chat_context(job_id: str, session: AsyncSession) -> tuple[str, s
     return _context_excerpt("\n".join(context_parts), 12000), json.dumps(ks, indent=2)
 
 
-async def load_job_context(job_id: str, session: AsyncSession) -> str:
-    """Load a job preview of at most 12000 UTF-8 bytes."""
-    context, _snapshot = await _load_chat_context(job_id, session)
-    return context
-
-
 def _older_than(message: JobChatMessage) -> ColumnElement[bool]:
     """The condition for a chat message strictly older than ``message``, the
     id breaking the ties of rows committed in one transaction."""
