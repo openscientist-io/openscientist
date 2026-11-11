@@ -85,6 +85,10 @@ The main areas for improvement are **operational security gaps** rather than arc
 - **Credentials not logged.** A search for credential patterns in logging output found no evidence of API keys, tokens, or passwords being written to logs.
 - **Per-process secret in error mode.** When the web starts the configuration-error page, it signs browser storage with a random per-process secret.
 
+### Dependencies
+
+Security floors for direct dependencies and transitive `uv` constraints are declared in `pyproject.toml`. Container builds install the versions in `uv.lock`. `NiceGUI` stays on the 3.x line, `Authlib` uses `httpx2` for OAuth requests, and `WeasyPrint` refuses EPS images.
+
 ---
 
 ## What's Missing or Could Be Improved

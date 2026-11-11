@@ -13,7 +13,7 @@ page registered, the way NiceGUI's upload route and socket handler do.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -35,7 +35,7 @@ from openscientist.database.models import Session, User
 from openscientist.webapp_components.pages import new_job
 from openscientist.webapp_components.utils.session import _uploaded_files
 from tests.db_outage import Forwarder
-from tests.webapp.conftest import OpenPage
+from tests.webapp.conftest import OpenPage, in_event_context
 
 
 @pytest_asyncio.fixture
@@ -93,17 +93,23 @@ async def _fire_upload(
     coroutine and awaits it here."""
     scheduled: list[Awaitable[None]] = []
 
-    def _capture(awaitable: Awaitable[None], *, name: str = "") -> None:
-        scheduled.append(awaitable)
+    def _capture(
+        awaitable: Awaitable[None],
+        *,
+        name: str = "",
+        context: AbstractContextManager[object] | None = None,
+    ) -> None:
+        scheduled.append(in_event_context(awaitable, context))
 
-    monkeypatch.setattr(background_tasks, "create_or_defer", _capture)
     storage.request_contextvar.set(client.request)
-    with client:
-        with upload.parent_slot or nullcontext():
-            handle_event(
-                upload._upload_handlers[0],
-                UploadEventArguments(sender=upload, client=client, file=file),
-            )
+    with monkeypatch.context() as capture:
+        capture.setattr(background_tasks, "create_or_defer", _capture)
+        with client:
+            with upload.parent_slot or nullcontext():
+                handle_event(
+                    upload._upload_handlers[0],
+                    UploadEventArguments(sender=upload, client=client, file=file),
+                )
     assert len(scheduled) == 1
     await scheduled[0]
 
@@ -127,17 +133,23 @@ async def _fire_click(button: ui.button, client: Client, monkeypatch: pytest.Mon
     coroutine and awaits it here."""
     scheduled: list[Awaitable[None]] = []
 
-    def _capture(awaitable: Awaitable[None], *, name: str = "") -> None:
-        scheduled.append(awaitable)
+    def _capture(
+        awaitable: Awaitable[None],
+        *,
+        name: str = "",
+        context: AbstractContextManager[object] | None = None,
+    ) -> None:
+        scheduled.append(in_event_context(awaitable, context))
 
-    monkeypatch.setattr(background_tasks, "create_or_defer", _capture)
     listener = next(iter(button._event_listeners.values()))
     assert listener.handler is not None
     handler = listener.handler
     storage.request_contextvar.set(listener.request)
-    with client:
-        with button.parent_slot or nullcontext():
-            handler(None)
+    with monkeypatch.context() as capture:
+        capture.setattr(background_tasks, "create_or_defer", _capture)
+        with client:
+            with button.parent_slot or nullcontext():
+                handler(None)
     assert len(scheduled) == 1
     await scheduled[0]
 
