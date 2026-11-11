@@ -47,6 +47,19 @@ The main areas for improvement are **operational security gaps** rather than arc
 - **Web server runs as a non-root user.** The web image runs as its own user (UID 1002) in the jobs group (GID 1001), so a compromised web process has no root inside its container.
 - **Only the launcher holds the Docker socket.** The web and migrate services have no socket mount and no docker group. Every container operation the web makes — agent launches, chat turns, executor runs, stops, cleanup and the dashboard — goes through the launcher service over a unix socket that the launcher guards with a peer-credential check. The launcher builds every container from one of two server-side templates, and answers a uniform 404 for any container it did not create, so a compromised web cannot reach the Docker API, alter a container's mounts, capabilities, image or network, or touch a foreign container.
 
+### Chat Admission
+
+Each web process admits one chat turn per job and at most `OPENSCIENTIST_MAX_CONCURRENT_CHATS` turns across jobs. The global limit defaults to four. Each chat container uses the `OPENSCIENTIST_AGENT_MEMORY` limit, so operators must size concurrency to their host's available memory. Admission covers request preparation and container execution. A disconnected caller retains its slot until the container worker finishes.
+
+| Event | No admitted turn | Preparing request | Running container | Caller cancelled during execution |
+|---|---|---|---|---|
+| Send for this job | Admit if global capacity permits | Refuse duplicate | Refuse duplicate | Refuse duplicate |
+| Send for another job | Admit if global capacity permits | Admit if global capacity permits | Admit if global capacity permits | Admit if global capacity permits |
+| Request prepared | Not applicable | Start container worker | Not applicable | Not applicable |
+| Preparation fails or caller cancels preparation | Not applicable | Remove request files and release slot | Not applicable | Not applicable |
+| Caller cancels execution | Not applicable | Not applicable | Keep worker and slot | Keep worker and slot |
+| Launch fails, container errors, times out, or returns a reply | Not applicable | Not applicable | Remove turn files and release slot | Remove turn files and release slot |
+
 ### Input Validation
 
 - **Pydantic models for API input.** All API request bodies are validated through Pydantic V2 schemas with type checking and length constraints (e.g., job titles: 1--255 characters, max iterations: 1--20).

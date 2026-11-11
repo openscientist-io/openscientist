@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from openscientist import web_app
 from openscientist.database.models import Job, JobChatMessage, Session, User
 from openscientist.job.types import JobStatus
-from openscientist.job_chat import ChatResponseTooLargeError
+from openscientist.job_chat import ChatAdmissionError, ChatResponseTooLargeError
 from openscientist.job_chat import get_chat_history as real_get_chat_history
 from openscientist.webapp_components.pages.job_detail import chat as chat_tab
 from openscientist.webapp_components.pages.job_detail import job_detail_page
@@ -396,19 +396,28 @@ async def test_a_send_from_an_empty_chat_replaces_the_placeholder(
 
 
 @pytest.mark.asyncio
-async def test_a_too_large_chat_response_is_reported_to_the_user(
+@pytest.mark.parametrize(
+    "error",
+    [
+        ChatResponseTooLargeError("The chat response is too large to show."),
+        ChatAdmissionError("A reply is already running for this job."),
+        ChatAdmissionError("All chat slots are busy. Please try again later."),
+    ],
+)
+async def test_a_chat_refusal_is_reported_to_the_user(
     database: Forwarder,
     empty_chat_job: dict[str, str],
     served_page: ServedPage,
     monkeypatch: pytest.MonkeyPatch,
+    error: RuntimeError,
 ) -> None:
     """The user sees why the reply is missing, and the chat stays usable."""
 
-    async def too_large(*_args: object, **_kwargs: object) -> str:
-        raise ChatResponseTooLargeError("The chat response is too large to show.")
+    async def refused(*_args: object, **_kwargs: object) -> str:
+        raise error
 
     notified: list[str] = []
-    monkeypatch.setattr(chat_tab, "send_chat_message", too_large)
+    monkeypatch.setattr(chat_tab, "send_chat_message", refused)
     monkeypatch.setattr(chat_tab.ui, "notify", lambda message, **_kw: notified.append(message))
     client, _ = await _served(database, empty_chat_job, served_page)
 
@@ -422,5 +431,5 @@ async def test_a_too_large_chat_response_is_reported_to_the_user(
     _click(client, send_btn)
     await _until(lambda: bool(notified), "the refusal to be shown")
 
-    assert notified == ["The chat response is too large to show."]
+    assert notified == [str(error)]
     await _until(lambda: textarea.enabled, "the input to be usable again")
