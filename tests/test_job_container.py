@@ -335,7 +335,7 @@ class TestContainerDatabaseLogin:
             finally:
                 os.close(reader)
 
-        assert not blocked, "cleanup blocked on the planted log FIFO"
+        assert not blocked, "cleanup blocked on the log FIFO"
         assert stat.S_ISREG(log_path.lstat().st_mode)
         assert log_path.read_text() == "container log"
         client.remove.assert_called_once_with("d" * 64)
