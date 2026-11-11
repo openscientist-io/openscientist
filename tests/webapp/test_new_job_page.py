@@ -5,22 +5,29 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
 from nicegui import ui
+from nicegui.client import Client
+from nicegui.elements.upload_files import SmallFileUpload
+from nicegui.events import UploadEventArguments
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.database.models import Job, Session, User
 from openscientist.job.types import JobStatus
 from openscientist.webapp_components.pages.new_job import _build_upload_session_id, _submit_job
-from openscientist.webapp_components.utils.session import clear_uploaded_files, get_uploaded_files
+from openscientist.webapp_components.utils.session import (
+    clear_uploaded_files,
+    get_uploaded_files,
+    upload_storage_root,
+)
 from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 from tests.db_outage import Forwarder
-from tests.webapp.conftest import OpenPage, fire_click_twice
+from tests.webapp.conftest import OpenBrowser, OpenPage, fire_click_twice
 
 
 @pytest_asyncio.fixture
@@ -40,13 +47,13 @@ async def signed_in_job_user(test_engine: AsyncEngine) -> AsyncIterator[tuple[Us
         await db.commit()
 
 
-def _upload_event(name: str, size_bytes: int) -> SimpleNamespace:
-    return SimpleNamespace(
-        file=SimpleNamespace(
-            name=name,
-            save=AsyncMock(),
-            size=lambda: size_bytes,
-        )
+def _upload_event(name: str, size_bytes: int, client: Client) -> UploadEventArguments:
+    with client:
+        upload = ui.upload()
+    return UploadEventArguments(
+        sender=upload,
+        client=client,
+        file=SmallFileUpload(name, "text/csv", b"x" * size_bytes),
     )
 
 
@@ -179,6 +186,7 @@ async def test_a_double_click_submits_exactly_one_job(
 
 async def test_an_upload_over_the_rows_size_limit_is_rejected(
     test_engine: AsyncEngine,
+    browser_client: OpenBrowser,
 ) -> None:
     """An upload over the row's max_file_size_mb is not recorded, is not saved,
     and the user is told the limit."""
@@ -186,30 +194,31 @@ async def test_an_upload_over_the_rows_size_limit_is_rejected(
 
     await set_admin_settings_row(test_engine, max_file_size_mb=1)
     session_id = "limit-reject:client-1"
-    event = _upload_event("big.csv", 2 * 1024 * 1024)
+    event = _upload_event("big.csv", 2 * 1024 * 1024, await browser_client(None))
     with patch.object(new_job, "ui") as mock_ui:
         await new_job._handle_upload(event, session_id)
     assert get_uploaded_files(session_id) == []
-    event.file.save.assert_not_awaited()
+    assert not upload_storage_root().exists()
     assert mock_ui.notify.call_args.args[0] == "big.csv exceeds the maximum file size of 1 MB"
     assert mock_ui.notify.call_args.kwargs["type"] == "negative"
 
 
 async def test_an_upload_under_the_rows_size_limit_is_recorded(
     test_engine: AsyncEngine,
+    browser_client: OpenBrowser,
 ) -> None:
     """An upload under the row's limit is saved and recorded for the job."""
     from openscientist.webapp_components.pages import new_job
 
     await set_admin_settings_row(test_engine, max_file_size_mb=1)
     session_id = "limit-accept:client-1"
-    event = _upload_event("small.csv", 1024)
+    event = _upload_event("small.csv", 1024, await browser_client(None))
     with patch.object(new_job, "ui") as mock_ui:
         await new_job._handle_upload(event, session_id)
     try:
         files = get_uploaded_files(session_id)
         assert [file["name"] for file in files] == ["small.csv"]
-        event.file.save.assert_awaited_once()
+        assert files[0]["path"].read_bytes() == b"x" * 1024
         assert mock_ui.notify.call_args.kwargs["type"] == "positive"
     finally:
         clear_uploaded_files(session_id)
@@ -253,10 +262,16 @@ async def test_the_page_shows_the_rows_file_size_limit(
             patch.object(web_app, "get_job_manager", MagicMock()),
         ):
             await new_job.new_job_page()
+            mock_ui.upload.call_args.kwargs["on_rejected"]()
 
         assert mock_ui.upload.call_args.kwargs["label"] == (
             "Upload Data Files (Optional - Max 250 MB per file)"
         )
+        assert mock_ui.upload.call_args.kwargs["max_file_size"] == 250 * 1024 * 1024
+        assert "max_total_size" not in mock_ui.upload.call_args.kwargs
+        assert mock_ui.upload.call_args.kwargs["max_files"] == 100
+        assert mock_ui.notify.call_args.kwargs["type"] == "negative"
+        assert "per file" in mock_ui.notify.call_args.args[0]
         mock_ui.textarea.assert_called_once()
         assert mock_ui.textarea.call_args.kwargs["label"] == "Research Question"
     finally:

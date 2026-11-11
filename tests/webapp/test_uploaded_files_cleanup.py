@@ -12,6 +12,8 @@ page registered, the way NiceGUI's upload route and socket handler do.
 
 from __future__ import annotations
 
+import asyncio
+import os
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
@@ -34,6 +36,7 @@ from openscientist import web_app
 from openscientist.database.models import Session, User
 from openscientist.webapp_components.pages import new_job
 from openscientist.webapp_components.utils.session import _uploaded_files
+from tests.admin_row import set_admin_settings_row
 from tests.db_outage import Forwarder
 from tests.webapp.conftest import OpenPage
 
@@ -227,3 +230,144 @@ async def test_a_submit_still_sees_the_uploaded_files_and_leaves_no_entry(
     assert not temp_path.exists()
     opened = [data for _target, kind, data in client.outbox.messages if kind == "open"]
     assert opened == [{"path": f"/job/{call['job_id']}", "new_tab": False}]
+
+
+@pytest.mark.parametrize("concurrent", [False, True])
+async def test_page_session_refuses_files_past_its_cap_without_leaving_temp_files(
+    test_engine: AsyncEngine,
+    database: Forwarder,
+    new_page_user: tuple[User, str],
+    signed_in_page: OpenPage,
+    monkeypatch: pytest.MonkeyPatch,
+    concurrent: bool,
+) -> None:
+    await set_admin_settings_row(test_engine, max_file_size_mb=1)
+    monkeypatch.setattr(new_job, "MAX_UPLOAD_FILES_PER_REQUEST", 2)
+    user, token = new_page_user
+    client = await _open_new_page(signed_in_page, token, object(), monkeypatch)
+    upload = next(e for e in client.layout.descendants() if isinstance(e, ui.upload))
+    messages: list[str] = []
+    monkeypatch.setattr(new_job.ui, "notify", lambda message, **kwargs: messages.append(message))
+    files = [await _file_upload(f"{index}.csv", b"a,b\n1,2\n") for index in range(3)]
+    session_id = new_job._build_upload_session_id(str(user.id), client)
+    try:
+        if concurrent:
+            await asyncio.gather(
+                *(_fire_upload(upload, client, file, monkeypatch) for file in files)
+            )
+        else:
+            for file in files:
+                await _fire_upload(upload, client, file, monkeypatch)
+        recorded = _uploaded_files[session_id]
+        assert len(recorded) == 2
+        assert any("at most 2 files" in message for message in messages)
+        root = Path(os.environ["NICEGUI_STORAGE_PATH"]) / "uploads"
+        assert {path for path in root.rglob("*") if path.is_file()} == {
+            entry["path"] for entry in recorded
+        }
+        assert all(root in entry["path"].parents for entry in recorded)
+    finally:
+        _disconnect(client)
+    assert list(root.iterdir()) == []
+
+
+async def test_page_session_total_tracks_the_current_admin_limit(
+    test_engine: AsyncEngine,
+    database: Forwarder,
+    new_page_user: tuple[User, str],
+    signed_in_page: OpenPage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await set_admin_settings_row(test_engine, max_file_size_mb=2)
+    monkeypatch.setattr(new_job, "MAX_UPLOAD_FILES_PER_REQUEST", 2)
+    user, token = new_page_user
+    client = await _open_new_page(signed_in_page, token, object(), monkeypatch)
+    upload = next(e for e in client.layout.descendants() if isinstance(e, ui.upload))
+    messages: list[str] = []
+    monkeypatch.setattr(new_job.ui, "notify", lambda message, **kwargs: messages.append(message))
+    session_id = new_job._build_upload_session_id(str(user.id), client)
+    try:
+        await _fire_upload(
+            upload, client, await _file_upload("first.csv", b"x" * (2 * 1024 * 1024)), monkeypatch
+        )
+        first_path = _uploaded_files[session_id][0]["path"]
+        await set_admin_settings_row(test_engine, max_file_size_mb=1)
+        await _fire_upload(upload, client, await _file_upload("second.csv", b"x"), monkeypatch)
+        assert len(_uploaded_files[session_id]) == 1
+        assert any("total limit of 2 MB" in message for message in messages)
+        root = Path(os.environ["NICEGUI_STORAGE_PATH"]) / "uploads"
+        assert {path for path in root.rglob("*") if path.is_file()} == {first_path}
+    finally:
+        _disconnect(client)
+    assert list(root.iterdir()) == []
+
+
+async def test_disconnect_during_upload_removes_the_pending_file(
+    database: Forwarder,
+    new_page_user: tuple[User, str],
+    signed_in_page: OpenPage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user, token = new_page_user
+    client = await _open_new_page(signed_in_page, token, object(), monkeypatch)
+    upload = next(e for e in client.layout.descendants() if isinstance(e, ui.upload))
+    file = await _file_upload("pending.csv", b"a,b\n1,2\n")
+    started = asyncio.Event()
+    resume = asyncio.Event()
+
+    async def paused_save(path: str | Path) -> None:
+        Path(path).write_bytes(b"a,b\n")
+        started.set()
+        await asyncio.wait_for(resume.wait(), timeout=5)
+        Path(path).write_bytes(b"a,b\n1,2\n")
+
+    monkeypatch.setattr(file, "save", paused_save)
+    pending = asyncio.create_task(
+        _fire_upload(upload, client, file, monkeypatch), name="pending-upload"
+    )
+    try:
+        await asyncio.wait_for(started.wait(), timeout=5)
+        _disconnect(client)
+    finally:
+        resume.set()
+        await asyncio.wait_for(pending, timeout=5)
+    assert not any(key.startswith(f"{user.id}:") for key in _uploaded_files)
+    root = Path(os.environ["NICEGUI_STORAGE_PATH"]) / "uploads"
+    assert list(root.iterdir()) == []
+
+
+async def test_failed_upload_removes_its_partial_file(
+    database: Forwarder,
+    new_page_user: tuple[User, str],
+    signed_in_page: OpenPage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user, token = new_page_user
+    client = await _open_new_page(signed_in_page, token, object(), monkeypatch)
+    upload = next(e for e in client.layout.descendants() if isinstance(e, ui.upload))
+    file = await _file_upload("failed.csv", b"a,b\n1,2\n")
+
+    async def failed_save(path: str | Path) -> None:
+        Path(path).write_bytes(b"a,b\n")
+        raise OSError("Upload interrupted")
+
+    monkeypatch.setattr(file, "save", failed_save)
+    try:
+        await _fire_upload(upload, client, file, monkeypatch)
+        root = Path(os.environ["NICEGUI_STORAGE_PATH"]) / "uploads"
+        assert list(root.iterdir()) == []
+        session_id = new_job._build_upload_session_id(str(user.id), client)
+        assert _uploaded_files[session_id] == []
+    finally:
+        _disconnect(client)
+
+
+def test_upload_storage_cleanup_removes_crash_leftovers() -> None:
+    from openscientist.webapp_components.utils.session import clear_upload_storage
+
+    root = Path(os.environ["NICEGUI_STORAGE_PATH"]) / "uploads"
+    stale = root / "file-abandoned" / "data.csv"
+    stale.parent.mkdir(parents=True)
+    stale.write_bytes(b"a,b\n1,2\n")
+    clear_upload_storage()
+    assert not root.exists()

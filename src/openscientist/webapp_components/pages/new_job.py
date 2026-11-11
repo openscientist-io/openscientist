@@ -1,17 +1,18 @@
 """New job submission page."""
 
 import logging
-import tempfile
 import uuid
 from pathlib import Path
 from typing import Any
 
-from nicegui import ui
+from nicegui import app, ui
+from nicegui.events import UploadEventArguments
 
 from openscientist.admin_settings import current_admin_settings
 from openscientist.auth import can_current_user_start_jobs, get_current_user_id, require_auth
 from openscientist.exceptions import BudgetExceededError
 from openscientist.providers import check_provider_config
+from openscientist.upload_limits import MAX_UPLOAD_FILES_PER_REQUEST
 from openscientist.webapp_components.components.banners import (
     render_config_error_banner,
     render_pending_approval_notice,
@@ -19,12 +20,16 @@ from openscientist.webapp_components.components.banners import (
 from openscientist.webapp_components.components.navigation import render_navigator
 from openscientist.webapp_components.utils.permissions import revalidate_session
 from openscientist.webapp_components.utils.session import (
-    add_uploaded_file,
+    clear_upload_storage,
     clear_uploaded_files,
     get_uploaded_files,
+    save_uploaded_file,
 )
 
 logger = logging.getLogger(__name__)
+
+app.on_startup(clear_upload_storage)
+app.on_shutdown(clear_upload_storage)
 
 
 def _build_upload_session_id(user_id: str | None, client: object) -> str:
@@ -106,7 +111,7 @@ async def _submit_job(
         _notify_creation_error(exc)
 
 
-async def _handle_upload(e: Any, session_id: str) -> None:
+async def _handle_upload(e: UploadEventArguments, session_id: str) -> None:
     """Stream upload directly to a temp file and record its path in session state."""
     try:
         name = e.file.name
@@ -117,9 +122,13 @@ async def _handle_upload(e: Any, session_id: str) -> None:
                 type="negative",
             )
             return
-        temp_path = Path(tempfile.mkdtemp()) / name
-        await e.file.save(temp_path)
-        add_uploaded_file(session_id, name, temp_path)
+        if not await save_uploaded_file(
+            session_id,
+            e.file,
+            max_files=MAX_UPLOAD_FILES_PER_REQUEST,
+            max_file_size_bytes=admin.max_file_size_mb * 1024 * 1024,
+        ):
+            return
         ui.notify(f"Uploaded: {name}", type="positive")
         logger.info("Successfully uploaded %s (%d bytes)", name, e.file.size())
     except (ValueError, OSError) as exc:
@@ -155,7 +164,7 @@ async def new_job_page() -> None:
         render_config_error_banner(provider_name, config_errors, show_back_button=True)
         return
 
-    async def on_upload(event: Any) -> None:
+    async def on_upload(event: UploadEventArguments) -> None:
         await _handle_upload(event, session_id)
 
     # The page height minus the header (4.5rem) and the page padding, so the card centres.
@@ -182,6 +191,13 @@ async def new_job_page() -> None:
             multiple=True,
             auto_upload=True,
             on_upload=on_upload,
+            max_file_size=max_file_size_mb * 1024 * 1024,
+            max_files=MAX_UPLOAD_FILES_PER_REQUEST,
+            on_rejected=lambda: ui.notify(
+                f"Upload at most {MAX_UPLOAD_FILES_PER_REQUEST} files "
+                f"up to {max_file_size_mb} MB per file",
+                type="negative",
+            ),
         ).classes("w-full os-compact-upload")
 
         ui.separator()
