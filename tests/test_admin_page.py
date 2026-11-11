@@ -412,6 +412,7 @@ async def test_set_user_approval_status_can_remove_approval(
         email="approved@example.com",
         name="Approved User",
         is_approved=True,
+        approved_at=datetime.now(UTC),
     )
     db_session.add(user)
     await db_session.commit()
@@ -424,6 +425,7 @@ async def test_set_user_approval_status_can_remove_approval(
 
     await db_session.refresh(user)
     assert user.is_approved is False
+    assert user.approved_at is None
 
 
 @pytest.mark.asyncio
@@ -498,6 +500,96 @@ async def test_set_user_approval_status_handles_missing_user(
 
     assert success is False
     assert message == "User not found"
+
+
+@pytest.mark.asyncio
+async def test_set_user_approval_status_sets_approved_at_on_approve(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+):
+    """Approving a pending user records when it happened."""
+    monkeypatch.setattr(
+        "openscientist.webapp_components.pages.admin.get_admin_session",
+        fake_admin_session(db_session),
+    )
+
+    user = User(
+        email="newly-approved@example.com",
+        name="Newly Approved User",
+        is_approved=False,
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+    assert user.approved_at is None
+
+    before = datetime.now(UTC)
+    success, message = await set_user_approval_status(user.id, is_approved=True)
+    after = datetime.now(UTC)
+
+    assert success is True
+    assert message == "User approved successfully"
+
+    await db_session.refresh(user)
+    assert user.approved_at is not None
+    assert before <= user.approved_at <= after
+
+
+@pytest.mark.asyncio
+async def test_build_admin_user_rows_includes_last_active_and_approved_at(
+    db_session: AsyncSession,
+):
+    """Row builder surfaces both the last-session time and approval time,
+    each formatted as a sort-safe YYYY-MM-DD HH:MM string (never a
+    relative-time string, which would sort alphabetically rather than
+    chronologically, and never date-only, which would tie same-day
+    events)."""
+    approved_at = datetime.now(UTC) - timedelta(days=3)
+    user = User(
+        email="active@example.com",
+        name="Active User",
+        is_approved=True,
+        approved_at=approved_at,
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+
+    last_login = datetime.now(UTC) - timedelta(days=1)
+    db_session.add(
+        Session(
+            user_id=user.id,
+            expires_at=last_login + timedelta(days=30),
+            created_at=last_login,
+        )
+    )
+    await db_session.commit()
+
+    rows = await _build_admin_user_rows(db_session, [user])
+
+    assert len(rows) == 1
+    assert rows[0]["approved_at"] == approved_at.strftime("%Y-%m-%d %H:%M")
+    assert rows[0]["last_active"] == last_login.strftime("%Y-%m-%d %H:%M")
+
+
+@pytest.mark.asyncio
+async def test_build_admin_user_rows_handles_no_sessions_or_approval(
+    db_session: AsyncSession,
+):
+    """A user with no sessions and no approval timestamp gets the fallback
+    dash rather than a crash or a blank/None value in the row."""
+    user = User(
+        email="untouched@example.com",
+        name="Untouched User",
+        is_approved=False,
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+
+    rows = await _build_admin_user_rows(db_session, [user])
+
+    assert rows[0]["approved_at"] == "—"
+    assert rows[0]["last_active"] == "—"
 
 
 @pytest.mark.asyncio

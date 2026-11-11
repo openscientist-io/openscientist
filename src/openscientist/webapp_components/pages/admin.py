@@ -98,6 +98,7 @@ async def set_user_approval_status(user_id: UUID, is_approved: bool) -> tuple[bo
             return False, f"User is already {state}"
 
         user.is_approved = is_approved
+        user.approved_at = datetime.now(UTC) if is_approved else None
         await session.commit()
 
     if is_approved:
@@ -431,11 +432,31 @@ def _get_admin_current_user_id() -> str | None:
         return None
 
 
-def _admin_users_columns() -> list[dict[str, str]]:
+def _admin_users_columns() -> list[dict[str, Any]]:
     return [
-        {"name": "name", "label": "Name", "field": "name", "align": "left"},
+        {"name": "name", "label": "Name", "field": "name", "align": "left", "sortable": True},
         {"name": "email", "label": "Email", "field": "email", "align": "left"},
-        {"name": "created_at", "label": "Joined", "field": "created_at", "align": "left"},
+        {
+            "name": "created_at",
+            "label": "Joined",
+            "field": "created_at",
+            "align": "left",
+            "sortable": True,
+        },
+        {
+            "name": "last_active",
+            "label": "Last Active",
+            "field": "last_active",
+            "align": "left",
+            "sortable": True,
+        },
+        {
+            "name": "approved_at",
+            "label": "Approved",
+            "field": "approved_at",
+            "align": "left",
+            "sortable": True,
+        },
         {"name": "job_count", "label": "Jobs", "field": "job_count", "align": "center"},
         {
             "name": "approval_status",
@@ -464,12 +485,25 @@ async def _build_admin_user_rows(session: Any, users: list[User]) -> list[dict[s
     result = await session.execute(stmt)
     job_counts: dict[Any, int] = dict(result.all())
 
+    # "Last active" is approximated as the most recent session row per user
+    # (login time) — sessions are never purged, so this stays accurate even
+    # for long-inactive users.
+    last_active_stmt = (
+        select(Session.user_id, func.max(Session.created_at))
+        .where(Session.user_id.in_(user_ids))
+        .group_by(Session.user_id)
+    )
+    last_active_result = await session.execute(last_active_stmt)
+    last_active: dict[Any, Any] = dict(last_active_result.all())
+
     return [
         {
             "id": str(user.id),
             "name": user.name or "N/A",
             "email": user.email,
-            "created_at": user.created_at.strftime("%Y-%m-%d") if user.created_at else "N/A",
+            "created_at": _format_sortable_timestamp(user.created_at),
+            "last_active": _format_sortable_timestamp(last_active.get(user.id)),
+            "approved_at": _format_sortable_timestamp(user.approved_at),
             "job_count": job_counts.get(user.id, 0),
             "approval_status": "Approved" if user.is_approved else "Pending",
             "is_approved": bool(user.is_approved),
@@ -478,6 +512,12 @@ async def _build_admin_user_rows(session: Any, users: list[User]) -> list[dict[s
         }
         for user in users
     ]
+
+
+def _format_sortable_timestamp(value: datetime | None) -> str:
+    """Minute precision avoids same-day ties; plain text sorts correctly
+    unlike a relative-time string ("2 hours ago") — see api_keys.py."""
+    return value.strftime("%Y-%m-%d %H:%M") if value else "—"
 
 
 async def _handle_approval_update(
