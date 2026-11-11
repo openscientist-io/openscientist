@@ -7,6 +7,8 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
+from nicegui.client import Client
+from nicegui.page import page
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
@@ -124,11 +126,16 @@ async def test_admin_billing_keeps_user_total_after_job_deletion(test_engine: As
         async with AsyncSession(test_engine) as db:
             ids = list(await db.scalars(select(CostRecord.id).where(CostRecord.job_id == job_id)))
         await delete_job(str(job_id), user_id)
-        with (
-            patch.object(billing, "ui") as widgets,
-            patch.object(billing, "_render_project_budget_section", new_callable=AsyncMock),
-        ):
-            await billing.render_billing_panel()
+        client = Client(page("/"))
+        try:
+            with (
+                client,
+                patch.object(billing, "ui") as widgets,
+                patch.object(billing, "_render_project_budget_section", new_callable=AsyncMock),
+            ):
+                await billing.render_billing_panel()
+        finally:
+            client.delete()
         rows = [row for call in widgets.table.call_args_list for row in call.kwargs["rows"]]
         assert any(
             row.get("user_id") == str(user_id) and row.get("cost_usd") == "$3.0000" for row in rows
