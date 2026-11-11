@@ -17,6 +17,7 @@ from tests.test_skill_ingestion import build_repo_tarball
 
 DEFAULT_NAME = "Claude Scientific Skills"
 DEFAULT_URL = "https://github.com/K-Dense-AI/scientific-agent-skills"
+RENAMED_URL = "https://github.com/K-Dense-AI/claude-scientific-skills"
 RECORDED_SHA = "a" * 40
 
 
@@ -45,13 +46,16 @@ async def test_fresh_default_source_uses_skills_directory(seed_session: AsyncSes
 
 
 @pytest.mark.parametrize("is_enabled", [True, False], ids=["enabled", "disabled"])
+@pytest.mark.parametrize(
+    "seeded_url", [DEFAULT_URL, RENAMED_URL], ids=["current-url", "renamed-url"]
+)
 async def test_legacy_default_source_repairs_path_and_clears_sha(
-    seed_session: AsyncSession, is_enabled: bool, sample_skill_markdown: str
+    seed_session: AsyncSession, is_enabled: bool, seeded_url: str, sample_skill_markdown: str
 ) -> None:
     source = SkillSource(
         name=DEFAULT_NAME,
         source_type="github",
-        url=DEFAULT_URL,
+        url=seeded_url,
         branch="main",
         skills_path="scientific-skills",
         is_enabled=is_enabled,
