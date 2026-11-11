@@ -32,10 +32,12 @@ async def signed_in_visitor(test_engine: AsyncEngine) -> AsyncIterator[tuple[Use
         user = User(email=f"login-{uuid4().hex}@page.test", name="Visitor", is_approved=True)
         db.add(user)
         await db.flush()
-        login = Session(user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         await db.commit()
-    yield user, str(login.id)
+    yield user, login_token
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(User).where(User.id == user.id))
         await db.commit()

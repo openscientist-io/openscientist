@@ -25,6 +25,7 @@ from openscientist.database.models import CostRecord, Job, JobChatMessage, User
 from openscientist.database.rls import set_current_user
 from openscientist.exceptions import BudgetExceededError
 from openscientist.job_chat import (
+    ChatAdmissionError,
     _build_chat_request,
     _chat_turn_files,
     _send_message_via_container,
@@ -108,6 +109,161 @@ def _chat_runner_writing_sparse(apparent: int):
         patch("openscientist.providers.get_provider", return_value=_ChatProvider()),
     ):
         yield
+
+
+@contextmanager
+def _chat_launcher():
+    from openscientist.job_container.runner import JobContainerRunner
+
+    runner = JobContainerRunner()
+    client = MagicMock()
+    runner._client = client
+    started = threading.Event()
+    release = threading.Event()
+
+    def launch(**request):
+        handle = client.create_agent(request)
+        _chat_turn_files(request["job_dir"], request["chat_turn"])[1].write_text(
+            json.dumps({"output": "ok"})
+        )
+        return handle, {}
+
+    def wait(ref, *, timeout_seconds):
+        started.set()
+        if client.create_agent.call_count == 1:
+            assert release.wait(10), f"Chat container {ref} was not released"
+        return {"exit_code": 0, "timeout": False}
+
+    client.create_agent.return_value = {"id": "chat-test", "name": "chat-test"}
+    client.wait.side_effect = wait
+    with (
+        patch.object(runner, "_start_agent_container", side_effect=launch),
+        patch("openscientist.job_container.runner.JobContainerRunner", return_value=runner),
+        patch("openscientist.providers.get_provider", return_value=_ChatProvider()),
+    ):
+        try:
+            yield client, started, release
+        finally:
+            release.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("same_job", [True, False], ids=["same-job", "global-cap"])
+async def test_chat_admission_refuses_concurrent_launch(
+    db_session: AsyncSession,
+    test_job: Job,
+    temp_jobs_dir: Path,
+    same_job: bool,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from openscientist.settings import get_settings
+
+    monkeypatch.setattr(get_settings(), "max_concurrent_chats", 2 if same_job else 1)
+    job_dir = temp_jobs_dir / str(test_job.id)
+    job_dir.mkdir()
+    second_job = test_job
+    if not same_job:
+        second_job = Job(owner_id=test_job.owner_id, research_question="Another job")
+        db_session.add(second_job)
+        await db_session.commit()
+        await db_session.refresh(second_job)
+    assert db_session.bind is not None
+    sessions = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    with _chat_launcher() as (client, started, release):
+        first = asyncio.create_task(send_chat_message(db_session, test_job.id, "first", job_dir))
+        try:
+            assert await asyncio.to_thread(started.wait, 10)
+            async with sessions() as other:
+                message = "already running" if same_job else "All chat slots are busy"
+                with pytest.raises(ChatAdmissionError, match=message):
+                    await send_chat_message(other, second_job.id, "second", job_dir)
+            assert client.create_agent.call_count == 1
+        finally:
+            release.set()
+            await asyncio.wait_for(first, 10)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["success", "launch-error", "container-error", "timeout"])
+async def test_chat_admission_releases_after_completion(
+    db_session: AsyncSession,
+    test_job: Job,
+    temp_jobs_dir: Path,
+    outcome: str,
+):
+    job_dir = temp_jobs_dir / str(test_job.id)
+    job_dir.mkdir()
+    with _chat_launcher() as (client, _started, release):
+        release.set()
+        if outcome == "launch-error":
+            client.create_agent.side_effect = RuntimeError("launch failed")
+        elif outcome != "success":
+            client.wait.side_effect = None
+            client.wait.return_value = {"exit_code": 1, "timeout": outcome == "timeout"}
+        if outcome == "success":
+            assert await send_chat_message(db_session, test_job.id, "first", job_dir) == "ok"
+        else:
+            match = {
+                "launch-error": "launch failed",
+                "container-error": "exited with code 1",
+                "timeout": "did not finish",
+            }[outcome]
+            with pytest.raises(RuntimeError, match=match):
+                await send_chat_message(db_session, test_job.id, "first", job_dir)
+        client.create_agent.side_effect = None
+        client.wait.side_effect = None
+        client.wait.return_value = {"exit_code": 0, "timeout": False}
+        assert await send_chat_message(db_session, test_job.id, "retry", job_dir) == "ok"
+        assert client.create_agent.call_count == 2
+        assert list(job_dir.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_chat_admission_holds_cancelled_worker_until_container_exits(
+    db_session: AsyncSession,
+    test_job: Job,
+    temp_jobs_dir: Path,
+):
+    job_dir = temp_jobs_dir / str(test_job.id)
+    job_dir.mkdir()
+    with _chat_launcher() as (client, started, release):
+        first = asyncio.create_task(send_chat_message(db_session, test_job.id, "first", job_dir))
+        assert await asyncio.to_thread(started.wait, 10)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        try:
+            with pytest.raises(ChatAdmissionError, match="already running"):
+                await send_chat_message(db_session, test_job.id, "second", job_dir)
+            assert client.create_agent.call_count == 1
+            assert list(job_dir.glob(".chat_request_*"))
+        finally:
+            release.set()
+            async with asyncio.timeout(10):
+                while list(job_dir.glob(".chat_request_*")):
+                    await asyncio.sleep(0.01)
+        assert await send_chat_message(db_session, test_job.id, "retry", job_dir) == "ok"
+        assert client.create_agent.call_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [RuntimeError("preparation failed"), asyncio.CancelledError()])
+async def test_chat_admission_releases_after_preparation_failure(
+    db_session: AsyncSession,
+    test_job: Job,
+    temp_jobs_dir: Path,
+    error: BaseException,
+):
+    job_dir = temp_jobs_dir / str(test_job.id)
+    job_dir.mkdir()
+    with _chat_launcher() as (client, _started, release):
+        release.set()
+        with patch("openscientist.job_chat._build_chat_request", side_effect=error):
+            with pytest.raises(type(error)):
+                await send_chat_message(db_session, test_job.id, "first", job_dir)
+        client.create_agent.assert_not_called()
+        assert await send_chat_message(db_session, test_job.id, "retry", job_dir) == "ok"
+        client.create_agent.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -943,9 +1099,13 @@ async def test_run_chat_turn_async_records_error(temp_jobs_dir: Path):
 
 
 @pytest.mark.asyncio
-async def test_overlapping_chat_turns_each_get_their_own_reply(temp_jobs_dir: Path):
-    """Two turns on one job at once, as from two tabs, each answer their own
-    question, and the turn that ends first leaves the other's files alone."""
+async def test_overlapping_jobs_each_get_their_own_reply(
+    temp_jobs_dir: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Concurrent jobs receive their own replies."""
+    from openscientist.settings import get_settings
+
+    monkeypatch.setattr(get_settings(), "max_concurrent_chats", 2)
     job_dir = temp_jobs_dir / "overlap"
     job_dir.mkdir()
     both_requested = threading.Barrier(2, timeout=10)
@@ -988,7 +1148,7 @@ async def test_overlapping_chat_turns_each_get_their_own_reply(temp_jobs_dir: Pa
         session = MagicMock(spec=AsyncSession)
         replies = await asyncio.gather(
             _send_message_via_container(session, UUID(int=1), "question A", job_dir),
-            _send_message_via_container(session, UUID(int=1), "question B", job_dir),
+            _send_message_via_container(session, UUID(int=2), "question B", job_dir),
         )
 
     assert replies == ["answer to question A", "answer to question B"]

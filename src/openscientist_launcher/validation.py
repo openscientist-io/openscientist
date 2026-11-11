@@ -108,6 +108,7 @@ class AgentLaunch:
     cpu: float
     airgapped: bool
     egress_allow: tuple[str, ...]
+    pids_limit: int
 
 
 @dataclass(frozen=True)
@@ -126,6 +127,7 @@ class ExecRequest:
     description: str
     iteration: int
     data_files: tuple[dict[str, object], ...]
+    pids_limit: int
 
 
 def _as_mapping(body: object, key: str) -> dict[str, object]:
@@ -175,6 +177,13 @@ def _as_int(body: dict[str, object], key: str, *, minimum: int = 1, required: bo
     if value < minimum:
         raise ValidationError(f"{key} must be at least {minimum}")
     return value
+
+
+def _pids_limit(body: dict[str, object], *, maximum: int) -> int:
+    limit = _as_int(body, "pids_limit") if "pids_limit" in body else min(4096, maximum)
+    if limit > maximum:
+        raise ValidationError("pids_limit exceeds the launcher's bound")
+    return limit
 
 
 def _as_number(body: dict[str, object], key: str, *, maximum: float) -> float:
@@ -282,6 +291,7 @@ def validate_agent_request(body: object, cfg: LauncherConfig) -> AgentLaunch:
             "phenix",
             "memory_mib",
             "cpu",
+            "pids_limit",
             "airgapped",
             "egress_allow",
         ),
@@ -353,6 +363,7 @@ def validate_agent_request(body: object, cfg: LauncherConfig) -> AgentLaunch:
         phenix=phenix,
         memory_mib=memory_mib,
         cpu=cpu,
+        pids_limit=_pids_limit(body, maximum=cfg.agent_max_pids),
         airgapped=airgapped,
         egress_allow=egress_allow,
     )
@@ -363,7 +374,16 @@ def validate_exec_request(body: object, cfg: LauncherConfig) -> ExecRequest:
         raise ValidationError("the request body must be an object")
     unknown = _unknown_fields(
         body,
-        ("job_id", "timeout_seconds", "memory_mib", "cpu", "airgapped", "egress_allow", "input"),
+        (
+            "job_id",
+            "timeout_seconds",
+            "memory_mib",
+            "cpu",
+            "pids_limit",
+            "airgapped",
+            "egress_allow",
+            "input",
+        ),
     )
     if unknown:
         raise ValidationError(f"unknown fields: {', '.join(unknown)}")
@@ -432,6 +452,7 @@ def validate_exec_request(body: object, cfg: LauncherConfig) -> ExecRequest:
         timeout_seconds=timeout_seconds,
         memory_mib=memory_mib,
         cpu=cpu,
+        pids_limit=_pids_limit(body, maximum=cfg.executor_max_pids),
         airgapped=airgapped,
         egress_allow=egress_allow,
         code=code,
