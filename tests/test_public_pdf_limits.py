@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.responses import Response
 from PIL import Image
 
+from openscientist.report import pdf
 from openscientist.report.download import report_download_response
 from openscientist.settings import clear_settings_cache
 
@@ -74,7 +75,7 @@ def write_table(job_dir: Path, rows: int) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("rows", "deadline"), [(100, 0.05), (1500, 3.0)])
+@pytest.mark.parametrize(("rows", "deadline"), [(1500, 1.0), (1500, 3.0)])
 async def test_pathological_report_deadline_keeps_web_responsive(
     reader: httpx.AsyncClient,
     tmp_path: Path,
@@ -228,19 +229,31 @@ async def test_unavailable_markdown_precedes_renderer_limits(
 
 
 @pytest.mark.asyncio
-async def test_worker_import_failure_is_logged_as_internal_error(
+@pytest.mark.parametrize(
+    ("error", "status_code"),
+    [
+        ("ImportError('worker dependency unavailable')", 500),
+        ("OSError(errno.EIO, 'worker dependency unavailable')", 500),
+        ("OSError(errno.ENOMEM, 'worker dependency unavailable')", 422),
+        ("OSError(errno.EFBIG, 'worker dependency unavailable')", 422),
+    ],
+)
+async def test_worker_import_failure_reaches_reader(
     reader: httpx.AsyncClient,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
+    error: str,
+    status_code: int,
 ) -> None:
     (tmp_path / "final_report.md").write_text("# Normal report\n")
     (tmp_path / "sitecustomize.py").write_text(
         "import builtins\n"
+        "import errno\n"
         "original_import = builtins.__import__\n"
         "def fail_renderer_import(name, *args, **kwargs):\n"
         "    if name == 'openscientist.report.pdf':\n"
-        "        raise ImportError('worker dependency unavailable')\n"
+        f"        raise {error}\n"
         "    return original_import(name, *args, **kwargs)\n"
         "builtins.__import__ = fail_renderer_import\n"
     )
@@ -248,8 +261,11 @@ async def test_worker_import_failure_is_logged_as_internal_error(
 
     response = await reader.get("/report")
 
-    assert response.status_code == 500
-    assert "worker dependency unavailable" in caplog.text
+    assert response.status_code == status_code
+    if status_code == 500:
+        assert "worker dependency unavailable" in caplog.text
+    else:
+        assert "rendering limits" in response.json()["detail"]
     assert "worker dependency unavailable" not in response.text
 
 
@@ -269,3 +285,55 @@ async def test_exited_renderer_cleanup_is_harmless(
     response = await reader.get("/report")
 
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_markdown_removed_before_worker_starts_returns_not_found(
+    reader: httpx.AsyncClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    markdown = tmp_path / "final_report.md"
+    markdown.write_text("# Normal report\n")
+    real_spawn = asyncio.create_subprocess_exec
+
+    async def spawn(
+        *args: str, stdin: int, stdout: BinaryIO, stderr: int | BinaryIO, start_new_session: bool
+    ) -> asyncio.subprocess.Process:
+        markdown.unlink()
+        return await real_spawn(
+            *args, stdin=stdin, stdout=stdout, stderr=stderr, start_new_session=start_new_session
+        )
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+
+    response = await asyncio.wait_for(reader.get("/report"), timeout=30)
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Report not found"
+
+
+@pytest.mark.asyncio
+async def test_parent_rejects_pdf_larger_than_output_limit(
+    reader: httpx.AsyncClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "final_report.md").write_text("# Normal report\n")
+    real_spawn = asyncio.create_subprocess_exec
+
+    async def spawn(
+        *args: str, stdin: int, stdout: BinaryIO, stderr: int | BinaryIO, start_new_session: bool
+    ) -> asyncio.subprocess.Process:
+        process = await real_spawn(
+            *args, stdin=stdin, stdout=stdout, stderr=stderr, start_new_session=start_new_session
+        )
+        monkeypatch.setattr(pdf, "MAX_ARTIFACT_FILE_SIZE_BYTES", 1)
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+
+    response = await asyncio.wait_for(reader.get("/report"), timeout=30)
+
+    assert response.status_code == 422
+    assert "rendering limits" in response.json()["detail"]
