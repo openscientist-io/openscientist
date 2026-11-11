@@ -151,6 +151,7 @@ class TestContainerDatabaseLogin:
                 host_project_dir=None,
                 container_app_dir="/app",
                 agent_image="openscientist-agent:latest",
+                agent_pids_limit=512,
             ),
             provider=provider,
             database=SimpleNamespace(
@@ -450,6 +451,7 @@ class TestJobContainerRunner:
             container=SimpleNamespace(
                 host_project_dir=host_project_dir,
                 container_app_dir="/app",
+                agent_pids_limit=256,
             ),
             provider=provider,
             database=SimpleNamespace(effective_database_url="postgresql://db"),
@@ -498,6 +500,7 @@ class TestJobContainerRunner:
         assert env["JOB_DIR"] == f"{AGENT_APP_DIR}/jobs/job-123"
         assert env["OPENSCIENTIST_HOST_PROJECT_DIR"] == "/host/project"
         assert env["OPENSCIENTIST_CONTAINER_APP_DIR"] == AGENT_APP_DIR
+        assert _request(client)["pids_limit"] == 256
 
     def test_launch_sends_no_fields_the_launcher_chooses(self):
         """The web may choose the job, the mode, the allowed env and resources;
@@ -597,7 +600,9 @@ class TestPhenixMount:
         provider.codex_auth_host_path = None
         provider.gcp_credentials_host_path = None
         return SimpleNamespace(
-            container=SimpleNamespace(host_project_dir=None, container_app_dir="/app"),
+            container=SimpleNamespace(
+                host_project_dir=None, container_app_dir="/app", agent_pids_limit=512
+            ),
             provider=provider,
             database=SimpleNamespace(effective_database_url="postgresql://db"),
             phenix=SimpleNamespace(phenix_host_path=phenix_host_path),
@@ -641,7 +646,9 @@ class TestJobSecretInjection:
         provider = MagicMock()
         provider.get_container_env_vars.return_value = {}
         return SimpleNamespace(
-            container=SimpleNamespace(host_project_dir=None, container_app_dir="/app"),
+            container=SimpleNamespace(
+                host_project_dir=None, container_app_dir="/app", agent_pids_limit=512
+            ),
             provider=provider,
             database=SimpleNamespace(effective_database_url="postgresql://db"),
             phenix=SimpleNamespace(phenix_host_path=None),
@@ -727,6 +734,7 @@ class TestFirewallLaunch:
             container=SimpleNamespace(
                 host_project_dir=None,
                 container_app_dir="/app",
+                agent_pids_limit=512,
             ),
             provider=provider,
             database=SimpleNamespace(
@@ -811,6 +819,7 @@ class TestChatTurnLaunch:
             container=SimpleNamespace(
                 host_project_dir=None,
                 container_app_dir="/app",
+                agent_pids_limit=512,
             ),
             provider=provider,
             database=SimpleNamespace(

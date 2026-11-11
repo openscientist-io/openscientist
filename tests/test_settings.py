@@ -801,6 +801,9 @@ class TestContainerSettings:
         assert settings.executor_memory == "2g"
         assert settings.executor_cpu == 0.5
         assert settings.executor_timeout == 120
+        assert settings.agent_pids_limit == 4096
+        assert settings.executor_pids_limit == 4096
+        assert settings.executor_max_concurrent_per_job == 2
 
     def test_custom_values(self):
         """Custom container settings are applied."""
@@ -810,12 +813,34 @@ class TestContainerSettings:
             OPENSCIENTIST_EXECUTOR_MEMORY="4g",
             OPENSCIENTIST_EXECUTOR_CPU=1.0,
             OPENSCIENTIST_EXECUTOR_TIMEOUT=300,
+            OPENSCIENTIST_AGENT_PIDS_LIMIT=1024,
+            OPENSCIENTIST_EXECUTOR_PIDS_LIMIT=256,
+            OPENSCIENTIST_EXECUTOR_MAX_CONCURRENT_PER_JOB=4,
         )
         assert settings.executor_image == "custom-executor:v1"
         assert settings.agent_image == "custom-agent:v1"
         assert settings.executor_memory == "4g"
         assert settings.executor_cpu == 1.0
         assert settings.executor_timeout == 300
+        assert settings.agent_pids_limit == 1024
+        assert settings.executor_pids_limit == 256
+        assert settings.executor_max_concurrent_per_job == 4
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "OPENSCIENTIST_AGENT_PIDS_LIMIT",
+            "OPENSCIENTIST_EXECUTOR_PIDS_LIMIT",
+            "OPENSCIENTIST_EXECUTOR_MAX_CONCURRENT_PER_JOB",
+        ],
+    )
+    @pytest.mark.parametrize("value", ["0", "-1"])
+    def test_process_limits_must_be_positive(
+        self, monkeypatch: pytest.MonkeyPatch, field: str, value: str
+    ) -> None:
+        monkeypatch.setenv(field, value)
+        with pytest.raises(ValidationError):
+            ContainerSettings()
 
     def test_agent_image_picks_up_env_override(self, monkeypatch):
         """OPENSCIENTIST_AGENT_IMAGE env var overrides the default."""

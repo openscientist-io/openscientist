@@ -65,6 +65,7 @@ def _launcher_settings() -> SimpleNamespace:
             agent_network=None,
             agent_platform=None,
             agent_image="openscientist-agent:latest",
+            agent_pids_limit=512,
         ),
         provider=provider,
         database=SimpleNamespace(
@@ -82,6 +83,7 @@ def _executor_settings() -> SimpleNamespace:
             host_project_dir=None,
             agent_network="bridge",
             executor_image="openscientist-executor:latest",
+            executor_pids_limit=512,
         ),
         airgap=SimpleNamespace(enabled=False),
     )

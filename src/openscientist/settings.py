@@ -745,6 +745,19 @@ class ContainerSettings(BaseSettings):
         alias="OPENSCIENTIST_EXECUTOR_TIMEOUT",
         description="Executor timeout in seconds.",
     )
+    executor_pids_limit: int = Field(
+        default=4096,
+        ge=1,
+        alias="OPENSCIENTIST_EXECUTOR_PIDS_LIMIT",
+        description="Maximum processes and threads in an executor container.",
+    )
+    executor_max_concurrent_per_job: int = Field(
+        default=2,
+        ge=1,
+        le=16,
+        alias="OPENSCIENTIST_EXECUTOR_MAX_CONCURRENT_PER_JOB",
+        description="Maximum simultaneous executor calls from one job.",
+    )
 
     agent_memory: str = Field(
         default="8g",
@@ -755,6 +768,12 @@ class ContainerSettings(BaseSettings):
         default=2.0,
         alias="OPENSCIENTIST_AGENT_CPU",
         description="CPU limit for agent containers.",
+    )
+    agent_pids_limit: int = Field(
+        default=4096,
+        ge=1,
+        alias="OPENSCIENTIST_AGENT_PIDS_LIMIT",
+        description="Maximum processes and threads in an agent container.",
     )
     agent_network: str | None = Field(
         default=None,
