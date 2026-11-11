@@ -87,7 +87,7 @@ def test_agent_image(docker_client: docker.DockerClient) -> str:
 @pytest.fixture()
 def jobs_root(tmp_path: Path) -> Path:
     jobs = tmp_path / "jobs"
-    (jobs / JOB_ID).mkdir(parents=True)
+    (jobs / JOB_ID / "data").mkdir(parents=True)
     return jobs
 
 
@@ -200,6 +200,55 @@ class TestAgentCreate:
         assert response.status_code == 400, response.text
         assert "pids_limit" in response.json()["error"]
 
+    @pytest.mark.parametrize("mode", ["discovery", "report_only", "chat"])
+    def test_agent_cannot_swap_the_executor_data_mount(
+        self, launcher: Launcher, docker_client: docker.DockerClient, jobs_root: Path, mode: str
+    ) -> None:
+        job_dir = jobs_root / JOB_ID
+        job_dir.chmod(0o777)
+        (job_dir / "data" / "input.txt").write_text("original")
+        (job_dir / "out").mkdir()
+        body = _agent_body(mode=mode, **({"chat_turn": "hello"} if mode == "chat" else {}))
+        with launcher.client() as client:
+            response = client.post("/v1/containers/agent", json=body)
+            assert response.status_code == 200, response.text
+            name = response.json()["name"]
+            try:
+                cfg = LauncherConfig.from_env(launcher.env)
+                validate_exec_request(
+                    {
+                        "job_id": JOB_ID,
+                        "timeout_seconds": 60,
+                        "memory_mib": 1024,
+                        "cpu": 0.5,
+                        "airgapped": True,
+                        "input": {
+                            "code": "print(1)",
+                            "language": "python",
+                            "output_dir": str(job_dir / "out"),
+                            "timeout": 30,
+                            "iteration": 0,
+                        },
+                    },
+                    cfg,
+                )
+                container = docker_client.containers.get(name)
+                mount = f"/agent/jobs/{JOB_ID}"
+                swap = container.exec_run(
+                    ["sh", "-c", f"mv {mount}/data {mount}/moved && ln -s /etc {mount}/data"],
+                    user="1001:1001",
+                )
+                assert swap.exit_code != 0, swap.output
+                assert b"Device or resource busy" in swap.output
+                assert not (job_dir / "moved").exists()
+                write = container.exec_run(["touch", f"{mount}/data/new"], user="1001:1001")
+                assert write.exit_code != 0
+                assert b"Read-only file system" in write.output
+                output = container.exec_run(["touch", f"{mount}/output"], user="1001:1001")
+                assert output.exit_code == 0, output.output
+            finally:
+                client.post(f"/v1/containers/{name}/remove")
+
     def test_valid_request_creates_the_template_container(
         self, launcher: Launcher, docker_client: docker.DockerClient, jobs_root: Path
     ) -> None:
@@ -230,7 +279,10 @@ class TestAgentCreate:
         assert host["Privileged"] is False
         assert host["CapAdd"] == ["NET_ADMIN"]
         assert host.get("Binds") is None
-        assert _host_binds(host) == [(str(jobs_root / JOB_ID), f"/agent/jobs/{JOB_ID}", False)]
+        assert _host_binds(host) == [
+            (str(jobs_root / JOB_ID), f"/agent/jobs/{JOB_ID}", False),
+            (str(jobs_root / JOB_ID / "data"), f"/agent/jobs/{JOB_ID}/data", True),
+        ]
         assert host["NetworkMode"] == "bridge"
         assert host["SecurityOpt"] == ["no-new-privileges:true"]
         assert host["Memory"] == 4096 * 1024**2
@@ -444,11 +496,14 @@ class TestRunHome:
             pytest.fail("agent container never reached running")
         try:
             job_dir = jobs_root / JOB_ID
-            assert sorted(os.listdir(job_dir)) == ["keep"], sorted(os.listdir(job_dir))
+            assert sorted(os.listdir(job_dir)) == ["data", "keep"], sorted(os.listdir(job_dir))
             attrs = _inspect(docker_client, name)
             binds = _host_binds(attrs["HostConfig"])
             assert (str(home), "/agent/run-home", False) in binds
-            assert not any(target.startswith(f"/agent/jobs/{JOB_ID}/") for _, target, _ in binds)
+            assert not any(
+                source == str(home) and target.startswith(f"/agent/jobs/{JOB_ID}/")
+                for source, target, _ in binds
+            )
             env = dict(item.split("=", 1) for item in attrs["Config"]["Env"] if "=" in item)
             assert env["OPENSCIENTIST_RUN_HOME"] == "/agent/run-home"
             result = docker_client.containers.get(name).exec_run(
@@ -787,6 +842,67 @@ class TestExecutor:
         assert result["success"], result
         assert (out_dir / "thread-count.txt").read_text() == "128"
 
+    @pytest.mark.parametrize("data_kind", ["directory", "missing", "symlink", "file"])
+    def test_executor_uploads_are_read_only(
+        self, launcher: Launcher, jobs_root: Path, tmp_path: Path, data_kind: str
+    ) -> None:
+        job_dir = jobs_root / JOB_ID
+        data_dir = job_dir / "data"
+        data_dir.rmdir()
+        out_dir = job_dir / "out"
+        out_dir.mkdir()
+        if data_kind == "directory":
+            data_dir.mkdir()
+            (data_dir / "input.txt").write_text("original")
+        elif data_kind == "symlink":
+            data_dir.symlink_to(tmp_path, target_is_directory=True)
+        elif data_kind == "file":
+            data_dir.touch()
+        code = (
+            "import os\n"
+            f"data = '/agent/jobs/{JOB_ID}/data'\n"
+            "with open('output.txt', 'w') as output:\n"
+            "    output.write('output')\n"
+            "if os.path.isdir(data):\n"
+            "    with open(data + '/input.txt') as source:\n"
+            "        assert source.read() == 'original'\n"
+            "    for operation in [lambda: open(data + '/input.txt', 'w'), "
+            "lambda: os.unlink(data + '/input.txt'), "
+            "lambda: open(data + '/new.txt', 'w')]:\n"
+            "        try:\n"
+            "            operation()\n"
+            "        except OSError as exc:\n"
+            "            assert exc.errno == 30, exc\n"
+            "        else:\n"
+            "            raise AssertionError('input data was writable')\n"
+        )
+        body = {
+            "job_id": JOB_ID,
+            "timeout_seconds": 120,
+            "memory_mib": 1024,
+            "cpu": 0.5,
+            "airgapped": True,
+            "input": {
+                "code": code,
+                "language": "python",
+                "output_dir": str(out_dir),
+                "timeout": 60,
+                "iteration": 0,
+            },
+        }
+        with launcher.client() as client:
+            response = client.post("/v1/exec", json=body)
+        if data_kind in {"symlink", "file"}:
+            assert response.status_code == 400, response.text
+            assert "data" in response.json()["error"]
+            return
+        assert response.status_code == 200, response.text
+        result = json.loads(response.json()["stdout"].splitlines()[-1])
+        assert result["success"], result
+        assert (out_dir / "output.txt").read_text() == "output"
+        if data_kind == "directory":
+            assert (data_dir / "input.txt").read_text() == "original"
+
     def test_valid_executor_run_roundtrip(
         self, launcher: Launcher, docker_client: docker.DockerClient, jobs_root: Path
     ) -> None:
@@ -869,7 +985,10 @@ class TestExecutor:
         assert host["Ulimits"] == [{"Name": "nofile", "Soft": 65536, "Hard": 65536}]
         assert host.get("Binds") is None
         job_mount = f"/agent/jobs/{JOB_ID}"
-        assert _host_binds(host) == [(str(job_dir), job_mount, False)]
+        assert _host_binds(host) == [
+            (str(job_dir), job_mount, False),
+            (str(job_dir / "data"), f"{job_mount}/data", True),
+        ]
         env = dict(item.split("=", 1) for item in config["Env"] if "=" in item)
         assert env["OPENSCIENTIST_FIREWALL_MODE"] == "restrict"
         assert env["OPENSCIENTIST_FIREWALL_RUN_AS"] == "executor"

@@ -134,7 +134,8 @@ class Server:
             raise _image_missing(self.cfg.agent_image)
         network = _resolve_network(self.client, self.cfg.network)
         container = _create_started(
-            self.client, agent_run_kwargs(self.cfg, launch, network=network)
+            self.client,
+            self._validated(lambda: agent_run_kwargs(self.cfg, launch, network=network)),
         )
         return {
             "id": container.id,
@@ -151,7 +152,8 @@ class Server:
             raise _image_missing(self.cfg.executor_image)
         network = _resolve_network(self.client, self.cfg.network)
         container = _create_started(
-            self.client, executor_run_kwargs(self.cfg, req, network=network)
+            self.client,
+            self._validated(lambda: executor_run_kwargs(self.cfg, req, network=network)),
         )
         exit_code: int | None
         try:
@@ -296,7 +298,7 @@ def _wait_timed_out(exc: BaseException) -> bool:
 def _create_started(client: docker.DockerClient, kwargs: dict[str, object]) -> Container:
     """Create a container and start it, removing it again when it does not
     start, so an image the daemon cannot run leaves no container behind."""
-    container = cast(Container, _guard(client.containers.create)(**kwargs))
+    container = _guard(client.containers.create)(**kwargs)
     try:
         _guard(container.start)()
     except BaseException:

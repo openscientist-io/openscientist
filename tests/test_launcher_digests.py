@@ -114,7 +114,7 @@ def test_launcher_accepts_exactly_the_cli_recorded_digests(
     assert executor_digest == image_digest(docker_client, EXECUTOR_IMAGE)
 
     jobs = checkout / "jobs"
-    (jobs / JOB_ID).mkdir(parents=True)
+    (jobs / JOB_ID / "data").mkdir(parents=True)
 
     def _agent_body() -> dict[str, object]:
         return {

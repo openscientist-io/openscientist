@@ -316,6 +316,7 @@ There are two distinct path worlds. Do not mix them:
 
 - Inside `execute_code`: never open files by a path you typed. Use the pre-loaded `data` DataFrame for the primary file, and `pd.read_csv(data_files[i]["path"])` for any additional file. The `data_files[i]["path"]` values are in-container `/data` paths and are the only correct way to reach files from `execute_code`.
 - `read_document` and the Phenix tools run host-side and read only files inside the job directory (bare filenames in `data/`, or absolute paths inside it). Use them only for the file types noted below.
+- Uploaded files in `data/` are read-only in both the agent and executor. Save downloaded files and derived datasets under `provenance/`, or in the executor's current output directory.
 
 Use the correct tool for each file type:
 

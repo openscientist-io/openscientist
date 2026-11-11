@@ -220,6 +220,22 @@ def _job_id(body: dict[str, object], cfg: LauncherConfig) -> str:
     return job_id
 
 
+def job_data_dir(job_dir: Path, *, required: bool = False) -> Path | None:
+    """Return the upload bind source only when it is a real directory."""
+    data_dir = job_dir / "data"
+    try:
+        mode = data_dir.lstat().st_mode
+    except FileNotFoundError as exc:
+        if required:
+            raise ValidationError("data directory is required for an agent") from exc
+        return None
+    except OSError as exc:
+        raise ValidationError("data directory cannot be inspected") from exc
+    if not stat.S_ISDIR(mode):
+        raise ValidationError("data is not a real directory")
+    return data_dir
+
+
 def _under_job_dir(path_str: str, job_dir: Path, *, what: str) -> Path:
     """``path_str`` normalised without touching the filesystem, refused unless
     it names a path inside ``job_dir``.
@@ -300,6 +316,7 @@ def validate_agent_request(body: object, cfg: LauncherConfig) -> AgentLaunch:
         raise ValidationError(f"unknown fields: {', '.join(unknown)}")
 
     job_id = _job_id(body, cfg)
+    job_data_dir(cfg.jobs_root / job_id, required=True)
     mode = _as_str(body, "mode")
     if mode not in AGENT_MODES:
         raise ValidationError("mode must be one of discovery, report_only, chat")
@@ -390,6 +407,7 @@ def validate_exec_request(body: object, cfg: LauncherConfig) -> ExecRequest:
 
     job_id = _job_id(body, cfg)
     job_dir = cfg.jobs_root / job_id
+    job_data_dir(job_dir)
     timeout_seconds = _as_int(body, "timeout_seconds")
     memory_mib = _as_int(body, "memory_mib")
     if memory_mib > cfg.executor_max_memory_mib:

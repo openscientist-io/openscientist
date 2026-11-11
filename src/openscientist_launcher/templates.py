@@ -11,7 +11,7 @@ from typing import Any
 from docker.types import Mount, Ulimit
 
 from openscientist_launcher.config import LauncherConfig
-from openscientist_launcher.validation import AgentLaunch, ExecRequest
+from openscientist_launcher.validation import AgentLaunch, ExecRequest, job_data_dir
 
 AGENT_APP_DIR = "/agent"
 #: The run home's mount target, outside the job mount so the daemon's
@@ -68,6 +68,8 @@ def agent_run_kwargs(cfg: LauncherConfig, launch: AgentLaunch, *, network: str) 
 
     job_mount = _job_mount(launch.job_id)
     mounts = [_bind(str(cfg.jobs_root / launch.job_id), job_mount, read_only=False)]
+    data_dir = job_data_dir(cfg.jobs_root / launch.job_id, required=True)
+    mounts.append(_bind(str(data_dir), f"{job_mount}/data", read_only=True))
     if launch.phenix and cfg.phenix_host_path:
         phenix = Path(cfg.phenix_host_path).expanduser().resolve()
         mounts.append(_bind(str(phenix), PHENIX_PATH, read_only=True))
@@ -112,13 +114,13 @@ def executor_run_kwargs(cfg: LauncherConfig, req: ExecRequest, *, network: str) 
     """The docker run kwargs of one executor container, and its remapped payload."""
     name = f"openscientist-exec-{req.job_id}-{secrets.token_hex(4)}"
 
-    # The job directory is the one path here the agent cannot replace, since
-    # it is the root of the agent's own mount, so it is the only bind source.
-    # The output and data paths are reached inside it, where a symlink the
-    # agent plants resolves within the executor's filesystem, never the host.
+    # Both bind sources are mountpoints in the agent, so it cannot replace them.
     job_dir = cfg.jobs_root / req.job_id
     job_mount = PurePosixPath(_job_mount(req.job_id))
     mounts = [_bind(str(job_dir), str(job_mount), read_only=False)]
+    data_dir = job_data_dir(job_dir)
+    if data_dir is not None:
+        mounts.append(_bind(str(data_dir), str(job_mount / "data"), read_only=True))
 
     def in_container(path: Path) -> str:
         return str(job_mount / path.relative_to(job_dir))
