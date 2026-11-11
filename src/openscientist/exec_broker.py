@@ -6,6 +6,7 @@ Docker socket. Accepts only execute_code parameters, never a container spec.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import math
 from collections.abc import Callable
@@ -29,11 +30,14 @@ from openscientist.job_container.secrets import broker_accepts
 from openscientist.job_container.utils import HostPathSettings, to_container_path
 from openscientist.job_manager import _effective_model
 from openscientist.listener import bind_listener
+from openscientist.request_body import read_request_body
 from openscientist.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
 _SUPPORTED_LANGUAGES = frozenset({"python", "rust", "sparql"})
+_EXEC_REQUEST_LIMIT = 1024 * 1024
+_BUDGET_REQUEST_LIMIT = 4096
 
 # Rust execution is compile-bound, so its cap never undercuts the tool's window.
 _RUST_MIN_TIMEOUT_SECONDS = 300
@@ -79,9 +83,12 @@ def create_exec_broker_app(*, manager: Callable[[], ContainerManager]) -> Starle
 
     async def handler(request: Request) -> Response:
         presented = request.headers.get(EXEC_TOKEN_HEADER, "")
+        if not presented or not broker_accepts(presented.rpartition(".")[0], presented):
+            return Response("unauthorized", status_code=401)
+        payload = await read_request_body(request, limit=_EXEC_REQUEST_LIMIT)
         try:
-            raw: Any = await request.json()
-        except Exception:
+            raw: object = json.loads(payload)
+        except (json.JSONDecodeError, UnicodeDecodeError):
             return JSONResponse({"error": "request body must be JSON"}, status_code=400)
         if not isinstance(raw, dict):
             return JSONResponse({"error": "request body must be a JSON object"}, status_code=400)
@@ -183,9 +190,12 @@ def create_exec_broker_app(*, manager: Callable[[], ContainerManager]) -> Starle
 
     async def budget_handler(request: Request) -> Response:
         presented = request.headers.get(EXEC_TOKEN_HEADER, "")
+        if not presented or not broker_accepts(presented.rpartition(".")[0], presented):
+            return Response("unauthorized", status_code=401)
+        payload = await read_request_body(request, limit=_BUDGET_REQUEST_LIMIT)
         try:
-            raw: Any = await request.json()
-        except Exception:
+            raw: object = json.loads(payload)
+        except (json.JSONDecodeError, UnicodeDecodeError):
             return JSONResponse({"error": "request body must be JSON"}, status_code=400)
         if not isinstance(raw, dict):
             return JSONResponse({"error": "request body must be a JSON object"}, status_code=400)
