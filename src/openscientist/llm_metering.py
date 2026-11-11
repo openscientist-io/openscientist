@@ -407,7 +407,7 @@ def _usage_decoder(
     """The decoder for a forwarded request, chosen from the request path and
     the upstream content type, or None when the path is not a model call the
     proxy meters (a count-tokens lookup)."""
-    if path.endswith(("/count_tokens", ":count-tokens:rawPredict")):
+    if path.endswith(("/count_tokens", "/count-tokens:rawPredict")):
         return None
     if path.endswith(":streamRawPredict"):
         return _AnthropicSseDecoder(model)
