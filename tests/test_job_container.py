@@ -4,8 +4,13 @@ import asyncio
 import hashlib
 import hmac
 import logging
+import os
+import stat
+import subprocess
+import sys
 from collections.abc import AsyncGenerator
 from pathlib import Path
+from threading import Thread
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock, call, patch
@@ -42,6 +47,20 @@ from openscientist.providers.base import AirgapEgress, AirgapPosture
 from openscientist.settings import Settings, clear_settings_cache
 from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 from tests.helpers import assert_names_a_build_command
+
+
+@pytest.mark.parametrize(
+    "module", ["openscientist.job_files", "openscientist.report.md_figure_ext"]
+)
+def test_job_files_import_without_initializing_the_runner(module: str) -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", f"import {module}"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.fixture(autouse=True)
@@ -270,6 +289,68 @@ class TestContainerDatabaseLogin:
         runner.cleanup("job-123", tmp_path)
         client.stop.assert_called_once_with("d" * 64, timeout_seconds=_STOP_GRACE_SECONDS)
         assert (tmp_path / "agent-container.log").read_text() == "log saved"
+        client.remove.assert_called_once_with("d" * 64)
+        agent_login.closed.assert_called_once_with(_LOGIN.role)
+
+    def test_cleanup_replaces_a_log_symlink_without_writing_to_another_job(
+        self, tmp_path: Path, agent_login: SimpleNamespace
+    ) -> None:
+        runner, client = _runner_with_client()
+        client.list_containers.return_value = [_listed_entry({AGENT_LOGIN_LABEL: _LOGIN.role})]
+        client.logs.return_value = "container log"
+        job_dir = tmp_path / "agent-job"
+        job_dir.mkdir()
+        other_dir = tmp_path / "other-job"
+        other_dir.mkdir()
+        other_file = other_dir / "final_report.md"
+        other_file.write_text("private report")
+        log_path = job_dir / "agent-container.log"
+        log_path.symlink_to("../other-job/final_report.md")
+
+        runner.cleanup("agent-job", job_dir)
+
+        assert other_file.read_text() == "private report"
+        assert stat.S_ISREG(log_path.lstat().st_mode)
+        assert log_path.read_text() == "container log"
+        client.remove.assert_called_once_with("d" * 64)
+        agent_login.closed.assert_called_once_with(_LOGIN.role)
+
+    def test_cleanup_replaces_a_log_fifo_without_blocking(
+        self, tmp_path: Path, agent_login: SimpleNamespace
+    ) -> None:
+        runner, client = _runner_with_client()
+        client.list_containers.return_value = [_listed_entry({AGENT_LOGIN_LABEL: _LOGIN.role})]
+        client.logs.return_value = "container log"
+        log_path = tmp_path / "agent-container.log"
+        os.mkfifo(log_path)
+        cleanup = Thread(target=runner.cleanup, args=("agent-job", tmp_path), daemon=True)
+
+        cleanup.start()
+        cleanup.join(timeout=5)
+        blocked = cleanup.is_alive()
+        if blocked:
+            reader = os.open(log_path, os.O_RDONLY | os.O_NONBLOCK)
+            try:
+                cleanup.join(timeout=5)
+            finally:
+                os.close(reader)
+
+        assert not blocked, "cleanup blocked on the planted log FIFO"
+        assert stat.S_ISREG(log_path.lstat().st_mode)
+        assert log_path.read_text() == "container log"
+        client.remove.assert_called_once_with("d" * 64)
+        agent_login.closed.assert_called_once_with(_LOGIN.role)
+
+    def test_cleanup_removes_the_container_when_the_log_cannot_be_written(
+        self, tmp_path: Path, agent_login: SimpleNamespace
+    ) -> None:
+        runner, client = _runner_with_client()
+        client.list_containers.return_value = [_listed_entry({AGENT_LOGIN_LABEL: _LOGIN.role})]
+        client.logs.return_value = "container log"
+        (tmp_path / "agent-container.log").mkdir()
+
+        runner.cleanup("agent-job", tmp_path)
+
         client.remove.assert_called_once_with("d" * 64)
         agent_login.closed.assert_called_once_with(_LOGIN.role)
 

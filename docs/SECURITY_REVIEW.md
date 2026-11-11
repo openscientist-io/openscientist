@@ -38,6 +38,7 @@ The main areas for improvement are **operational security gaps** rather than arc
 ### Container Isolation
 
 - **One container per job.** Each agent job runs in its own ephemeral Docker container, preventing jobs from interfering with each other.
+- **Container logs replace planted filesystem entries.** Teardown saves `agent-container.log` through a staged write relative to a pinned job-directory descriptor, replacing a planted symlink or FIFO without opening it. A log-write failure does not prevent container removal or run credential revocation.
 - **Resource limits enforced.** Agent containers have configurable CPU and memory caps (default: 2 CPUs, 8 GB RAM).
 - **Privilege escalation blocked.** Containers run with `no-new-privileges` and the agent process runs as a non-root user (UID 1001).
 - **Job files owned by the container users.** Job directories are setgid and owned by the agent's fixed UID and shared jobs group, so every file created in them inherits the group. The agent and executor containers run under umask 0007, so files and directories the job processes create are group-only (0660/02770) with no world bits, and operator logins copied into a run's home are private to the agent, so no other local account can read or modify a job's data.

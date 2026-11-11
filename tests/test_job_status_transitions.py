@@ -140,7 +140,7 @@ def runner() -> Iterator[MagicMock]:
     fake = MagicMock()
     fake.get_exit_code.return_value = 1
     with (
-        patch("openscientist.job_container.JobContainerRunner", return_value=fake),
+        patch("openscientist.job_container.runner.JobContainerRunner", return_value=fake),
         patch("openscientist.job_manager.time.sleep"),
     ):
         yield fake
