@@ -95,7 +95,7 @@ async def test_streaming_overflow_stops_at_the_limit(
 
 
 @pytest.mark.parametrize("path", ["/execute", "/budget"])
-@pytest.mark.parametrize("credential", [None, "invalid", "job-1.forged"])
+@pytest.mark.parametrize("credential", [None, "invalid", "job-1.unissued"])
 async def test_unauthenticated_request_never_reads_body(path: str, credential: str | None) -> None:
     status, reads = await _post(
         path,
