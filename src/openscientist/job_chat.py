@@ -22,6 +22,7 @@ from openscientist.database.models import Job, JobChatMessage
 from openscientist.job_container.identity import apply_job_ownership
 from openscientist.job_files import job_file_exists, read_job_file_text, write_job_file
 from openscientist.knowledge_state import KnowledgeState
+from openscientist.prompts.common import WRITING_STYLE
 
 logger = logging.getLogger(__name__)
 
@@ -350,9 +351,7 @@ async def _build_chat_request(
     job_id: UUID,
     message: str,
 ) -> dict[str, str | None]:
-    """Build one chat turn's request on the web side, where the DB and RLS
-    context are available. The prompt bundles the job context and recent history
-    so the container needs no database access to run the turn."""
+    """Build the web-side chat request with writing rules after the history."""
     from openscientist.agent.factory import agent_class_for_provider
     from openscientist.providers import get_provider
 
@@ -395,6 +394,8 @@ Be concise, accurate, and cite specific papers or findings when relevant. Focus 
             prompt_parts.append(f"{role_label}: {_truncate_history(msg.content)}")
         prompt_parts.append("---")
 
+    prompt_parts.append(f"Apply these writing rules to this reply.\n\n{WRITING_STYLE}")
+    prompt_parts.append("---")
     prompt_parts.append("## The user's new message (answer THIS, nothing else)")
     prompt_parts.append(
         "Respond directly to the message below. If it is not a clear question or "
