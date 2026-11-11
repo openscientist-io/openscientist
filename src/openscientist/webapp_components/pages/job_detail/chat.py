@@ -16,6 +16,7 @@ from openscientist.job_chat import (
     has_older_chat_message,
     send_chat_message,
 )
+from openscientist.webapp_components.components.agent_markdown import render_agent_markdown
 from openscientist.webapp_components.components.common import render_thinking_status
 from openscientist.webapp_components.pages.job_detail.common import _JobDetailContext
 from openscientist.webapp_components.utils import (
@@ -290,7 +291,7 @@ class _ChatTabController:
         with ui.row().classes("items-start gap-2 mb-3") as bubble:
             ui.html(_CHAT_AVATAR_HTML)
             with ui.element("div").classes("chat-bubble-assistant"):
-                ui.markdown(content).classes("text-sm")
+                render_agent_markdown(content).classes("text-sm")
         return bubble
 
     def _render_empty_state(self) -> None:

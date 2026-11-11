@@ -91,6 +91,9 @@ dependencies = [
     # CLI (setup wizard, start, stop)
     "typer>=0.21.1,<0.22",
     "rich>=14.3.2,<15",
+
+    # HTML sanitizer for agent-written markdown shown in app pages
+    "nh3>=0.3.7",
 ]
 
 [project.scripts]
