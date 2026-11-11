@@ -493,6 +493,76 @@ async def test_public_html_does_not_fall_back_to_persisted_inputs(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("surface", ["api", "web"])
+async def test_public_pdf_render_failure_does_not_serve_cached_report(
+    committed_public_job: tuple[User, User, Job, str, str],
+    db_session: AsyncSession,
+    tmp_path: Path,
+    surface: str,
+    caplog: pytest.LogCaptureFixture,
+):
+    owner, viewer, job, owner_token, viewer_token = committed_public_job
+    job_dir = tmp_path / str(job.id)
+    job_dir.mkdir()
+    (job_dir / "final_report.md").write_bytes(b"# Report\n\n\xff")
+    cached_report = b"EMBEDDED-UPLOADED-INPUT"
+    (job_dir / "final_report.pdf").write_bytes(cached_report)
+    (job_dir / "final_report.html").write_bytes(cached_report)
+    path = f"/api/v1/jobs/{job.id}/report" if surface == "api" else f"/web/jobs/{job.id}/report.pdf"
+    with (
+        patch("openscientist.web_app.get_job_manager", return_value=_manager(tmp_path)),
+        patch("openscientist.api.endpoints.jobs._get_jobs_dir", return_value=tmp_path),
+    ):
+        for user, token in ((owner, owner_token), (viewer, viewer_token)):
+            app = _api_app(db_session, user) if surface == "api" else _web_app()
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                client.cookies.set("session_token", token)
+                response = await client.get(path)
+            if user is owner:
+                assert response.status_code == 200
+                assert response.content == cached_report
+            else:
+                assert response.status_code == 404
+                assert response.json() == {"detail": "Report not found"}
+    assert "Public report rendering failed" in caplog.text
+    assert (job_dir / "final_report.pdf").read_bytes() == cached_report
+    assert (job_dir / "final_report.html").read_bytes() == cached_report
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["api", "web"])
+async def test_owner_report_render_failure_downloads_markdown(
+    committed_public_job: tuple[User, User, Job, str, str],
+    db_session: AsyncSession,
+    tmp_path: Path,
+    surface: str,
+    caplog: pytest.LogCaptureFixture,
+):
+    owner, _, job, owner_token, _ = committed_public_job
+    job_dir = tmp_path / str(job.id)
+    job_dir.mkdir()
+    oversized_cell = "word " * 2000
+    markdown = f"# Report\n\n| Heading |\n| --- |\n| {oversized_cell} |\n"
+    (job_dir / "final_report.md").write_text(markdown, encoding="utf-8")
+    path = f"/api/v1/jobs/{job.id}/report" if surface == "api" else f"/web/jobs/{job.id}/report.pdf"
+    with (
+        patch("openscientist.web_app.get_job_manager", return_value=_manager(tmp_path)),
+        patch("openscientist.api.endpoints.jobs._get_jobs_dir", return_value=tmp_path),
+    ):
+        app = _api_app(db_session, owner) if surface == "api" else _web_app()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            client.cookies.set("session_token", owner_token)
+            response = await client.get(path)
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/markdown")
+    assert response.text == markdown
+    assert "Failed to generate PDF" in caplog.text
+    assert not (job_dir / "final_report.pdf").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["api", "web"])
 async def test_public_pdf_is_rendered_without_cached_uploads(
     committed_public_job: tuple[User, User, Job, str, str],
     db_session: AsyncSession,
