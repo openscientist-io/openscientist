@@ -547,7 +547,7 @@ async def test_aborted_http_calls_exhaust_reserved_budget(ending, test_engine, p
         nonlocal attempts
         attempts += 1
         if ending == "before_headers":
-            raise httpx.ConnectError("Upstream aborted")
+            raise httpx.ReadError("Upstream aborted")
         return httpx.Response(
             200, stream=AbortedBody(), headers={"content-type": "text/event-stream"}
         )
@@ -576,3 +576,164 @@ async def test_aborted_http_calls_exhaust_reserved_budget(ending, test_engine, p
                 else:
                     pytest.fail("Aborted model calls never exhausted the job budget")
     assert 0 < attempts < 10
+
+
+@pytest.mark.parametrize(
+    "failure,charged",
+    [
+        (httpx.ConnectError, False),
+        (httpx.ConnectTimeout, False),
+        (httpx.PoolTimeout, False),
+        (httpx.ReadTimeout, True),
+        (httpx.WriteTimeout, True),
+    ],
+)
+async def test_transport_failure_settlement(failure, charged, test_engine, placeholder_for):
+    from tests.test_llm_reservations import rows
+
+    async def upstream(request):
+        raise failure("Upstream unavailable")
+
+    async with job_with_costs(test_engine, []) as job:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as upstream_client:
+            app = create_llm_proxy_app(
+                upstream=lambda: LlmUpstream("https://upstream.test", StaticHeadersSigning({})),
+                client=upstream_client,
+                provider_id=lambda: "anthropic",
+            )
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://proxy"
+            ) as client:
+                with pytest.raises(failure):
+                    await client.post(
+                        "/v1/messages",
+                        headers={"x-api-key": placeholder_for(str(job.id))},
+                        json={"model": "claude-sonnet-4-6", "max_tokens": 10},
+                    )
+            recorded = await rows(test_engine, job.id)
+            assert len(recorded) == int(charged)
+            if recorded:
+                assert recorded[0].cost_usd > 0
+                assert recorded[0].operation_type.endswith("_estimated")
+
+
+@pytest.mark.parametrize(
+    "provider,status,code,charged",
+    [
+        *[
+            (provider, status, None, False)
+            for provider in ("anthropic", "vertex")
+            for status in (400, 401, 403, 404, 429, 500, 502, 503, 504, 529)
+        ],
+        *[("bedrock", status, None, False) for status in (400, 401, 404, 429)],
+        *[("bedrock", status, None, True) for status in (403, 500, 502, 503, 504, 529)],
+        *[("openai", status, None, False) for status in (400, 401, 403, 404, 429)],
+        *[("openai", status, None, True) for status in (500, 502, 503, 504)],
+        ("openai", 503, "server_is_overloaded", False),
+    ],
+)
+async def test_error_status_settlement(
+    provider, status, code, charged, test_engine, placeholder_for, monkeypatch
+):
+    from openscientist.settings import get_settings
+    from tests.test_llm_reservations import rows
+
+    monkeypatch.setenv("ANTHROPIC_VERTEX_PROJECT_ID", "proj")
+    get_settings.cache_clear()
+    await set_admin_settings_row(test_engine, max_job_cost_usd=0.001)
+    paths = {
+        "anthropic": "/v1/messages",
+        "vertex": "/projects/proj/locations/us-east5/publishers/anthropic/models/claude-sonnet-4-6:streamRawPredict",
+        "bedrock": "/model/claude-sonnet-4-6/invoke-with-response-stream",
+        "openai": "/responses",
+    }
+
+    async def upstream(request):
+        return httpx.Response(
+            status,
+            stream=httpx.ByteStream(
+                json.dumps({"error": {"code": code, "message": "Unavailable"}}).encode()
+            ),
+            headers={"content-type": "application/json"},
+        )
+
+    try:
+        async with job_with_costs(test_engine, []) as job:
+            async with httpx.AsyncClient(
+                transport=httpx.MockTransport(upstream)
+            ) as upstream_client:
+                app = create_llm_proxy_app(
+                    upstream=lambda: LlmUpstream("https://upstream.test", StaticHeadersSigning({})),
+                    client=upstream_client,
+                    provider_id=lambda: provider,
+                )
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app=app), base_url="http://proxy"
+                ) as client:
+                    for _ in range(1 if charged else 10):
+                        response = await client.post(
+                            paths[provider],
+                            headers={"x-api-key": placeholder_for(str(job.id))},
+                            json={"model": "claude-sonnet-4-6", "max_tokens": 10},
+                        )
+                        assert response.status_code == status
+                recorded = await rows(test_engine, job.id)
+                assert len(recorded) == int(charged)
+                if recorded:
+                    assert recorded[0].cost_usd > 0
+                    assert recorded[0].operation_type.endswith("_estimated")
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.parametrize(
+    "provider,path,usage",
+    [
+        ("anthropic", "/v1/messages", {"input_tokens": 1000, "output_tokens": 1000}),
+        ("openai", "/responses", {"input_tokens": 1000, "output_tokens": 1000}),
+        ("openai", "/responses/compact", {"input_tokens": 1000, "output_tokens": 1000}),
+        ("ollama", "/chat/completions", {"prompt_tokens": 1000, "completion_tokens": 1000}),
+    ],
+)
+async def test_error_response_with_usage_retains_estimate(
+    provider, path, usage, test_engine, placeholder_for, monkeypatch
+):
+    from tests.test_llm_reservations import rows
+
+    monkeypatch.setattr(
+        "openscientist.providers.pricing._get_litellm_pricing",
+        lambda: {
+            "claude-sonnet-4-6": {
+                "input_cost_per_token": 0.001,
+                "output_cost_per_token": 0.002,
+            }
+        },
+    )
+
+    async def upstream(request):
+        return httpx.Response(
+            500,
+            stream=httpx.ByteStream(json.dumps({"usage": usage}).encode()),
+            headers={"content-type": "application/json"},
+        )
+
+    async with job_with_costs(test_engine, []) as job:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as upstream_client:
+            app = create_llm_proxy_app(
+                upstream=lambda: LlmUpstream("https://upstream.test", StaticHeadersSigning({})),
+                client=upstream_client,
+                provider_id=lambda: provider,
+            )
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://proxy"
+            ) as client:
+                response = await client.post(
+                    path,
+                    headers={"x-api-key": placeholder_for(str(job.id))},
+                    json={"model": "claude-sonnet-4-6", "max_tokens": 10},
+                )
+                assert response.status_code == 500
+            recorded = await rows(test_engine, job.id)
+            assert len(recorded) == 1
+            assert recorded[0].cost_usd == pytest.approx(3.0)
+            assert recorded[0].operation_type.endswith("_estimated")

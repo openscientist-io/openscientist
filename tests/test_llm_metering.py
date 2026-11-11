@@ -45,6 +45,7 @@ from openscientist.job_container.secrets import (
 )
 from openscientist.llm_proxy import _NoSignalServer, create_llm_proxy_app
 from openscientist.providers.base import LlmUpstream, StaticHeadersSigning
+from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 
 _PROVIDER = "anthropic"
 _PRICED_MODEL = "stub-sonnet"
@@ -628,7 +629,7 @@ class TestAnthropicWire:
         assert await _rows(test_engine, job) == [_estimated_row(body)]
 
     @pytest.mark.asyncio
-    async def test_an_upstream_error_keeps_the_estimate(
+    async def test_an_upstream_error_cancels_the_estimate(
         self, test_engine: AsyncEngine, job: UUID, run_for
     ) -> None:
         placeholder = run_for(str(job), "discovery").llm_placeholder
@@ -636,7 +637,7 @@ class TestAnthropicWire:
         plan = _Plan(status=529, chunks=[json.dumps({"error": "overloaded"}).encode()])
         app = _proxy_app(_upstream_client({"/v1/messages": plan}))
         _post(app, "/v1/messages", placeholder, body)
-        assert await _rows(test_engine, job) == [_estimated_row(body)]
+        assert await _rows(test_engine, job) == []
 
     @pytest.mark.asyncio
     async def test_cancellation_before_response_headers_keeps_the_estimate(
@@ -1291,19 +1292,30 @@ class TestNotMetered:
     catalogue answer pass through and write no row, and a dead run's
     placeholder still writes no row."""
 
+    @pytest_asyncio.fixture
+    async def counting_budget(self, test_engine: AsyncEngine):
+        await set_admin_settings_row(test_engine, max_project_spend_total_usd=0.01)
+        try:
+            yield
+        finally:
+            await reset_admin_settings_row(test_engine)
+
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("model", [_PRICED_MODEL, _UNPRICED_MODEL])
     async def test_a_count_tokens_lookup_writes_no_row(
-        self, test_engine: AsyncEngine, job: UUID, run_for
+        self, test_engine: AsyncEngine, job: UUID, run_for, model: str, counting_budget
     ) -> None:
         placeholder = run_for(str(job), "discovery").llm_placeholder
         path = (
-            "/projects/proj/locations/us-east5/publishers/anthropic/models/"
-            f"{_PRICED_MODEL}:count-tokens:rawPredict"
+            "/projects/proj/locations/us-east5/publishers/anthropic/models/count-tokens:rawPredict"
         )
-        body = {"model": _PRICED_MODEL, "input": "hi"}
+        body = {"model": model, "input": "hi"}
         plan = _Plan(chunks=[json.dumps({"input_tokens": 12}).encode()])
         app = _proxy_app(_upstream_client({":rawPredict": plan}))
-        _post(app, path, placeholder, body)
+        with TestClient(app) as client:
+            response = client.post(path, headers={"x-api-key": placeholder}, json=body)
+        assert response.status_code == 200
+        assert response.json() == {"input_tokens": 12}
         assert await _rows(test_engine, job) == []
 
     @pytest.mark.asyncio

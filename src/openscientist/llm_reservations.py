@@ -78,7 +78,7 @@ class ModelCallReservation:
     _closed: bool = False
 
     async def cancel(self) -> None:
-        """Release a reservation for a request never attempted upstream."""
+        """Release a reservation for a request that cannot incur a charge."""
         async with _budget_guard():
             if self._closed or self._ended is not None:
                 return

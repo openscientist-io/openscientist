@@ -230,6 +230,22 @@ async def test_cancel_releases_unattempted_reservation(test_engine: AsyncEngine,
     assert await rows(test_engine, jobs[0]) == []
 
 
+@pytest.mark.parametrize("field", ["max_project_spend_total_usd", "max_project_spend_24h_usd"])
+async def test_deleted_job_closes_reservation(test_engine: AsyncEngine, jobs, field):
+    await set_admin_settings_row(test_engine, **{field: 0.5})
+    _, reservation = await reserve(jobs[0])
+    assert reservation is not None
+    async with test_engine.begin() as conn:
+        await conn.execute(delete(Job).where(Job.id == jobs[0]))
+    await reservation.settle([], complete=False)
+    assert reservation._closed
+    assert reservation._id not in llm_reservations._outstanding
+    assert await rows(test_engine, jobs[0]) == []
+    verdict, next_call = await reserve(jobs[1])
+    assert verdict.ok and next_call is not None
+    await next_call.cancel()
+
+
 async def test_record_model_call_idempotent_retry(test_engine: AsyncEngine, jobs):
     record_id = uuid4()
     for _ in range(2):

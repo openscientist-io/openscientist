@@ -142,6 +142,7 @@ class _JsonDecoder:
         self._model = model
         self._buckets_from_usage = buckets_from_usage
         self._body = b""
+        self.error_code: str | None = None
 
     def feed(self, chunk: bytes) -> None:
         self._body += chunk
@@ -151,8 +152,10 @@ class _JsonDecoder:
             parsed = json.loads(self._body)
         except ValueError:
             return [
-                _ObservedCall(self._model, TokenUsage())
+                _ObservedCall(self._model, TokenUsage(), usage_reported=False)
             ], "response body was not parseable as JSON"
+        code = _dict(_dict(parsed).get("error")).get("code")
+        self.error_code = code if isinstance(code, str) else None
         usage = _dict(parsed).get("usage")
         if not isinstance(usage, dict) or not usage:
             return [_ObservedCall(self._model, TokenUsage(), usage_reported=False)], None
@@ -265,11 +268,7 @@ class _BedrockStreamDecoder:
 
 
 class _ChatSseDecoder:
-    """The OpenAI chat-completions stream. The chunks carry no usage except
-    the final one, and only when the request asked for it. The stream is only
-    complete once it sends ``[DONE]``, so a completed stream with no usage
-    writes the zero row, and a stream that ends or is cut before it writes
-    none."""
+    """Decode final chat usage while incomplete proxied calls retain estimated costs."""
 
     def __init__(self, model: str) -> None:
         self._model = model
@@ -316,13 +315,7 @@ class _ChatSseDecoder:
 
 
 class _ResponsesDecoder:
-    """The OpenAI Responses stream, the REST SSE and the websocket alike.
-    Usage is reported only at completion, so each ``response.completed``
-    event meters one call (a websocket turn can carry several), and a stream
-    that ends without one writes no row. The REST body streams through
-    ``feed``. The websocket path feeds one upstream frame per ``feed_frame``
-    call, and a frame that is a single JSON object is a complete event, since
-    the codex wire carries no SSE framing."""
+    """Decode completed Responses calls while incomplete proxied calls retain estimated costs."""
 
     def __init__(self, model: str) -> None:
         self._model = model
@@ -397,7 +390,7 @@ class _ResponsesDecoder:
 
 
 def _usage_decoder(
-    path: str, content_type: str, model: str
+    path: str, content_type: str, model: str, *, status_code: int = 200
 ) -> (
     _JsonDecoder
     | _AnthropicSseDecoder
@@ -409,8 +402,14 @@ def _usage_decoder(
     """The decoder for a forwarded request, chosen from the request path and
     the upstream content type, or None when the path is not a model call the
     proxy meters (a count-tokens lookup)."""
-    if path.endswith(("/count_tokens", ":count-tokens:rawPredict")):
+    if path.endswith(("/count_tokens", "/count-tokens:rawPredict")):
         return None
+    if status_code >= 400:
+        if path.endswith("/chat/completions"):
+            return _JsonDecoder(model, _openai_chat_buckets)
+        if path.endswith(("/responses", "/responses/compact")):
+            return _JsonDecoder(model, _responses_buckets)
+        return _JsonDecoder(model, _anthropic_buckets)
     if path.endswith(":streamRawPredict"):
         return _AnthropicSseDecoder(model)
     if path.endswith(":rawPredict"):
@@ -487,7 +486,7 @@ async def record_model_call(
     estimated: bool = False,
     created_at: datetime | None = None,
 ) -> bool:
-    """Persist a cost row idempotently and report whether it is durable."""
+    """Persist a cost row idempotently or settle it when its job no longer exists."""
     try:
         uid = UUID(job_id)
     except ValueError:
@@ -519,7 +518,7 @@ async def record_model_call(
                     buckets.input_tokens,
                     buckets.output_tokens,
                 )
-                return False
+                return True
             if record_id is None:
                 record_id = await session.scalar(select(func.uuidv7()))
             operation, iteration = _operation_labels(job, kind)

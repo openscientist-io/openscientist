@@ -240,12 +240,22 @@ def _endpoint_allowed(
             and re.fullmatch(
                 rf"/projects/{re.escape(project or '')}/locations/[a-z0-9-]+/"
                 r"publishers/anthropic/models/[A-Za-z0-9._@-]+"
-                r"(?::rawPredict|:streamRawPredict|:count-tokens:rawPredict)",
+                r"(?::rawPredict|:streamRawPredict)",
                 path,
             )
             is not None
         )
     return False
+
+
+def _unbilled_error(provider_id: str, status_code: int, error_code: str | None) -> bool:
+    if provider_id in {"anthropic", "vertex"}:
+        return True
+    if provider_id == "bedrock":
+        return status_code in {400, 401, 404, 429}
+    return status_code < 500 or (
+        provider_id == "openai" and status_code == 503 and error_code == "server_is_overloaded"
+    )
 
 
 def _meter(
@@ -264,7 +274,14 @@ def _meter(
             return
         calls, reason = decoder.finalize(outcome)
         if status_code >= 400:
-            calls, reason = [], f"upstream returned {status_code}"
+            if (
+                reservation is not None
+                and not any(call.usage_reported for call in calls)
+                and _unbilled_error(provider_id, status_code, decoder.error_code)
+            ):
+                await reservation.cancel()
+                return
+            reason = f"upstream returned {status_code}"
         if reservation is not None:
             await reservation.settle(calls, complete=reason is None)
         else:
@@ -396,7 +413,7 @@ def create_llm_proxy_app(
                 return Response(str(exc.detail), status_code=exc.status_code)
             model: str | None = None
             if request.method == "POST" and not request.url.path.endswith(
-                ("/count_tokens", ":count-tokens:rawPredict")
+                ("/count_tokens", "/count-tokens:rawPredict")
             ):
                 model = _model_from_body(body) or _model_from_path(request.url.path)
                 if model == "unknown":
@@ -456,7 +473,9 @@ def create_llm_proxy_app(
             attempted = True
             try:
                 upstream_resp = await client.send(upstream_req, stream=True)
-            except (Exception, asyncio.CancelledError):
+            except (Exception, asyncio.CancelledError) as exc:
+                if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)):
+                    attempted = False
                 logger.warning(
                     "LLM proxy call ended before response headers for run %s (%s)",
                     run.job_id,
@@ -471,7 +490,10 @@ def create_llm_proxy_app(
             decoder = None
             if request.method == "POST" and model is not None:
                 decoder = _usage_decoder(
-                    request.url.path, upstream_resp.headers.get("content-type", ""), model
+                    request.url.path,
+                    upstream_resp.headers.get("content-type", ""),
+                    model,
+                    status_code=upstream_resp.status_code,
                 )
             meter = _meter(
                 job_id=run.job_id,
