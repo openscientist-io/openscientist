@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import pytest
 
+from openscientist import code_executor
 from openscientist.code_executor import (
     SPARQL_USER_AGENT,
     ForbiddenImportError,
@@ -298,6 +299,57 @@ class TestExecuteRustCode:
         code = 'fn main() { println!("no plots here"); }'
         result = execute_rust_code(code, plots_dir)
         assert result["plots"] == []
+
+    def test_seeded_target_preparation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seeded_cargo = tmp_path / "cargo"
+        seeded_files = seeded_cargo / "target" / "seed"
+        seeded_files.mkdir(parents=True)
+        artifact = seeded_files / "artifact"
+        artifact.write_text("compiled dependency", encoding="utf-8")
+        (seeded_files / "alias").symlink_to("artifact")
+        (seeded_files / ".cargo-lock").write_text("seed lock", encoding="utf-8")
+        target = tmp_path / "execution" / "target"
+        monkeypatch.setenv("CARGO_HOME", str(tmp_path / "other-cargo"))
+        monkeypatch.setenv("CARGO_TARGET_DIR", str(tmp_path / "other-target"))
+        monkeypatch.setenv("OPENSCIENTIST_RUST_TEST", "preserved")
+
+        command, env = code_executor._prepare_rust_environment(seeded_cargo, target)
+
+        assert command == ["cargo", "run", "--offline"]
+        assert env["CARGO_HOME"] == str(seeded_cargo)
+        assert env["CARGO_TARGET_DIR"] == str(target)
+        assert env["OPENSCIENTIST_RUST_TEST"] == "preserved"
+        assert os.environ["CARGO_HOME"] == str(tmp_path / "other-cargo")
+        assert os.environ["CARGO_TARGET_DIR"] == str(tmp_path / "other-target")
+        assert target.is_dir()
+        copied = target / "seed"
+        assert copied.is_dir()
+        assert not copied.is_symlink()
+        assert (copied / "artifact").is_symlink()
+        assert (copied / "artifact").readlink() == artifact
+        assert (copied / "alias").readlink() == Path("artifact")
+        assert (copied / "alias").read_text(encoding="utf-8") == "compiled dependency"
+        assert not (copied / ".cargo-lock").exists()
+        assert artifact.read_text(encoding="utf-8") == "compiled dependency"
+        assert not artifact.is_symlink()
+        assert (seeded_files / ".cargo-lock").read_text(encoding="utf-8") == "seed lock"
+
+    def test_unseeded_target_preparation(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seeded_cargo = tmp_path / "absent-cargo"
+        target = tmp_path / "target"
+        monkeypatch.setenv("CARGO_HOME", str(tmp_path / "user-cargo"))
+        monkeypatch.setenv("CARGO_TARGET_DIR", str(tmp_path / "user-target"))
+
+        command, env = code_executor._prepare_rust_environment(seeded_cargo, target)
+
+        assert command == ["cargo", "run"]
+        assert env["CARGO_HOME"] == str(tmp_path / "user-cargo")
+        assert env["CARGO_TARGET_DIR"] == str(tmp_path / "user-target")
+        assert not target.exists()
 
 
 class TestExecuteSparqlCode:

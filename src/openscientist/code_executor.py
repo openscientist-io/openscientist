@@ -482,6 +482,27 @@ num-traits = "0.2"
 """
 
 
+def _prepare_rust_environment(seeded_cargo: Path, target: Path) -> tuple[list[str], dict[str, str]]:
+    """Prepare a writable target with links to read-only seeded dependencies."""
+    import shutil
+
+    env = os.environ.copy()
+    command = ["cargo", "run"]
+    if seeded_cargo.is_dir():
+        shutil.copytree(
+            seeded_cargo / "target",
+            target,
+            symlinks=True,
+            copy_function=os.symlink,
+            ignore=shutil.ignore_patterns(".cargo-lock"),
+        )
+        # Registry paths must match the seeded fingerprints.
+        env["CARGO_HOME"] = str(seeded_cargo)
+        env["CARGO_TARGET_DIR"] = str(target)
+        command.append("--offline")
+    return command, env
+
+
 def execute_rust_code(
     code: str,
     plots_dir: Path,
@@ -491,8 +512,6 @@ def execute_rust_code(
     data_files: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Execute Rust in an on-disk Cargo project using read-only seeded dependencies."""
-    import os
-    import shutil
     import subprocess
     import tempfile
 
@@ -507,22 +526,7 @@ def execute_rust_code(
         (project / "Cargo.toml").write_text(_RUST_CARGO_TOML, encoding="utf-8")
         (src_dir / "main.rs").write_text(code, encoding="utf-8")
 
-        env = os.environ.copy()
-        command = ["cargo", "run"]
-        seeded_cargo = Path("/usr/local/cargo")
-        if seeded_cargo.is_dir():
-            target = Path(tmpdir) / "target"
-            shutil.copytree(
-                seeded_cargo / "target",
-                target,
-                symlinks=True,
-                copy_function=os.symlink,
-                ignore=shutil.ignore_patterns(".cargo-lock"),
-            )
-            # Registry paths must match the seeded fingerprints.
-            env["CARGO_HOME"] = str(seeded_cargo)
-            env["CARGO_TARGET_DIR"] = str(target)
-            command.append("--offline")
+        command, env = _prepare_rust_environment(Path("/usr/local/cargo"), Path(tmpdir) / "target")
 
         try:
             run_result = subprocess.run(
