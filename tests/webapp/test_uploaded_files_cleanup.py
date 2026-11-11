@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
@@ -432,15 +433,61 @@ async def _upload_removal_page(
 
 
 async def _post_upload(
-    browser: SimulatedBrowser, upload: ui.upload, name: str, data: bytes
+    browser: SimulatedBrowser, upload: ui.upload, name: str, data: bytes, key: str | None = None
 ) -> None:
     browser.notify.messages.clear()
     response = await asyncio.wait_for(
-        browser.http_client.post(upload.props["url"], files={"file": (name, data, "text/csv")}),
+        browser.http_client.post(
+            upload.props["url"], files={quote(key or name, safe=""): (name, data, "text/csv")}
+        ),
         timeout=10,
     )
     assert response.status_code == 200
     await browser.should_see("Uploaded:", retries=50)
+
+
+@pytest.mark.parametrize(
+    ("name", "status"),
+    [
+        ("completed.csv", "failed"),
+        ('quoted".csv', "uploaded"),
+        ("carriage\rreturn.csv", "uploaded"),
+        ("line\nfeed.csv", "uploaded"),
+    ],
+    ids=["aborted-after-completion", "quote", "carriage-return", "line-feed"],
+)
+async def test_removal_uses_file_key_after_upload_completion(
+    test_engine: AsyncEngine,
+    database: Forwarder,
+    new_page_user: tuple[User, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    name: str,
+    status: str,
+) -> None:
+    user, token = new_page_user
+    async with _upload_removal_page(user, token, tmp_path, monkeypatch) as (
+        browser,
+        upload,
+        session_id,
+    ):
+        key = f"1700000000000{name}12"
+        await _post_upload(browser, upload, name, b"measurement\n", key)
+        stored = _uploaded_files[session_id][0]["path"]
+        browser.find(ui.upload).trigger(
+            "removed", [{"__key": key, "name": name, "__status": status}]
+        )
+        assert not stored.exists()
+        assert not _uploaded_files.get(session_id)
+        await _post_upload(browser, upload, name, b"replacement\n")
+        browser.find(ui.upload).trigger("removed", [{"__key": name}])
+        browser.find(ui.textarea).type("Why does the measurement vary?")
+        browser.find("Start Discovery").click()
+        await browser.should_see("created and started!", retries=100)
+        async with AsyncSession(test_engine) as db:
+            job = (await db.execute(select(Job).where(Job.owner_id == user.id))).scalar_one()
+        data_dir = tmp_path / "jobs" / str(job.id) / "data"
+        assert not data_dir.exists() or not list(data_dir.iterdir())
 
 
 @pytest.mark.parametrize(
@@ -480,22 +527,18 @@ async def test_removed_upload_is_not_in_the_created_job_and_releases_quota(
             )
             assert response.status_code == 409
             browser.find(ui.upload).trigger(
-                "removed", [{"name": second_name, "__status": "failed"}]
+                "removed", [{"__key": "file", "name": second_name, "__status": "failed"}]
             )
         else:
             await _post_upload(browser, upload, second_name, second_data)
             removed_path = _uploaded_files[session_id][-1]["path"]
-            browser.find(ui.upload).trigger(
-                "removed", [{"name": second_name, "__status": "uploaded"}]
-            )
+            browser.find(ui.upload).trigger("removed", [{"__key": second_name}])
             assert not removed_path.exists()
         assert [entry["path"].read_bytes() for entry in _uploaded_files[session_id]] == [first_data]
 
         await _post_upload(browser, upload, "replacement.csv", b"quota\n")
         assert len(_uploaded_files[session_id]) == 2
-        browser.find(ui.upload).trigger(
-            "removed", [{"name": "replacement.csv", "__status": "uploaded"}]
-        )
+        browser.find(ui.upload).trigger("removed", [{"__key": "replacement.csv"}])
         browser.find(ui.textarea).type("Why does the uploaded measurement vary?")
         browser.find("Start Discovery").click()
         await browser.should_see("created and started!", retries=100)
@@ -530,8 +573,8 @@ async def test_clearing_the_upload_list_deletes_all_staged_files(
             browser.find(ui.upload).trigger(
                 "removed",
                 [
-                    {"name": "first.csv", "__status": "uploaded"},
-                    {"name": "second.csv", "__status": "uploaded"},
+                    {"__key": "first.csv"},
+                    {"__key": "second.csv"},
                 ],
             )
         assert not _uploaded_files.get(session_id)
@@ -570,7 +613,8 @@ async def test_removing_an_upload_during_save_does_not_restore_it(
         monkeypatch.setattr(SmallFileUpload, "save", paused_save)
         response = await asyncio.wait_for(
             browser.http_client.post(
-                upload.props["url"], files={"file": ("pending.csv", b"a,b\n1,2\n", "text/csv")}
+                upload.props["url"],
+                files={"pending.csv": ("pending.csv", b"a,b\n1,2\n", "text/csv")},
             ),
             timeout=10,
         )
@@ -585,14 +629,12 @@ async def test_removing_an_upload_during_save_does_not_restore_it(
             )
             assert duplicate.status_code == 409
             browser.find(ui.upload).trigger(
-                "removed", [{"name": "pending.csv", "__status": "failed"}]
+                "removed", [{"__key": "file", "name": "pending.csv", "__status": "failed"}]
             )
             if action == "reset":
                 upload.reset()
             else:
-                browser.find(ui.upload).trigger(
-                    "removed", [{"name": "pending.csv", "__status": "uploaded"}]
-                )
+                browser.find(ui.upload).trigger("removed", [{"__key": "pending.csv"}])
         finally:
             resume.set()
             await asyncio.wait_for(completed.wait(), timeout=5)
@@ -626,16 +668,15 @@ async def test_removal_before_settings_return_cancels_the_pending_upload(
         monkeypatch.setattr(new_job, "current_admin_settings", delayed_settings)
         response = await asyncio.wait_for(
             browser.http_client.post(
-                upload.props["url"], files={"file": ("pending.csv", b"pending\n", "text/csv")}
+                upload.props["url"],
+                files={"pending.csv": ("pending.csv", b"pending\n", "text/csv")},
             ),
             timeout=10,
         )
         assert response.status_code == 200
         try:
             await asyncio.wait_for(started.wait(), timeout=5)
-            browser.find(ui.upload).trigger(
-                "removed", [{"name": "pending.csv", "__status": "uploaded"}]
-            )
+            browser.find(ui.upload).trigger("removed", [{"__key": "pending.csv"}])
         finally:
             resume.set()
             await asyncio.wait_for(completed.wait(), timeout=5)
@@ -662,18 +703,16 @@ async def test_removed_event_only_selects_matching_session_files(
         browser.find(ui.upload).trigger(
             "removed",
             [
-                {"name": "kept.csv", "__status": "failed", "path": str(staged_path)},
-                {"name": "../outside.csv", "__status": "uploaded", "path": str(outside)},
-                {"name": "kept.csv", "__status": "uploading"},
+                {"__key": "unknown", "name": "kept.csv", "path": str(staged_path)},
+                {"__key": "../outside.csv", "path": str(outside)},
+                {"__key": None, "name": "kept.csv"},
                 {"name": "kept.csv"},
                 "kept.csv",
             ],
         )
         assert staged_path.exists()
         assert outside.exists()
-        browser.find(ui.upload).trigger(
-            "removed", [{"name": "kept.csv", "__status": "uploaded", "path": str(outside)}]
-        )
+        browser.find(ui.upload).trigger("removed", [{"__key": "kept.csv", "path": str(outside)}])
         assert not staged_path.exists()
         assert outside.read_bytes() == b"other\n"
 
@@ -705,10 +744,12 @@ async def test_duplicate_upload_rejection_preserves_the_uploaded_file(
             )
         spool.assert_not_called()
         assert response.status_code == 409
-        browser.find(ui.upload).trigger("removed", [{"name": duplicate_name, "__status": "failed"}])
+        browser.find(ui.upload).trigger(
+            "removed", [{"__key": "file", "name": duplicate_name, "__status": "failed"}]
+        )
         assert stored.read_bytes() == b"first\n"
         assert len(_uploaded_files[session_id]) == 1
-        browser.find(ui.upload).trigger("removed", [{"name": "same.csv", "__status": "uploaded"}])
+        browser.find(ui.upload).trigger("removed", [{"__key": "same.csv"}])
         assert not stored.exists()
         assert not _uploaded_files.get(session_id)
         await _post_upload(browser, upload, "same.csv", b"again\n")
@@ -731,7 +772,7 @@ async def test_duplicate_name_is_reserved_while_receiving(
 
         async def body() -> AsyncIterator[bytes]:
             yield (
-                b'--upload\r\nContent-Disposition: form-data; name="file"; '
+                b'--upload\r\nContent-Disposition: form-data; name="same.csv"; '
                 b'filename="same.csv"\r\nContent-Type: text/csv\r\n\r\n'
             )
             started.set()
@@ -755,7 +796,9 @@ async def test_duplicate_name_is_reserved_while_receiving(
                 timeout=10,
             )
             assert duplicate.status_code == 409
-            browser.find(ui.upload).trigger("removed", [{"name": "same.csv", "__status": "failed"}])
+            browser.find(ui.upload).trigger(
+                "removed", [{"__key": "file", "name": "same.csv", "__status": "failed"}]
+            )
         finally:
             resume.set()
             response = await asyncio.wait_for(request, timeout=10)
@@ -789,7 +832,7 @@ async def test_failed_save_keeps_its_name_until_the_entry_is_removed(
         response = await asyncio.wait_for(
             browser.http_client.post(
                 upload.props["url"],
-                files={"file": ("same.csv", b"x" * (1024 * 1024 + 1), "text/csv")},
+                files={"same.csv": ("same.csv", b"x" * (1024 * 1024 + 1), "text/csv")},
             ),
             timeout=10,
         )
@@ -808,9 +851,7 @@ async def test_failed_save_keeps_its_name_until_the_entry_is_removed(
         if action == "reset":
             upload.reset()
         else:
-            browser.find(ui.upload).trigger(
-                "removed", [{"name": "same.csv", "__status": "uploaded"}]
-            )
+            browser.find(ui.upload).trigger("removed", [{"__key": "same.csv"}])
         assert untouched.read_bytes() == b"untouched"
         assert not _uploaded_files.get(session_id)
         await _post_upload(browser, upload, "same.csv", b"accepted\n")
@@ -842,7 +883,7 @@ async def test_page_quota_rejection_releases_the_unclaimed_name(
             )
         spool.assert_not_called()
         assert response.status_code == 413
-        browser.find(ui.upload).trigger("removed", [{"name": "first.csv", "__status": "uploaded"}])
+        browser.find(ui.upload).trigger("removed", [{"__key": "first.csv"}])
         await _post_upload(browser, upload, "third.csv", b"third\n")
         assert {entry["name"] for entry in _uploaded_files[session_id]} == {
             "second.csv",

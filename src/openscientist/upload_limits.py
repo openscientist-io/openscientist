@@ -1,6 +1,7 @@
 """Bound upload bodies before downstream multipart spooling."""
 
 import re
+from urllib.parse import unquote
 
 from nicegui.client import Client
 from nicegui.elements.upload_files import _sanitize_filename
@@ -36,6 +37,7 @@ class _MultipartLimits:
         self.header_name = bytearray()
         self.header_value = bytearray()
         self.filename: bytes | None = None
+        self.key: str | None = None
         self.session_id = session_id
         self.charset = charset
         self.reservations: list[PendingUpload] = []
@@ -45,6 +47,7 @@ class _MultipartLimits:
     def on_part_begin(self) -> None:
         self.is_file = False
         self.filename = None
+        self.key = None
         self.current_upload = None
 
     def on_header_field(self, data: bytes, start: int, end: int) -> None:
@@ -58,6 +61,9 @@ class _MultipartLimits:
             _, options = parse_options_header(bytes(self.header_value))
             self.is_file = b"filename" in options
             self.filename = options.get(b"filename")
+            field_name = options.get(b"name")
+            if field_name is not None:
+                self.key = unquote(_user_safe_decode(field_name, self.charset))
         self.header_name.clear()
         self.header_value.clear()
 
@@ -69,7 +75,7 @@ class _MultipartLimits:
             if self.session_id is not None and self.filename is not None:
                 name = _sanitize_filename(_user_safe_decode(self.filename, self.charset))
                 try:
-                    self.current_upload = reserve_upload(self.session_id, name)
+                    self.current_upload = reserve_upload(self.session_id, name, self.key)
                     self.reservations.append(self.current_upload)
                 except ValueError as error:
                     raise HTTPException(409, str(error)) from error

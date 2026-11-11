@@ -1,7 +1,7 @@
 """Tests for new job page helpers."""
 
 import inspect
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,11 +10,12 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from nicegui import ui
+from nicegui import core, ui
 from nicegui.client import Client
 from nicegui.elements.upload_files import SmallFileUpload
-from nicegui.events import UploadEventArguments
-from nicegui.testing import user_simulation
+from nicegui.events import GenericEventArguments, UploadEventArguments, handle_event
+from nicegui.page import page
+from nicegui.slot import Slot
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
@@ -56,6 +57,20 @@ def _upload_event(name: str, size_bytes: int, client: Client) -> UploadEventArgu
         client=client,
         file=SmallFileUpload(name, "text/csv", b"x" * size_bytes),
     )
+
+
+@pytest.fixture
+def script_page_between_requests(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    monkeypatch.setattr(core, "script_client", Client(page("/")).__enter__())
+    try:
+        yield
+        with Client(page("/")) as client:
+            client.delete()
+    finally:
+        Slot.get_stack().pop()
+        Slot.prune_stack()
+        if core.script_client is not None:
+            core.script_client.delete()
 
 
 def test_build_upload_session_id_uses_user_and_client_id():
@@ -229,7 +244,9 @@ async def test_the_page_shows_the_rows_file_size_limit(
     test_engine: AsyncEngine,
     database: Forwarder,
     signed_in_job_user: tuple[User, str],
+    signed_in_page: OpenPage,
     monkeypatch: pytest.MonkeyPatch,
+    script_page_between_requests: None,
 ) -> None:
     """The uploader displays and enforces the admin row's per-file limit."""
     from openscientist import web_app
@@ -240,20 +257,24 @@ async def test_the_page_shows_the_rows_file_size_limit(
     monkeypatch.setattr(new_job, "check_provider_config", lambda: (True, "Mock", None))
     _, token = signed_in_job_user
 
-    async def root() -> None:
-        await new_job.new_job_page()
-
     try:
-        async with user_simulation(root=root) as browser:
-            browser.http_client.cookies.set("session_token", token)
-            await browser.open("/")
-            upload = next(iter(browser.find(ui.upload).elements))
-            assert upload.props["label"] == "Upload Data Files (Optional - Max 250 MB per file)"
-            assert upload.props["max-file-size"] == 250 * 1024 * 1024
-            assert "max-total-size" not in upload.props
-            assert upload.props["max-files"] == 100
-            browser.find(ui.upload).trigger("rejected")
-            await browser.should_see("up to 250 MB per file")
-            assert len(browser.find(ui.textarea).elements) == 1
+        client = await signed_in_page(token, new_job.new_job_page)
+        upload = next(
+            element for element in client.elements.values() if isinstance(element, ui.upload)
+        )
+        assert upload.props["label"] == "Upload Data Files (Optional - Max 250 MB per file)"
+        assert upload.props["max-file-size"] == 250 * 1024 * 1024
+        assert "max-total-size" not in upload.props
+        assert upload.props["max-files"] == 100
+        assert upload.props[":field-name"] == "file => encodeURIComponent(file.__key)"
+        listener = next(
+            listener for listener in upload._event_listeners.values() if listener.type == "rejected"
+        )
+        with client, patch.object(ui, "notify") as notify:
+            handle_event(
+                listener.handler, GenericEventArguments(sender=upload, client=client, args={})
+            )
+        assert "up to 250 MB per file" in notify.call_args.args[0]
+        assert sum(isinstance(element, ui.textarea) for element in client.elements.values()) == 1
     finally:
         await reset_admin_settings_row(test_engine)

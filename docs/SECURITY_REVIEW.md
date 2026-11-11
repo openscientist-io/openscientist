@@ -58,7 +58,7 @@ The main areas for improvement are **operational security gaps** rather than arc
 
 #### Upload staging lifecycle
 
-Each page reserves a NiceGUI-sanitized filename when its multipart headers arrive. A reserved or stored name returns HTTP `409` before the duplicate part is spooled. Page count and byte quotas return HTTP `413` while receiving the body. Removal selects a unique name only when Quasar reports `__status` as `uploaded`.
+Each page reserves a NiceGUI-sanitized filename when its multipart headers arrive. A reserved or stored name returns HTTP `409` before the duplicate part is spooled. Page count and byte quotas return HTTP `413` while receiving the body. Quasar's per-file `__key` travels as the percent-encoded multipart field name and is retained with the reservation and saved file. Removal matches this key regardless of upload status or multipart filename escaping.
 
 | Event | Receiving | Pending or writing | Finished without a file | Stored | Absent |
 |---|---|---|---|---|---|
@@ -66,9 +66,9 @@ Each page reserves a NiceGUI-sanitized filename when its multipart headers arriv
 | Upload callback | Claim reservation | Reject duplicate callback | Reject duplicate callback | Reject duplicate callback | Register direct upload |
 | Request ends or fails | Release unclaimed reservation | Keep claimed reservation | Keep name | No action | No action |
 | Save slot acquired | No action | Check cancellation and quota, then write | No action | No action | No action |
-| Removal with `uploaded` status | Cancel reservation | Cancel and discard any partial file | Release name | Delete and release quota | No action |
-| Removal with any other status | No action | No action | No action | No action | No action |
-| Batch removal | Apply each item's status and name | Apply each item's status and name | Apply each item's status and name | Apply each item's status and name | No action |
+| Removal with a matching `__key` | Cancel reservation | Cancel and discard any partial file | Release name | Delete and release quota | No action |
+| Removal without a matching `__key` | No action | No action | No action | No action | No action |
+| Batch removal | Match each item's `__key` | Match each item's `__key` | Match each item's `__key` | Match each item's `__key` | No action |
 | Reset, disconnect, or successful submission | Cancel reservation | Cancel and discard any partial file | Release name | Delete and release quota | No action |
 | Save succeeds | No action | Retain unless cancelled, then release reservation | No action | No action | No action |
 | Save fails or is interrupted | No action | Delete partial file and keep name unless cancelled | No action | No action | No action |

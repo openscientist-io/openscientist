@@ -165,10 +165,11 @@ class _JobUpload(ui.upload):
                 type="negative",
             ),
         )
+        self.props(':field-name="file => encodeURIComponent(file.__key)"')
         self.on(
             "removed",
             self._removed,
-            js_handler="files => emit(files.map(({name, __status}) => ({name, __status})))",
+            js_handler="files => emit(files.map(({__key}) => ({__key})))",
         )
 
     def _uploaded(self, event: UploadEventArguments) -> Awaitable[None]:
@@ -182,9 +183,9 @@ class _JobUpload(ui.upload):
         for item in payload:
             if not isinstance(item, dict):
                 continue
-            name = item.get("name")
-            if isinstance(name, str) and item.get("__status") == "uploaded":
-                removed.append(name)
+            key = item.get("__key")
+            if isinstance(key, str):
+                removed.append(key)
         try:
             remove_uploaded_files(self._upload_session_id, removed)
         except OSError:

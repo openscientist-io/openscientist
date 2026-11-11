@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict
 
-from nicegui.elements.upload_files import FileUpload, _sanitize_filename
+from nicegui.elements.upload_files import FileUpload
 
 logger = logging.getLogger(__name__)
 
@@ -18,12 +18,14 @@ class UploadedFile(TypedDict):
     name: str
     path: Path
     size: int
+    key: str | None
 
 
 @dataclass(eq=False)
 class PendingUpload:
     name: str
     files: list[UploadedFile]
+    key: str | None = None
     size: int = 0
     claimed: bool = False
     cancelled: bool = False
@@ -50,7 +52,7 @@ def get_uploaded_files(session_id: str) -> list[UploadedFile]:
     return _uploaded_files[session_id]
 
 
-def add_uploaded_file(session_id: str, name: str, path: Path) -> None:
+def add_uploaded_file(session_id: str, name: str, path: Path, key: str | None = None) -> None:
     """
     Add an uploaded file (already saved to disk) to a session.
 
@@ -67,6 +69,7 @@ def add_uploaded_file(session_id: str, name: str, path: Path) -> None:
             "name": name,
             "path": path,
             "size": path.stat().st_size,
+            "key": key,
         }
     )
 
@@ -137,7 +140,7 @@ async def save_uploaded_file(
             await file.save(target)
             if upload.cancelled or _uploaded_files.get(session_id) is not files:
                 return False
-            add_uploaded_file(session_id, file.name, target)
+            add_uploaded_file(session_id, file.name, target, upload.key)
             retained = True
             return True
         finally:
@@ -161,7 +164,7 @@ def check_upload_quota(session_id: str, max_files: int, max_file_size_bytes: int
         )
 
 
-def reserve_upload(session_id: str, name: str) -> PendingUpload:
+def reserve_upload(session_id: str, name: str, key: str | None = None) -> PendingUpload:
     """Reserve a unique sanitized filename before receiving its body."""
     files = get_uploaded_files(session_id)
     pending = _pending_uploads.setdefault(session_id, [])
@@ -169,7 +172,7 @@ def reserve_upload(session_id: str, name: str) -> PendingUpload:
         entry.name == name for entry in pending
     ):
         raise ValueError(f"{name} is already uploaded or in progress")
-    upload = PendingUpload(name, files)
+    upload = PendingUpload(name, files, key)
     pending.append(upload)
     return upload
 
@@ -208,17 +211,16 @@ def finish_upload(session_id: str, upload: PendingUpload) -> None:
 
 
 def remove_uploaded_files(session_id: str, removed: list[str]) -> None:
-    """Remove unique names from this page and cancel their pending saves."""
+    """Remove matching file keys from this page and cancel their pending saves."""
     files = _uploaded_files.get(session_id, [])
     pending = _pending_uploads.get(session_id, [])
-    for browser_name in removed:
-        name = _sanitize_filename(browser_name)
+    for key in removed:
         for upload in tuple(pending):
-            if upload.name == name:
+            if upload.key == key:
                 upload.cancelled = True
                 if upload.finished:
                     finish_upload(session_id, upload)
-        stored = next((entry for entry in files if entry["name"] == name), None)
+        stored = next((entry for entry in files if entry["key"] == key), None)
         if stored is not None:
             stored["path"].unlink(missing_ok=True)
             stored["path"].parent.rmdir()
