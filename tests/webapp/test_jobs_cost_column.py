@@ -70,6 +70,9 @@ async def cost_owner(test_engine: AsyncEngine) -> AsyncIterator[dict[str, Any]]:
         "owner_token": str(owner_login.id),
     }
     async with AsyncSession(test_engine) as db:
+        await db.execute(
+            delete(CostRecord).where(CostRecord.job_id.in_([costed.id, plain.id, shared.id]))
+        )
         await db.execute(delete(Job).where(Job.id.in_([costed.id, plain.id, shared.id])))
         await db.execute(delete(User).where(User.id.in_([owner.id, sharer.id])))
         await db.commit()

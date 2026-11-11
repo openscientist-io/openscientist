@@ -3,11 +3,11 @@
 import logging
 
 from nicegui import ui
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from openscientist.admin_settings import current_admin_settings
 from openscientist.budget import check_budget, project_spend, warning_limit_reached
-from openscientist.database.models import CostRecord
+from openscientist.database.models import CostRecord, User
 from openscientist.database.session import get_admin_session
 from openscientist.providers import get_provider
 from openscientist.webapp_components.components.common import (
@@ -22,6 +22,7 @@ async def render_billing_panel() -> None:
     """Render the billing panel (for use as an admin subtab)."""
     with ui.column().classes("w-full gap-6"):
         await _render_db_cost_section()
+        await _render_user_cost_section()
         await _render_project_budget_section()
 
 
@@ -98,7 +99,7 @@ async def _render_db_cost_section() -> None:
     rows = [
         {
             "id": str(r.id),
-            "job_id": "..." + str(r.job_id)[-8:],
+            "job_id": "..." + str(r.job_id)[-8:] if r.job_id is not None else "Deleted job",
             "iteration": _iteration_label(r),
             "model": r.model,
             "provider": r.provider,
@@ -113,6 +114,38 @@ async def _render_db_cost_section() -> None:
         for r in cost_records
     ]
     ui.table(columns=columns, rows=rows, row_key="id").props("dense").classes("w-full")
+
+
+async def _render_user_cost_section() -> None:
+    """Show each user's lifetime expenditure, including deleted jobs."""
+    async with get_admin_session() as session:
+        total = func.sum(CostRecord.cost_usd)
+        result = await session.execute(
+            select(CostRecord.user_id, User.name, User.email, total)
+            .outerjoin(User, User.id == CostRecord.user_id)
+            .group_by(CostRecord.user_id, User.name, User.email)
+            .order_by(total.desc())
+        )
+        rows = [
+            {
+                "user_id": str(user_id) if user_id is not None else "",
+                "user": f"{name} ({email})"
+                if user_id is not None
+                else "Deleted user or unassigned",
+                "cost_usd": f"${cost:.4f}",
+            }
+            for user_id, name, email, cost in result
+        ]
+    if rows:
+        ui.label("Lifetime Expenditure by User").classes("text-h6")
+        ui.table(
+            columns=[
+                {"name": "user", "label": "User", "field": "user", "align": "left"},
+                {"name": "cost_usd", "label": "Cost", "field": "cost_usd", "align": "right"},
+            ],
+            rows=rows,
+            row_key="user_id",
+        ).props("dense").classes("w-full")
 
 
 async def _render_project_budget_section() -> None:

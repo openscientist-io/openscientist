@@ -216,7 +216,7 @@ class Job(UUIDv7Mixin, Base):
 
     cost_records: Mapped[list["CostRecord"]] = relationship(
         back_populates="job",
-        cascade="all, delete-orphan",
+        passive_deletes="all",
     )
 
     def __repr__(self) -> str:

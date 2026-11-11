@@ -560,5 +560,6 @@ async def test_the_container_card_reads_the_spend_from_the_cost_ledger(
         assert "$0.42" in _spend_badges(client)
     finally:
         async with AsyncSession(test_engine) as db:
+            await db.execute(delete(CostRecord).where(CostRecord.job_id == job.id))
             await db.execute(delete(Job).where(Job.id == job.id))
             await db.commit()

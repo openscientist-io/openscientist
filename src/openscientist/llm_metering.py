@@ -527,6 +527,7 @@ async def record_model_call(
             session.add(
                 CostRecord(
                     job_id=uid,
+                    user_id=job.owner_id,
                     iteration=iteration,
                     operation_type=operation,
                     provider=provider_id,

@@ -97,6 +97,7 @@ async def job_with_costs(
         try:
             yield job
         finally:
+            await session.execute(delete(CostRecord).where(CostRecord.job_id == job.id))
             await session.execute(delete(Job).where(Job.id == job.id))
             await session.commit()
 
@@ -295,6 +296,7 @@ class TestProjectSpend:
                     await _cost(session, job.id, 500.0)
                     verdict = await budget.check_budget(provider_id="bedrock")
                 finally:
+                    await session.execute(delete(CostRecord).where(CostRecord.job_id == job.id))
                     await session.execute(delete(Job).where(Job.id == job.id))
                     await session.commit()
         assert verdict.ok is False

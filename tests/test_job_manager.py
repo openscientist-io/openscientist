@@ -1009,6 +1009,7 @@ class TestQueuedJobBudgetHold:
 
     async def _cleanup(self, test_engine: AsyncEngine, owner: User, job: Job) -> None:
         async with self._committed(test_engine) as session:
+            await session.execute(delete(CostRecord).where(CostRecord.job_id == job.id))
             await session.execute(delete(Job).where(Job.id == job.id))
             await session.execute(delete(User).where(User.id == owner.id))
             await session.commit()
