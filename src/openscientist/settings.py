@@ -135,7 +135,7 @@ class ProviderSettings(BaseSettings):
     azure_openai_api_version: str | None = Field(
         default=None,
         alias="AZURE_OPENAI_API_VERSION",
-        description="Azure OpenAI API version for requests, defaulting to 2025-04-01-preview.",
+        description="Azure OpenAI api-version query parameter, sent on every request when set.",
     )
     # Azure streams cut off mid-turn (openai/codex#9936), so codex reconnects here.
     azure_openai_stream_max_retries: int = Field(
