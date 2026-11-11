@@ -74,15 +74,19 @@ async def _seed(
                     mime_type=mime,
                 )
             )
-        owner_login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
-        reader_login = Session(user_id=reader.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        owner_login, owner_login_token = Session.issue(
+            user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
+        reader_login, reader_login_token = Session.issue(
+            user_id=reader.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add_all([owner_login, reader_login])
         await db.commit()
     return (
         {
             "job_id": str(job.id),
-            "owner_token": str(owner_login.id),
-            "reader_token": str(reader_login.id),
+            "owner_token": owner_login_token,
+            "reader_token": reader_login_token,
         },
         (owner.id, reader.id),
     )

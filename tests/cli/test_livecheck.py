@@ -354,7 +354,7 @@ def test_azure_openai_live_check_skips_without_a_resource(monkeypatch):
     assert calls == []
 
 
-def test_azure_openai_live_check_uses_the_default_api_version(monkeypatch):
+def test_azure_openai_live_check_lists_models_on_the_v1_surface(monkeypatch):
     calls = _capture_get(monkeypatch, {"data": []})
     result = provider_class("azure-openai").live_check(
         "azure-openai",
@@ -362,22 +362,22 @@ def test_azure_openai_live_check_uses_the_default_api_version(monkeypatch):
     )
     assert result.ok
     url, headers = calls[0]
-    assert url == "https://res1.openai.azure.com/openai/deployments?api-version=2025-04-01-preview"
+    assert url == "https://res1.openai.azure.com/openai/v1/models"
     assert headers == {"api-key": "az-key"}
 
 
-def test_azure_openai_live_check_honors_a_configured_api_version(monkeypatch):
+def test_azure_openai_live_check_sends_the_api_version_the_harness_sends(monkeypatch):
     calls = _capture_get(monkeypatch, {"data": []})
     result = provider_class("azure-openai").live_check(
         "azure-openai",
         {
             "AZURE_OPENAI_RESOURCE": "res1",
             "AZURE_OPENAI_API_KEY": "az-key",
-            "AZURE_OPENAI_API_VERSION": "2024-10-21",
+            "AZURE_OPENAI_API_VERSION": "preview",
         },
     )
     assert result.ok
-    assert calls[0][0].endswith("api-version=2024-10-21")
+    assert calls[0][0] == "https://res1.openai.azure.com/openai/v1/models?api-version=preview"
 
 
 def _fake_vertex_session(post_result):

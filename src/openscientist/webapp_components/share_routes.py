@@ -82,14 +82,10 @@ async def get_current_user_from_session(
     """Resolve the signed-in user for web-session routes from the login cookie,
     validated against the database. 401 when missing, expired or deleted."""
     token = request.cookies.get("session_token")
-    try:
-        token_uuid = UUID(token) if token is not None else None
-    except ValueError:
-        token_uuid = None
-    if token_uuid is None:
+    if token is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
 
-    user_info = await validate_session(str(token_uuid))
+    user_info = await validate_session(token)
     if user_info is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not signed in")
 

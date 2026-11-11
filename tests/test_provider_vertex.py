@@ -463,6 +463,20 @@ class TestVertexClaudeCompatible:
         assert "VERTEX_REGION_CLAUDE_4_5_HAIKU" not in env
         assert env["ANTHROPIC_VERTEX_PROJECT_ID"] == "proj-123"
 
+    @pytest.mark.parametrize("region", ["us-east5", "europe-west1"])
+    def test_omp_env_selects_the_vertex_request_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, region: str
+    ) -> None:
+        settings = _mock_settings(self._creds_file(tmp_path), region=region)
+        monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "job-placeholder")
+        with patch("openscientist.providers.vertex.get_settings", return_value=settings):
+            env = VertexProvider().harness_env(proxy="http://web:8080/llm/v1")
+        assert env == {
+            "GOOGLE_CLOUD_ACCESS_TOKEN": "job-placeholder",
+            "GOOGLE_CLOUD_PROJECT": "proj-123",
+            "GOOGLE_CLOUD_LOCATION": region,
+        }
+
     def test_claude_model_name_uses_configured_model(self, tmp_path: Path) -> None:
         settings = _mock_settings(self._creds_file(tmp_path), model="claude-custom")
         with (
@@ -515,7 +529,11 @@ class TestVertexHarness:
         monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "job-1.tok")
         with patch.dict(os.environ, {"OPENSCIENTIST_LLM_PROXY_URL": "http://openscientist:8081"}):
             env = provider.harness_env(proxy="http://openscientist:8081")
-        assert env == {"GOOGLE_CLOUD_ACCESS_TOKEN": "job-1.tok"}
+        assert env == {
+            "GOOGLE_CLOUD_ACCESS_TOKEN": "job-1.tok",
+            "GOOGLE_CLOUD_PROJECT": "my-project",
+            "GOOGLE_CLOUD_LOCATION": "us-east5",
+        }
 
     def test_the_harness_without_a_proxy_refuses_to_launch(self, tmp_path: Path) -> None:
         provider = self._provider(tmp_path)
