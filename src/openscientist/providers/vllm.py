@@ -62,6 +62,7 @@ class VllmProvider(SelfHostedOpenAiWire):
     server_name = "vLLM"
     base_url_env = "VLLM_BASE_URL"
     api_key_env = "VLLM_API_KEY"
+    credential_env_keys = (api_key_env, "OPENAI_API_KEY")
 
     @classmethod
     def _base_url_of(cls, provider: ProviderSettings) -> str:

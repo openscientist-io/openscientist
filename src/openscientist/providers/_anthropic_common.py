@@ -7,6 +7,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from openscientist.settings import ProviderSettings
 
+ANTHROPIC_CREDENTIAL_ENV_KEYS = (
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+)
+
 
 def anthropic_container_env(provider: ProviderSettings) -> dict[str, str]:
     """The ANTHROPIC_* auth env shared by the anthropic and cborg providers."""

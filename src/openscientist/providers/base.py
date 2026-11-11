@@ -282,6 +282,9 @@ class Provider(abc.ABC):
     marker subclasses below; configuration validation and cost/budget
     tracking are shared here."""
 
+    #: Credential keys may reach a proxied container only as explicit placeholders.
+    credential_env_keys: ClassVar[tuple[str, ...]] = ()
+
     #: When ``proxy_env_overrides`` routes this provider's LLM traffic
     #: through the proxy (this env var equals the proxy URL), the keys in
     #: ``proxied_env_strip_keys`` are dropped from the container env.
@@ -500,7 +503,11 @@ class Provider(abc.ABC):
     ) -> dict[str, str]:
         """Job-container provider env with LLM traffic routed through the proxy."""
         env = get_settings().provider.get_container_env_vars()
-        env.update(self.proxy_env_overrides(proxy_base_url=proxy_base_url, placeholder=placeholder))
+        overrides = self.proxy_env_overrides(proxy_base_url=proxy_base_url, placeholder=placeholder)
+        env.update(overrides)
+        for key in self.credential_env_keys:
+            if overrides.get(key) != placeholder:
+                env.pop(key, None)
         if (
             self.proxied_env_condition_key
             and env.get(self.proxied_env_condition_key) == proxy_base_url

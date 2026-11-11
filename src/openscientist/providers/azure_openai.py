@@ -32,6 +32,7 @@ class AzureOpenAIProvider(CodexCompatible):
         return "azure-openai"
 
     display_name = "Azure OpenAI Service"
+    credential_env_keys = ("AZURE_OPENAI_API_KEY",)
 
     @classmethod
     def container_env(cls, provider: ProviderSettings) -> dict[str, str]:
