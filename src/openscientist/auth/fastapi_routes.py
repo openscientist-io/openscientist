@@ -29,6 +29,7 @@ from openscientist.auth.routes import (
     create_session,
 )
 from openscientist.database.models import Administrator, ReviewToken, Session, User
+from openscientist.database.models.session import hash_session_token
 from openscientist.database.retry import is_connection_error, retry_sync
 from openscientist.database.session import (
     SessionOpener,
@@ -43,13 +44,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["authentication"], include_in_schema=False)
 
 
-async def _set_session_cookie(response: RedirectResponse, session_id: str) -> None:
+async def _set_session_cookie(response: RedirectResponse, session_token: str) -> None:
     """Set the session cookie on a response."""
     settings = get_settings()
     admin = await current_admin_settings()
     response.set_cookie(
         key="session_token",
-        value=session_id,
+        value=session_token,
         max_age=admin.session_duration_days * 24 * 60 * 60,
         httponly=True,
         secure=settings.auth.app_url.startswith("https"),
@@ -133,10 +134,10 @@ async def mock_oauth_login(request: Request) -> RedirectResponse:
             refresh_token=None,
             email_verified=user_info.get("email_verified"),
         )
-        session = await create_session(db, str(user.id))
+        _, session_token = await create_session(db, str(user.id))
 
     response = RedirectResponse(url=return_to(request), status_code=303)
-    await _set_session_cookie(response, str(session.id))
+    await _set_session_cookie(response, session_token)
 
     logger.info("User %s logged in via mock auth (DEV MODE)", user.email)
     return response
@@ -181,9 +182,7 @@ async def mock_admin_oauth_login(request: Request) -> RedirectResponse:
         user.is_approved = True
         user_id = user.id
         user_email = user.email
-        login_session = await create_session(db, str(user_id))
-        # Extract session ID before exiting context to avoid MissingGreenlet
-        session_token = str(login_session.id)
+        _, session_token = await create_session(db, str(user_id))
 
     # Ensure the Administrator record exists (admin session bypasses RLS)
     async with get_admin_session() as db:
@@ -243,10 +242,10 @@ async def mock_oauth_callback(request: Request) -> RedirectResponse:
                 refresh_token=None,
                 email_verified=user_info.get("email_verified"),
             )
-            session = await create_session(db, str(user.id))
+            _, session_token = await create_session(db, str(user.id))
 
         response = RedirectResponse(url=return_to(request), status_code=303)
-        await _set_session_cookie(response, str(session.id))
+        await _set_session_cookie(response, session_token)
 
         logger.info("User %s logged in via mock auth (DEV MODE)", user.email)
         return response
@@ -328,11 +327,11 @@ async def oauth_callback(provider: str, request: Request) -> RedirectResponse:
                 email_verified=user_info.get("email_verified"),
                 auth_provider=provider,
             )
-            session = await create_session(db, str(user.id))
+            _, session_token = await create_session(db, str(user.id))
 
         response = RedirectResponse(url=target)
         response.delete_cookie(key=_NEXT_COOKIE)
-        await _set_session_cookie(response, str(session.id))
+        await _set_session_cookie(response, session_token)
 
         logger.info("User %s logged in via %s", user.email, provider)
         return response
@@ -355,7 +354,9 @@ async def oauth_callback(provider: str, request: Request) -> RedirectResponse:
 async def _delete_session(open_session: SessionOpener, session_token: str) -> None:
     async with open_session() as db:
         session = (
-            await db.execute(select(Session).where(Session.id == session_token))
+            await db.execute(
+                select(Session).where(Session.token_hash == hash_session_token(session_token))
+            )
         ).scalar_one_or_none()
         if session:
             await db.delete(session)
@@ -562,10 +563,10 @@ async def redeem_review_token(
                 )
                 return RedirectResponse(url="/login?error=token_invalid", status_code=303)
 
-            session = await create_session(db, str(user.id))
+            _, session_token = await create_session(db, str(user.id))
             response = RedirectResponse(url=return_to(request), status_code=303)
             response.headers["Referrer-Policy"] = "no-referrer"
-            await _set_session_cookie(response, str(session.id))
+            await _set_session_cookie(response, session_token)
             logger.info(
                 "Reviewer re-login via token (token_id=%s, user_id=%s)",
                 review_token.id,
@@ -586,11 +587,11 @@ async def redeem_review_token(
         review_token.redeemed_at = datetime.now(UTC)
         review_token.redeemed_by_id = anon_user.id
 
-        session = await create_session(db, str(anon_user.id))
+        _, session_token = await create_session(db, str(anon_user.id))
 
         response = RedirectResponse(url=return_to(request), status_code=303)
         response.headers["Referrer-Policy"] = "no-referrer"
-        await _set_session_cookie(response, str(session.id))
+        await _set_session_cookie(response, session_token)
 
         logger.info(
             "Reviewer created via token (token_id=%s, user_id=%s, email=%s)",

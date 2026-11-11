@@ -58,7 +58,11 @@ def exec_broker_url(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Generato
 
     fake_settings = SimpleNamespace(
         secret_key=os.environ["OPENSCIENTIST_SECRET_KEY"],
-        container=SimpleNamespace(container_app_dir=str(tmp_path), host_project_dir=None),
+        container=SimpleNamespace(
+            container_app_dir=str(tmp_path),
+            host_project_dir=None,
+            executor_max_concurrent_per_job=2,
+        ),
     )
     monkeypatch.setattr(exec_broker, "get_settings", lambda: fake_settings)
 

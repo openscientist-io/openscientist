@@ -39,8 +39,10 @@ async def jobs_owner(test_engine: AsyncEngine) -> AsyncIterator[dict[str, Any]]:
         db.add_all([first, second, theirs])
         await db.flush()
         db.add(JobShare(job_id=theirs.id, shared_with_user_id=owner.id, permission_level="view"))
-        owner_login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
-        newcomer_login = Session(
+        owner_login, owner_login_token = Session.issue(
+            user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
+        newcomer_login, newcomer_login_token = Session.issue(
             user_id=newcomer.id, expires_at=datetime.now(UTC) + timedelta(days=1)
         )
         db.add_all([owner_login, newcomer_login])
@@ -48,8 +50,8 @@ async def jobs_owner(test_engine: AsyncEngine) -> AsyncIterator[dict[str, Any]]:
     yield {
         "owned": {str(first.id), str(second.id)},
         "shared": {str(theirs.id)},
-        "owner_token": str(owner_login.id),
-        "newcomer_token": str(newcomer_login.id),
+        "owner_token": owner_login_token,
+        "newcomer_token": newcomer_login_token,
     }
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(Job).where(Job.id.in_([first.id, second.id, theirs.id])))

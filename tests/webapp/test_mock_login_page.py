@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from openscientist.auth import fastapi_routes
 from openscientist.auth.fastapi_routes import router
 from openscientist.database.models import Session, User
+from openscientist.database.models.session import hash_session_token
 from openscientist.settings import clear_settings_cache
 from openscientist.webapp_components.pages.mock_login import mock_login_form
 
@@ -119,6 +120,8 @@ async def test_a_browser_signing_in_through_the_form_keeps_the_cookie(
     assert response.headers["location"] == "/jobs"
     token = browser.cookies.get("session_token")
     assert token is not None
-    user = await db_session.scalar(select(User).join(Session).where(Session.id == token))
+    user = await db_session.scalar(
+        select(User).join(Session).where(Session.token_hash == hash_session_token(token))
+    )
     assert user is not None
     assert user.email == "browser-form@example.com"

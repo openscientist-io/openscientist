@@ -61,14 +61,16 @@ async def test_dialog_shares_with_the_looked_up_user(
         await db.flush()
         job.owner_id = owner.id
         db.add(job)
-        login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         await db.commit()
 
     try:
         controller = _controller(job, owner, f" {target.email.upper()} ")
         page_ui = MagicMock()
-        page_ui.context.client.request.cookies = {"session_token": str(login.id)}
+        page_ui.context.client.request.cookies = {"session_token": login_token}
 
         with (
             patch.object(dialog_module, "ui"),
