@@ -237,7 +237,7 @@ def _endpoint_allowed(
             and re.fullmatch(
                 rf"/projects/{re.escape(project or '')}/locations/[a-z0-9-]+/"
                 r"publishers/anthropic/models/[A-Za-z0-9._@-]+"
-                r"(?::rawPredict|:streamRawPredict|:count-tokens:rawPredict)",
+                r"(?::rawPredict|:streamRawPredict)",
                 path,
             )
             is not None
@@ -384,7 +384,7 @@ def create_llm_proxy_app(
         transferred = False
         if request.method == "POST":
             model = _model_from_body(body) or _model_from_path(request.url.path)
-            if not request.url.path.endswith(("/count_tokens", ":count-tokens:rawPredict")):
+            if not request.url.path.endswith(("/count_tokens", "/count-tokens:rawPredict")):
                 admission = admissions.acquire(run.job_id)
                 if admission is None:
                     logger.warning(
