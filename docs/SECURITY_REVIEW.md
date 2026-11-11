@@ -77,7 +77,7 @@ The main areas for improvement are **operational security gaps** rather than arc
 - **Redemption behind a confirmation page.** The review link only renders a sign-in page. Signing in is a same-origin JSON POST from that page, so a cross-site link can show the page but never signs the visitor in.
 - **Race-condition safe sign-in.** The sign-in lookup uses `SELECT ... FOR UPDATE` to prevent double-redemption, and a redeemed token whose reviewer account no longer exists is refused instead of minting a new one.
 - **Referrer leakage prevention.** Sign-in responses set `Referrer-Policy: no-referrer` so the token doesn't leak in HTTP headers.
-- **Revocation support.** Tokens can be revoked by admins at any time, redeemed or not. Revocation ends the reviewer's open sessions and blocks further use, and deleting the reviewer user revokes the token they redeemed.
+- **Review access lifetime.** Cookie and API key authentication check the redeemed review token on every request, so expiry blocks credentials and actions from open pages without a cleanup job. Revocation disables the reviewer account and deletes its sessions. Deleting a token creator disables the accounts their tokens redeemed, and deleting a reviewer revokes their token.
 
 ### Secrets Management
 
