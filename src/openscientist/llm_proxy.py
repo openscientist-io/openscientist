@@ -14,6 +14,7 @@ import re
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from urllib.parse import unquote_to_bytes
+from uuid import UUID
 
 import httpx
 import uvicorn
@@ -26,7 +27,7 @@ from starlette.routing import Route, WebSocketRoute
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import ConnectionClosed
 
-from openscientist.budget import unpriced_model_violation
+from openscientist.budget import check_budget
 from openscientist.job_container.secrets import RunKind, proxy_run
 from openscientist.listener import bind_listener
 from openscientist.llm_metering import (
@@ -321,19 +322,24 @@ def create_llm_proxy_app(
                 exc.detail,
             )
             return Response(str(exc.detail), status_code=exc.status_code)
-        # The fallback name of a model-less body is refused by the upstream, not by the price table.
         model: str | None = None
         if request.method == "POST":
             model = _model_from_body(body) or _model_from_path(request.url.path)
-            if model != "unknown" and not request.url.path.endswith(
-                ("/count_tokens", ":count-tokens:rawPredict")
-            ):
-                refusal = await unpriced_model_violation(provider_id=provider(), model=model)
-                if refusal is not None:
+            if not request.url.path.endswith(("/count_tokens", ":count-tokens:rawPredict")):
+                verdict = await check_budget(
+                    job_id=UUID(run.job_id),
+                    provider_id=provider(),
+                    model=model,
+                    include_unpriced=model != "unknown",
+                )
+                if not verdict.ok:
                     logger.warning(
-                        "LLM proxy: %s for run %s (%s)", refusal.message, run.job_id, run.kind
+                        "LLM proxy refused run %s at %s with %s",
+                        run.job_id,
+                        request.url.path,
+                        verdict.message,
                     )
-                    return Response(refusal.message, status_code=403)
+                    return Response(verdict.message, status_code=403)
         logger.debug(
             "LLM proxy: %s %s for run %s (%s)",
             request.method,
@@ -495,6 +501,11 @@ class _ResponsesWebsocketTerminator:
             )
             await _refuse_websocket(send, 403, "LLM endpoint not allowed")
             return
+        verdict = await check_budget(job_id=UUID(run.job_id), provider_id=self._provider_id())
+        if not verdict.ok:
+            logger.warning("LLM proxy refused run %s with %s", run.job_id, verdict.message)
+            await _refuse_websocket(send, 403, verdict.message or "Budget exhausted")
+            return
         query = scope.get("query_string", b"").decode()
         try:
             signing_headers = target.signing.credential_headers(
@@ -529,7 +540,9 @@ class _ResponsesWebsocketTerminator:
         await send({"type": "websocket.accept"})
         decoder = _ResponsesDecoder("unknown")
         loop = asyncio.get_running_loop()
-        to_upstream = loop.create_task(self._container_to_upstream(connection, receive, send))
+        to_upstream = loop.create_task(
+            self._container_to_upstream(connection, receive, send, run.job_id)
+        )
         to_container = loop.create_task(
             self._upstream_to_container(connection, send, decoder, run.job_id, run.kind)
         )
@@ -548,7 +561,7 @@ class _ResponsesWebsocketTerminator:
                 run.kind,
             )
 
-    async def _container_to_upstream(self, connection, receive, send) -> None:
+    async def _container_to_upstream(self, connection, receive, send, job_id: str) -> None:
         while True:
             message = await receive()
             if message["type"] == "websocket.disconnect":
@@ -576,8 +589,8 @@ class _ResponsesWebsocketTerminator:
                         }
                     )
                 return
-            if message.get("text") is not None:
-                refusal = await self._unpriced_refusal(message["text"])
+            if payload is not None:
+                refusal = await self._budget_refusal(payload, job_id)
                 if refusal is not None:
                     # The pinned codex client maps this pre-stream error frame to a failed turn carrying the message.
                     with suppress(RuntimeError):
@@ -595,24 +608,24 @@ class _ResponsesWebsocketTerminator:
                         )
                     await connection.close(1008, refusal)
                     return
-                await connection.send(message["text"])
-            elif message.get("bytes") is not None:
-                await connection.send(message["bytes"])
+                await connection.send(payload)
 
-    async def _unpriced_refusal(self, text: str) -> str | None:
-        """The refusal message for a ``response.create`` that names a model
-        the deployment cannot price, or None when the frame may be forwarded."""
+    async def _budget_refusal(self, payload: str | bytes, job_id: str) -> str | None:
+        """Return the budget refusal for a response creation frame."""
         try:
-            frame = json.loads(text)
-        except ValueError:
+            frame = json.loads(payload)
+        except (ValueError, UnicodeDecodeError):
             return None
         if not isinstance(frame, dict) or frame.get("type") != "response.create":
             return None
         model = frame.get("model")
-        if not isinstance(model, str) or not model:
-            return None
-        refusal = await unpriced_model_violation(provider_id=self._provider_id(), model=model)
-        return refusal.message if refusal is not None else None
+        verdict = await check_budget(
+            job_id=UUID(job_id),
+            provider_id=self._provider_id(),
+            model=model if isinstance(model, str) and model else None,
+            include_unpriced=True,
+        )
+        return None if verdict.ok else verdict.message or "Budget exhausted"
 
     async def _upstream_to_container(
         self, connection, send, decoder: _ResponsesDecoder, job_id: str, kind: RunKind

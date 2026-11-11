@@ -5,13 +5,12 @@ import base64
 import json
 import os
 import socket
-from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 from urllib.parse import quote
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -46,6 +45,7 @@ from openscientist.providers.openai import ChatgptSigning
 from openscientist.providers.vertex import GoogleAdcSigning
 from openscientist.settings import Settings, get_settings
 from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
+from tests.test_budget import job_with_costs
 from tests.test_provider_bedrock import verify_sigv4
 from tests.test_provider_vertex import FakeVertexCredentials
 
@@ -101,19 +101,24 @@ def active_provider(monkeypatch):
     get_settings.cache_clear()
 
 
-@pytest.fixture
-def placeholder_for() -> Iterator[Callable[[str], str]]:
-    """Issue a live run's LLM placeholder for a job, ended after the test."""
+@pytest_asyncio.fixture
+async def placeholder_for(test_engine):
+    """Issue placeholders for committed jobs, ending each run after the test."""
     roles: list[str] = []
+    async with job_with_costs(test_engine, []) as job:
 
-    def issue(job_id: str) -> str:
-        role = f"agent_{uuid4().hex}"
-        roles.append(role)
-        return issue_run_credentials(job_id, role, "discovery").llm_placeholder
+        def issue(job_id: str) -> str:
+            try:
+                UUID(job_id)
+            except ValueError:
+                job_id = str(job.id)
+            role = f"agent_{uuid4().hex}"
+            roles.append(role)
+            return issue_run_credentials(job_id, role, "discovery").llm_placeholder
 
-    yield issue
-    for role in roles:
-        revoke_run_credentials(role)
+        yield issue
+        for role in roles:
+            revoke_run_credentials(role)
 
 
 class TestClaudeUpstream:
