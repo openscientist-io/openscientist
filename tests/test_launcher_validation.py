@@ -608,6 +608,27 @@ def _executor_body(jobs: Path) -> dict[str, object]:
 
 
 class TestExecutorTemplate:
+    @pytest.mark.parametrize("limit", [1, 128, 512])
+    def test_executor_process_limit(self, tmp_path: Path, limit: int) -> None:
+        jobs = _jobs(tmp_path)
+        cfg = _config(jobs, executor_max_pids=512)
+        body = _executor_body(jobs)
+        body["pids_limit"] = limit
+        req = validate_exec_request(body, cfg)
+        kwargs = executor_run_kwargs(cfg, req, network="bridge")
+        assert kwargs["pids_limit"] == limit
+
+    @pytest.mark.parametrize("agent", [True, False])
+    def test_process_limit_respects_operator_bound(self, tmp_path: Path, agent: bool) -> None:
+        jobs = _jobs(tmp_path)
+        cfg = _config(jobs, agent_max_pids=32, executor_max_pids=32)
+        body = _agent_request() if agent else _executor_body(jobs)
+        validate = validate_agent_request if agent else validate_exec_request
+        assert validate(body, cfg).pids_limit == 32
+        body["pids_limit"] = 33
+        with pytest.raises(ValidationError, match="pids_limit exceeds"):
+            validate(body, cfg)
+
     def test_template_remaps_paths_and_builds_command(self, tmp_path: Path) -> None:
         jobs = _jobs(tmp_path)
         cfg = _config(jobs)

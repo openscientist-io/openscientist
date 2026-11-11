@@ -22,7 +22,7 @@ The main areas for improvement are **operational security gaps** rather than arc
 - **Secure session cookies.** The login cookie is marked `httponly` (not readable by JavaScript), `secure` (only sent over HTTPS when the app URL is https), and `samesite=lax` (mitigates cross-site request forgery). The `Secure` flag follows the scheme of the deployment's base URL. The setup wizard writes `APP_URL` from the public base URL it asks for, and `APP_URL` falls back to `OPENSCIENTIST_BASE_URL` when unset, so both settings keep the real scheme. Sessions have a configurable expiry (default 30 days).
 - **Socket.io restricted to the app's origin.** The socket.io server accepts handshakes only from the origin of the configured base URL, not from arbitrary origins.
 - **Secure session cookies.** The login cookie is marked `httponly` (not readable by JavaScript), `secure` (only sent over HTTPS when the app URL is https), and `samesite=lax` (mitigates cross-site request forgery). Sessions have a configurable expiry (default 30 days).
-- **Database-backed sessions.** Sessions live in PostgreSQL with UUID primary keys and expiry timestamps, and the login cookie is the web's only credential. Every page build and every `/web/*` route validates the cookie against the database session, so an expired or deleted session is rejected there as well. Logging out deletes the database record and clears both the login cookie and the session cookie NiceGUI uses for its per-browser storage, which carries no credentials of its own, is marked `samesite=lax`, and additionally marked `secure` when the app URL is https.
+- **Database-backed sessions.** Login cookies contain `secrets.token_urlsafe(32)` secrets with 256 bits of entropy. PostgreSQL stores only their `SHA-256` hashes, separate from the row identifiers. Page builds and `/web/*` routes look up the cookie hash and reject expired or deleted sessions. Logout deletes the row and clears both the login cookie and NiceGUI's browser-storage cookie. The session credential migration invalidates all sessions on upgrade and downgrade.
 - **User approval workflow.** New users must be explicitly approved by an admin before they can run jobs, preventing open access.
 
 ### Data Protection
@@ -38,7 +38,7 @@ The main areas for improvement are **operational security gaps** rather than arc
 ### Container Isolation
 
 - **One container per job.** Each agent job runs in its own ephemeral Docker container, preventing jobs from interfering with each other.
-- **Resource limits enforced.** Agent containers have configurable CPU and memory caps (default: 2 CPUs, 8 GB RAM).
+- **Resource limits enforced.** Agent and executor containers have configurable CPU, memory and process caps. The process cap includes threads and defaults to 4096 per container, bounded by the launcher's `AGENT_MAX_PIDS` and `EXECUTOR_MAX_PIDS` settings. Each container has a `nofile` limit of 65536. The execution broker refuses calls above `OPENSCIENTIST_EXECUTOR_MAX_CONCURRENT_PER_JOB` with HTTP 429, with a default of two simultaneous executions per job. A disconnected caller keeps its slot until its execution finishes.
 - **Privilege escalation blocked.** Containers run with `no-new-privileges` and the agent process runs as a non-root user (UID 1001).
 - **Job files owned by the container users.** Job directories are setgid and owned by the agent's fixed UID and shared jobs group, so every file created in them inherits the group. The agent and executor containers run under umask 0007, so files and directories the job processes create are group-only (0660/02770) with no world bits, and operator logins copied into a run's home are private to the agent, so no other local account can read or modify a job's data.
 - **Code execution in separate containers.** When an agent needs to run Python or Rust code, it spawns a further-isolated executor container. Input data is mounted read-only. The execution broker clamps each request's timeout to the admin settings' executor timeout (at least 300 s for Rust, which compiles before it runs), refusing zero, negative, non-numeric and non-finite values, and caps the size of the result string fields and plot list it returns.
@@ -50,6 +50,19 @@ The main areas for improvement are **operational security gaps** rather than arc
 - **The proxy enforces spend limits before model calls.** It checks the job cap and project total and 24-hour limits against the cost ledger and cached provider billing. Exhausted runs receive an error before an HTTP model call or websocket handshake reaches the provider, and each websocket response creation is checked again. Calls already in flight can finish and add their cost to the ledger.
 - **Web server runs as a non-root user.** The web image runs as its own user (UID 1002) in the jobs group (GID 1001), so a compromised web process has no root inside its container.
 - **Only the launcher holds the Docker socket.** The web and migrate services have no socket mount and no docker group. Every container operation the web makes — agent launches, chat turns, executor runs, stops, cleanup and the dashboard — goes through the launcher service over a unix socket that the launcher guards with a peer-credential check. The launcher builds every container from one of two server-side templates, and answers a uniform 404 for any container it did not create, so a compromised web cannot reach the Docker API, alter a container's mounts, capabilities, image or network, or touch a foreign container.
+
+### Chat Admission
+
+Each web process admits one chat turn per job and at most `OPENSCIENTIST_MAX_CONCURRENT_CHATS` turns across jobs. The global limit defaults to four. Each chat container uses the `OPENSCIENTIST_AGENT_MEMORY` limit, so operators must size concurrency to their host's available memory. Admission covers request preparation and container execution. A disconnected caller retains its slot until the container worker finishes.
+
+| Event | No admitted turn | Preparing request | Running container | Caller cancelled during execution |
+|---|---|---|---|---|
+| Send for this job | Admit if global capacity permits | Refuse duplicate | Refuse duplicate | Refuse duplicate |
+| Send for another job | Admit if global capacity permits | Admit if global capacity permits | Admit if global capacity permits | Admit if global capacity permits |
+| Request prepared | Not applicable | Start container worker | Not applicable | Not applicable |
+| Preparation fails or caller cancels preparation | Not applicable | Remove request files and release slot | Not applicable | Not applicable |
+| Caller cancels execution | Not applicable | Not applicable | Keep worker and slot | Keep worker and slot |
+| Launch fails, container errors, times out, or returns a reply | Not applicable | Not applicable | Remove turn files and release slot | Remove turn files and release slot |
 
 ### Input Validation
 
@@ -77,7 +90,7 @@ The main areas for improvement are **operational security gaps** rather than arc
 
 ### Review Tokens
 
-- **Tokens are hashed before storage.** Review tokens are generated with `secrets.token_urlsafe(32)` (128 bits of entropy) and stored as SHA-256 hashes. The database never holds the plaintext.
+- **Tokens are hashed before storage.** Review tokens are generated with `secrets.token_urlsafe(32)` (256 bits of entropy) and stored as `SHA-256` hashes. The database never holds the plaintext.
 - **Redemption behind a confirmation page.** The review link only renders a sign-in page. Signing in is a same-origin JSON POST from that page, so a cross-site link can show the page but never signs the visitor in.
 - **Race-condition safe sign-in.** The sign-in lookup uses `SELECT ... FOR UPDATE` to prevent double-redemption, and a redeemed token whose reviewer account no longer exists is refused instead of minting a new one.
 - **Referrer leakage prevention.** Sign-in responses set `Referrer-Policy: no-referrer` so the token doesn't leak in HTTP headers.
@@ -119,7 +132,6 @@ The main areas for improvement are **operational security gaps** rather than arc
 
 | Finding | Description | Recommended Next Step |
 |---------|-------------|----------------------|
-| **Session tokens are UUIDs** | Session tokens are standard UUID4 values. While 128-bit random, cryptographic tokens (`secrets.token_urlsafe`) would be marginally harder to predict. | Consider switching to `secrets.token_urlsafe(32)` for session identifiers. |
 | **Email validation is minimal** | Email addresses are validated with a simple regex (`^[^@\s]+@[^@\s]+$`). Invalid formats like `a@b` pass validation. | Use a proper email validation library (e.g., `email-validator`). |
 | **Agent code imports are permissive** | The allowed-imports list for Python code execution includes `requests` (network access) and `os` (environment access). | Review and tighten the import allowlist; consider removing `os` or restricting it to `os.path`. |
 | **Research questions logged as-is** | Job titles and research questions appear in application logs without PII scrubbing. | Evaluate whether research context in logs is acceptable for your compliance requirements. |
