@@ -32,13 +32,13 @@ async def key_holders(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str]]
         admin_key = APIKey(user_id=admin.id, name="admin-script", key_hash=uuid4().hex)
         user_key = APIKey(user_id=user.id, name="user-script", key_hash=uuid4().hex)
         expires = datetime.now(UTC) + timedelta(days=1)
-        admin_login = Session(user_id=admin.id, expires_at=expires)
-        user_login = Session(user_id=user.id, expires_at=expires)
+        admin_login, admin_login_token = Session.issue(user_id=admin.id, expires_at=expires)
+        user_login, user_login_token = Session.issue(user_id=user.id, expires_at=expires)
         db.add_all([admin_key, user_key, admin_login, user_login])
         await db.commit()
     yield {
-        "admin_token": str(admin_login.id),
-        "user_token": str(user_login.id),
+        "admin_token": admin_login_token,
+        "user_token": user_login_token,
         "admin_key": str(admin_key.id),
         "user_key": str(user_key.id),
     }

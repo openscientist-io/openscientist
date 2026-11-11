@@ -80,6 +80,7 @@ def _confined_container_path(host_path: str, cs: HostPathSettings, job_root: Pat
 
 def create_exec_broker_app(*, manager: Callable[[], ContainerManager]) -> Starlette:
     """Build the broker ASGI app. The manager is resolved per request."""
+    executions: dict[str, set[asyncio.Task[Response]]] = {}
 
     async def handler(request: Request) -> Response:
         presented = request.headers.get(EXEC_TOKEN_HEADER, "")
@@ -173,20 +174,40 @@ def create_exec_broker_app(*, manager: Callable[[], ContainerManager]) -> Starle
         except _PathConfinementError as exc:
             return JSONResponse({"error": str(exc)}, status_code=403)
 
-        # execute_code() blocks on a container, so run it off the event loop.
-        result = await asyncio.to_thread(
-            manager().execute_code,
-            code=code,
-            job_id=job_id,
-            data_path=str(data_path) if data_path is not None else None,
-            output_dir=output_dir,
-            timeout=timeout,
-            description=description,
-            iteration=iteration,
-            data_files=data_files,
-            language=language,
-        )
-        return JSONResponse(_bounded_result(result))
+        active = executions.setdefault(job_id, set())
+        if len(active) >= cs.executor_max_concurrent_per_job:
+            return JSONResponse(
+                {"error": "job concurrent execution limit reached, retry after an execution ends"},
+                status_code=429,
+            )
+
+        async def execute() -> Response:
+            result = await asyncio.to_thread(
+                manager().execute_code,
+                code=code,
+                job_id=job_id,
+                data_path=str(data_path) if data_path is not None else None,
+                output_dir=output_dir,
+                timeout=timeout,
+                description=description,
+                iteration=iteration,
+                data_files=data_files,
+                language=language,
+            )
+            return JSONResponse(_bounded_result(result))
+
+        def finished(task: asyncio.Task[Response]) -> None:
+            active.discard(task)
+            if not active:
+                executions.pop(job_id, None)
+            if not task.cancelled():
+                task.exception()
+
+        task = asyncio.create_task(execute())
+        active.add(task)
+        task.add_done_callback(finished)
+        # A disconnected caller still holds its slot until the container exits.
+        return await asyncio.shield(task)
 
     async def budget_handler(request: Request) -> Response:
         presented = request.headers.get(EXEC_TOKEN_HEADER, "")
