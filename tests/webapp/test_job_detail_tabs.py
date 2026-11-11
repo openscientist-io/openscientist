@@ -230,7 +230,9 @@ async def failed_report_job(
         db.add(owner)
         await db.flush()
         job = Job(owner_id=owner.id, research_question="Failed report", status="failed")
-        login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add_all([job, login])
         await db.flush()
         (jobs_root / str(job.id)).mkdir(parents=True)
@@ -238,7 +240,7 @@ async def failed_report_job(
     yield {
         "owner": owner,
         "job_id": str(job.id),
-        "token": str(login.id),
+        "token": login_token,
         "jobs_root": jobs_root,
     }
     async with AsyncSession(test_engine) as db:

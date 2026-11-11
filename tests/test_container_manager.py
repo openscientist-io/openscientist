@@ -131,6 +131,7 @@ class TestContainerManagerUnit:
         assert result["success"] is True
         assert result["output"] == "Hello, World!"
         assert result["error"] is None
+        assert client.run_exec.call_args.args[0]["pids_limit"] == 4096
 
     def test_execute_code_failure(self, manager: tuple[Any, MagicMock], jobs_root: Path) -> None:
         """A failed run passes the executor's error through."""

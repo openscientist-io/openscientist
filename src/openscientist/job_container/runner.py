@@ -316,6 +316,7 @@ class JobContainerRunner:
             "phenix": bool(settings.phenix.phenix_host_path),
             "memory_mib": admin.agent_memory_mib,
             "cpu": admin.agent_cpu,
+            "pids_limit": cs.agent_pids_limit,
             "airgapped": admin.airgapped,
         }
         # The container starts behind the firewall in both postures, so the

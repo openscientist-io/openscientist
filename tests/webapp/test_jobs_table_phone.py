@@ -69,10 +69,12 @@ async def long_job_owner(test_engine: AsyncEngine) -> AsyncIterator[_OwnerRow]:
         )
         db.add_all([first, second])
         await db.flush()
-        login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         await db.commit()
-    yield {"owned": {str(first.id), str(second.id)}, "owner_token": str(login.id)}
+    yield {"owned": {str(first.id), str(second.id)}, "owner_token": login_token}
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(Job).where(Job.id.in_([first.id, second.id])))
         await db.execute(delete(User).where(User.id == owner.id))

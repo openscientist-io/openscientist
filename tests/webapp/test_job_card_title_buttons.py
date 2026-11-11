@@ -85,10 +85,12 @@ async def _seed(test_engine: AsyncEngine) -> dict[str, str]:
         )
         db.add(job)
         await db.flush()
-        login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         await db.commit()
-    return {"job_id": str(job.id), "owner_token": str(login.id), "user": str(owner.id)}
+    return {"job_id": str(job.id), "owner_token": login_token, "user": str(owner.id)}
 
 
 async def _cleanup(test_engine: AsyncEngine, seeded: dict[str, str]) -> None:

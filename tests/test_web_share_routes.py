@@ -26,7 +26,9 @@ async def signed_in_owner(
         owner = User(email=f"share-owner-{uuid4().hex}@share.test", name="Share Owner")
         db.add(owner)
         await db.flush()
-        login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         job = Job(
             owner_id=owner.id,
@@ -37,7 +39,7 @@ async def signed_in_owner(
         db.add(job)
         await db.commit()
         await db.refresh(job)
-    yield owner, str(login.id), job
+    yield owner, login_token, job
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(Job).where(Job.id == job.id))
         await db.execute(delete(User).where(User.id == owner.id))

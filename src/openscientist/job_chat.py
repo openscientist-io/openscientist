@@ -22,18 +22,21 @@ from openscientist.database.models import Job, JobChatMessage
 from openscientist.job_container.identity import apply_job_ownership
 from openscientist.job_files import job_file_exists, read_job_file_text, write_job_file
 from openscientist.knowledge_state import KnowledgeState
+from openscientist.settings import get_settings
 
 logger = logging.getLogger(__name__)
+_active_chat_turns: dict[UUID, asyncio.Task[str] | None] = {}
+
+
+class ChatAdmissionError(RuntimeError):
+    """No chat slot is available for this job."""
 
 
 class ChatResponseTooLargeError(RuntimeError):
     """The chat container's response file exceeds the size the web will read."""
 
 
-# The web side and the chat-turn container exchange one turn through a request
-# and a response file in the mounted job_dir, so the container needs no database
-# access of its own. Each turn names its files after a fresh id, which the
-# container receives in this variable, because turns on one job can overlap.
+# Each container receives the id of its request and response files.
 CHAT_TURN_ENV = "OPENSCIENTIST_CHAT_TURN"
 
 
@@ -420,24 +423,42 @@ async def _send_message_via_container(
     message: str,
     job_dir: Path,
 ) -> str:
-    """Run one chat turn in a hardened, ephemeral container.
+    """Admit one chat turn and retain its slot until the container worker exits."""
+    if job_id in _active_chat_turns:
+        raise ChatAdmissionError("A reply is already running for this job.")
+    if len(_active_chat_turns) >= get_settings().max_concurrent_chats:
+        raise ChatAdmissionError("All chat slots are busy. Please try again later.")
 
-    The web side builds the request and (in send_chat_message) persists the chat
-    rows, since it holds the RLS context. The container reads a request file and
-    writes a reply file in the mounted job_dir, and its own database login,
-    pinned to this job, records the turn's cost. It holds no master key,
-    provider credential, or Docker socket."""
-    from openscientist.job_container.runner import JobContainerRunner
-
-    request = await _build_chat_request(session, job_id, message)
+    _active_chat_turns[job_id] = None
     chat_turn = uuid4().hex
     request_path, response_path = _chat_turn_files(job_dir, chat_turn)
-    # The job directory is agent-writable, so the request is written and the
-    # reply is read through the symlink-safe walk.
-    write_job_file(job_dir, request_path.name, json.dumps(request))
-    # The container's agent user reads this turn's request, so hand it over.
-    apply_job_ownership(request_path)
+    task: asyncio.Task[str] | None = None
 
+    def finished(completed: asyncio.Task[str]) -> None:
+        _active_chat_turns.pop(job_id)
+        if not completed.cancelled():
+            completed.exception()
+
+    try:
+        request = await _build_chat_request(session, job_id, message)
+        write_job_file(job_dir, request_path.name, json.dumps(request))
+        apply_job_ownership(request_path)
+        task = asyncio.create_task(_run_chat_container(job_id, job_dir, chat_turn))
+        _active_chat_turns[job_id] = task
+        task.add_done_callback(finished)
+        return await asyncio.shield(task)
+    finally:
+        if task is None:
+            _active_chat_turns.pop(job_id)
+            request_path.unlink(missing_ok=True)
+            response_path.unlink(missing_ok=True)
+
+
+async def _run_chat_container(job_id: UUID, job_dir: Path, chat_turn: str) -> str:
+    """Run the blocking container and clean up its files after it exits."""
+    from openscientist.job_container.runner import JobContainerRunner
+
+    request_path, response_path = _chat_turn_files(job_dir, chat_turn)
     logger.info("Running chat turn for job %s in a hardened container", job_id)
     try:
         # run_chat_turn blocks on the container, so run it off the event loop.
