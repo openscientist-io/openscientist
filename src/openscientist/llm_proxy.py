@@ -33,6 +33,7 @@ from openscientist.listener import bind_listener
 from openscientist.llm_metering import (
     _model_from_body,
     _model_from_path,
+    _ObservedCall,
     _ResponsesDecoder,
     _usage_decoder,
     record_model_call,
@@ -46,10 +47,58 @@ logger = logging.getLogger(__name__)
 
 _WEB_HOST_ENV = "OPENSCIENTIST_WEB_HOST"
 _DEFAULT_WEB_HOST = "openscientist"
-
 # https://platform.claude.com/docs/en/api/errors#request-size-limits
 # https://developers.openai.com/api/docs/guides/production-best-practices#compress-request-bodies
 _MAX_REQUEST_BYTES = 128 * 1024 * 1024
+
+# Main agent plus three parallel subagents.
+MAX_JOB_MODEL_CALLS = 4
+
+
+class _Admissions:
+    def __init__(self) -> None:
+        self.active: dict[str, int] = {}
+        self.settlements: set[asyncio.Task[None]] = set()
+
+    def acquire(self, job_id: str) -> _Admission | None:
+        count = self.active.get(job_id, 0)
+        if count >= MAX_JOB_MODEL_CALLS:
+            return None
+        self.active[job_id] = count + 1
+        return _Admission(self, job_id)
+
+    async def settle(self, admission: _Admission, meter: Awaitable[None]) -> None:
+        async def finish() -> None:
+            try:
+                async with asyncio.timeout(30):
+                    await meter
+            except Exception:
+                logger.exception("LLM proxy could not meter run %s", admission.job_id)
+            finally:
+                admission.release()
+
+        task = asyncio.create_task(finish())
+        self.settlements.add(task)
+        task.add_done_callback(self.settlements.discard)
+        await asyncio.shield(task)
+
+
+class _Admission:
+    def __init__(self, owner: _Admissions, job_id: str) -> None:
+        self.owner = owner
+        self.job_id = job_id
+        self.released = False
+
+    def release(self) -> None:
+        if self.released:
+            return
+        self.released = True
+        remaining = self.owner.active[self.job_id] - 1
+        if remaining:
+            self.owner.active[self.job_id] = remaining
+        else:
+            del self.owner.active[self.job_id]
+
 
 # Dropped when forwarding: connection-scoped headers and the auth header we replace.
 _DROP_REQUEST_HEADERS = frozenset(
@@ -229,13 +278,7 @@ def _meter(
 
 
 class _MeteredStreamResponse(Response):
-    """The upstream's body forwarded unchanged while its decoder meters it.
-
-    The row is written once the response is done, whatever ends it. The
-    finally runs on a clean end, on an upstream cut, and on a client
-    disconnect, which arrives as the cancellation of this task, and a
-    cancelled task still runs its remaining awaits before it dies.
-    """
+    """Stream upstream bytes while holding admission through cancellation-safe metering."""
 
     def __init__(
         self,
@@ -243,6 +286,7 @@ class _MeteredStreamResponse(Response):
         upstream: httpx.Response,
         decoder,
         meter: Callable[[str], Awaitable[None]],
+        admission: _Admission | None = None,
         status_code: int,
         headers: dict[str, str],
     ) -> None:
@@ -255,22 +299,34 @@ class _MeteredStreamResponse(Response):
         self._upstream = upstream
         self._decoder = decoder
         self._meter = meter
+        self._admission = admission
 
     async def __call__(self, scope, receive, send) -> None:
-        await send(
-            {"type": "http.response.start", "status": self.status_code, "headers": self.raw_headers}
-        )
         outcome = "cut"
+
+        async def finish() -> None:
+            with suppress(Exception):
+                await self._upstream.aclose()
+            await self._meter(outcome)
+
         try:
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": self.status_code,
+                    "headers": self.raw_headers,
+                }
+            )
             async for chunk in self._upstream.aiter_raw():
                 self._decoder.feed(chunk)
                 await send({"type": "http.response.body", "body": chunk, "more_body": True})
             await send({"type": "http.response.body", "body": b"", "more_body": False})
             outcome = "end"
         finally:
-            with suppress(Exception):
-                await self._upstream.aclose()
-            await self._meter(outcome)
+            if self._admission is None:
+                await finish()
+            else:
+                await self._admission.owner.settle(self._admission, finish())
 
 
 def create_llm_proxy_app(
@@ -287,6 +343,7 @@ def create_llm_proxy_app(
     # for the id would validate its credentials, which a metered row must not
     # depend on.
     provider = provider_id or (lambda: get_settings().provider.provider_id)
+    admissions = _Admissions()
 
     async def handler(request: Request) -> Response:
         credential = _presented_credential(request)
@@ -323,9 +380,19 @@ def create_llm_proxy_app(
             )
             return Response(str(exc.detail), status_code=exc.status_code)
         model: str | None = None
+        admission = None
+        transferred = False
         if request.method == "POST":
             model = _model_from_body(body) or _model_from_path(request.url.path)
             if not request.url.path.endswith(("/count_tokens", ":count-tokens:rawPredict")):
+                admission = admissions.acquire(run.job_id)
+                if admission is None:
+                    logger.warning(
+                        "LLM proxy admission refused for run %s at %s", run.job_id, request.url.path
+                    )
+                    return Response("Job model call admission unavailable", status_code=429)
+        try:
+            if admission is not None:
                 verdict = await check_budget(
                     job_id=UUID(run.job_id),
                     provider_id=provider(),
@@ -340,77 +407,81 @@ def create_llm_proxy_app(
                         verdict.message,
                     )
                     return Response(verdict.message, status_code=403)
-        logger.debug(
-            "LLM proxy: %s %s for run %s (%s)",
-            request.method,
-            request.url.path,
-            run.job_id,
-            run.kind,
-        )
-        headers = {
-            k: v
-            for k, v in request.headers.items()
-            if k.lower() not in _DROP_REQUEST_HEADERS and not k.lower().startswith("x-goog-")
-        }
-        path = (
-            request.scope.get("raw_path", request.url.path.encode()).decode("ascii")
-            if provider() == "bedrock"
-            else request.url.path
-        )
-        try:
-            headers.update(
-                target.signing.credential_headers(
-                    method=request.method,
-                    path=path,
-                    query=request.url.query,
-                    body=body,
+            headers = {
+                k: v
+                for k, v in request.headers.items()
+                if k.lower() not in _DROP_REQUEST_HEADERS and not k.lower().startswith("x-goog-")
+            }
+            path = (
+                request.scope.get("raw_path", request.url.path.encode()).decode("ascii")
+                if provider() == "bedrock"
+                else request.url.path
+            )
+            try:
+                headers.update(
+                    target.signing.credential_headers(
+                        method=request.method,
+                        path=path,
+                        query=request.url.query,
+                        body=body,
+                    )
                 )
+            except UpstreamCredentialError:
+                logger.warning("LLM proxy upstream credential unusable for run %s", run.job_id)
+                return Response("upstream credential unavailable", status_code=401)
+            url = target.signing.upstream_url(
+                base_url=target.base_url, path=path, query=request.url.query
             )
-        except UpstreamCredentialError:
-            logger.warning("LLM proxy: upstream credential unusable for run %s", run.job_id)
-            return Response("upstream credential unavailable", status_code=401)
-        url = target.signing.upstream_url(
-            base_url=target.base_url, path=path, query=request.url.query
-        )
-
-        upstream_req = client.build_request(request.method, url, headers=headers, content=body)
-        upstream_resp = await client.send(upstream_req, stream=True)
-        resp_headers = {
-            k: v
-            for k, v in upstream_resp.headers.items()
-            if k.lower() not in _DROP_RESPONSE_HEADERS
-        }
-        # Only a POST to a model-call path is a metered call. A count-tokens
-        # lookup and a GET catalogue answer are not, and write no row.
-        decoder = None
-        if request.method == "POST" and model is not None:
-            decoder = _usage_decoder(
-                request.url.path, upstream_resp.headers.get("content-type", ""), model
+            upstream_req = client.build_request(request.method, url, headers=headers, content=body)
+            try:
+                upstream_resp = await client.send(upstream_req, stream=True)
+            except (Exception, asyncio.CancelledError):
+                logger.warning(
+                    "LLM proxy call ended before response headers for run %s (%s)",
+                    run.job_id,
+                    run.kind,
+                )
+                raise
+            resp_headers = {
+                k: v
+                for k, v in upstream_resp.headers.items()
+                if k.lower() not in _DROP_RESPONSE_HEADERS
+            }
+            decoder = None
+            if request.method == "POST" and model is not None:
+                decoder = _usage_decoder(
+                    request.url.path, upstream_resp.headers.get("content-type", ""), model
+                )
+            if decoder is None:
+                return StreamingResponse(
+                    upstream_resp.aiter_raw(),
+                    status_code=upstream_resp.status_code,
+                    headers=resp_headers,
+                    background=BackgroundTask(upstream_resp.aclose),
+                )
+            meter = _meter(
+                job_id=run.job_id,
+                kind=run.kind,
+                decoder=decoder,
+                provider_id=provider(),
+                status_code=upstream_resp.status_code,
             )
-        if decoder is None:
-            return StreamingResponse(
-                upstream_resp.aiter_raw(),
+            response = _MeteredStreamResponse(
+                upstream=upstream_resp,
+                decoder=decoder,
+                meter=meter,
+                admission=admission,
                 status_code=upstream_resp.status_code,
                 headers=resp_headers,
-                background=BackgroundTask(upstream_resp.aclose),
             )
-        meter = _meter(
-            job_id=run.job_id,
-            kind=run.kind,
-            decoder=decoder,
-            provider_id=provider(),
-            status_code=upstream_resp.status_code,
-        )
-        return _MeteredStreamResponse(
-            upstream=upstream_resp,
-            decoder=decoder,
-            meter=meter,
-            status_code=upstream_resp.status_code,
-            headers=resp_headers,
-        )
+            transferred = True
+            return response
+        finally:
+            if admission is not None and not transferred:
+                admission.release()
 
     terminator = _ResponsesWebsocketTerminator(
-        upstream=upstream, client=client, provider_id=provider
+        upstream=upstream, client=client, provider_id=provider, admissions=admissions
     )
     return Starlette(
         routes=[
@@ -460,10 +531,12 @@ class _ResponsesWebsocketTerminator:
         upstream: Callable[[], LlmUpstream],
         client: httpx.AsyncClient,
         provider_id: Callable[[], str],
+        admissions: _Admissions,
     ) -> None:
         self._upstream = upstream
         self._client = client
         self._provider_id = provider_id
+        self._admissions = admissions
 
     async def __call__(self, scope, receive, send) -> None:
         connect_msg = await receive()
@@ -537,31 +610,39 @@ class _ResponsesWebsocketTerminator:
             logger.warning("LLM proxy: upstream websocket unreachable (%s)", exc)
             await send({"type": "websocket.close", "code": 1011})
             return
-        await send({"type": "websocket.accept"})
+        active: dict[str, _Admission] = {}
+        tasks: list[asyncio.Task[None]] = []
         decoder = _ResponsesDecoder("unknown")
-        loop = asyncio.get_running_loop()
-        to_upstream = loop.create_task(
-            self._container_to_upstream(connection, receive, send, run.job_id)
-        )
-        to_container = loop.create_task(
-            self._upstream_to_container(connection, send, decoder, run.job_id, run.kind)
-        )
-        await asyncio.wait({to_upstream, to_container}, return_when=asyncio.FIRST_COMPLETED)
-        for task in (to_upstream, to_container):
-            if not task.done():
+        try:
+            await send({"type": "websocket.accept"})
+            tasks = [
+                asyncio.create_task(
+                    self._container_to_upstream(connection, receive, send, run.job_id, active)
+                ),
+                asyncio.create_task(
+                    self._upstream_to_container(
+                        connection, send, decoder, run.job_id, run.kind, active
+                    )
+                ),
+            ]
+            await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in tasks:
                 task.cancel()
+            for task in tasks:
                 with suppress(asyncio.CancelledError, Exception):
                     await task
-        with suppress(Exception):
-            await connection.close()
-        if not decoder.saw_completion():
-            logger.warning(
-                "LLM proxy: responses websocket for run %s (%s) ended without a completed response",
-                run.job_id,
-                run.kind,
-            )
+            try:
+                with suppress(Exception):
+                    await connection.close()
+            finally:
+                for admission in active.values():
+                    logger.warning("LLM proxy stream ended without usage for run %s", run.job_id)
+                    admission.release()
 
-    async def _container_to_upstream(self, connection, receive, send, job_id: str) -> None:
+    async def _container_to_upstream(
+        self, connection, receive, send, job_id: str, active: dict[str, _Admission]
+    ) -> None:
         while True:
             message = await receive()
             if message["type"] == "websocket.disconnect":
@@ -574,7 +655,9 @@ class _ResponsesWebsocketTerminator:
             payload = message.get("text")
             if payload is None:
                 payload = message.get("bytes")
-            if payload is not None and (
+            if payload is None:
+                continue
+            if (
                 len(payload) > _MAX_REQUEST_BYTES
                 or isinstance(payload, str)
                 and len(payload.encode("utf-8")) > _MAX_REQUEST_BYTES
@@ -589,46 +672,68 @@ class _ResponsesWebsocketTerminator:
                         }
                     )
                 return
-            if payload is not None:
-                refusal = await self._budget_refusal(payload, job_id)
-                if refusal is not None:
-                    # The pinned codex client maps this pre-stream error frame to a failed turn carrying the message.
-                    with suppress(RuntimeError):
-                        await send(
-                            {
-                                "type": "websocket.send",
-                                "text": json.dumps(
-                                    {
-                                        "type": "error",
-                                        "status": 403,
-                                        "error": {"message": refusal},
-                                    }
-                                ),
-                            }
-                        )
-                    await connection.close(1008, refusal)
-                    return
-                await connection.send(payload)
+            refusal = await self._call_refusal(payload, job_id, active)
+            if refusal is not None:
+                status, detail = refusal
+                logger.warning("LLM proxy refused run %s with %s", job_id, detail)
+                # Codex surfaces a pre-stream error frame as a failed turn.
+                with suppress(RuntimeError):
+                    await send(
+                        {
+                            "type": "websocket.send",
+                            "text": json.dumps(
+                                {"type": "error", "status": status, "error": {"message": detail}}
+                            ),
+                        }
+                    )
+                await connection.close(1008, detail[:120])
+                return
+            await connection.send(payload)
 
-    async def _budget_refusal(self, payload: str | bytes, job_id: str) -> str | None:
-        """Return the budget refusal for a response creation frame."""
+    async def _call_refusal(
+        self, payload: str | bytes, job_id: str, active: dict[str, _Admission]
+    ) -> tuple[int, str] | None:
+        """Reserve admission before checking each response creation frame."""
         try:
             frame = json.loads(payload)
         except (ValueError, UnicodeDecodeError):
             return None
         if not isinstance(frame, dict) or frame.get("type") != "response.create":
             return None
-        model = frame.get("model")
-        verdict = await check_budget(
-            job_id=UUID(job_id),
-            provider_id=self._provider_id(),
-            model=model if isinstance(model, str) and model else None,
-            include_unpriced=True,
-        )
-        return None if verdict.ok else verdict.message or "Budget exhausted"
+        stream = frame.get("stream_id", "")
+        if not isinstance(stream, str):
+            return 400, "Invalid response stream"
+        admission = self._admissions.acquire(job_id)
+        if admission is None:
+            return 429, "Job model call admission unavailable"
+        retained = False
+        try:
+            model = frame.get("model")
+            verdict = await check_budget(
+                job_id=UUID(job_id),
+                provider_id=self._provider_id(),
+                model=model if isinstance(model, str) and model else None,
+                include_unpriced=True,
+            )
+            if not verdict.ok:
+                return 403, verdict.message or "Budget exhausted"
+            if stream in active:
+                return 429, "Response stream already active"
+            active[stream] = admission
+            retained = True
+            return None
+        finally:
+            if not retained:
+                admission.release()
 
     async def _upstream_to_container(
-        self, connection, send, decoder: _ResponsesDecoder, job_id: str, kind: RunKind
+        self,
+        connection,
+        send,
+        decoder: _ResponsesDecoder,
+        job_id: str,
+        kind: RunKind,
+        active: dict[str, _Admission],
     ) -> None:
         while True:
             try:
@@ -650,18 +755,50 @@ class _ResponsesWebsocketTerminator:
                 data, key = message, "bytes"
             else:
                 continue
-            # Meter the completed responses this frame reports, then
-            # forward the frame unchanged.
+            try:
+                frame = json.loads(data)
+            except (ValueError, UnicodeDecodeError):
+                frame = None
+            terminal = isinstance(frame, dict) and frame.get("type") in {
+                "response.completed",
+                "response.failed",
+                "response.incomplete",
+                "error",
+            }
+            stream = frame.get("stream_id", "") if isinstance(frame, dict) else ""
+            admission = active.pop(stream, None) if terminal and isinstance(stream, str) else None
+            if isinstance(frame, dict) and frame.get("type") in {
+                "response.failed",
+                "response.incomplete",
+            }:
+                response = frame.get("response")
+                if isinstance(response, dict) and isinstance(response.get("usage"), dict):
+                    frame["type"] = "response.completed"
+                    data = json.dumps(frame).encode()
             decoder.feed_frame(data)
-            for call in decoder.take_completed():
-                await record_model_call(
-                    job_id=job_id,
-                    kind=kind,
-                    model=call.model,
-                    provider_id=self._provider_id(),
-                    buckets=call.buckets,
-                )
+            calls = decoder.take_completed()
+
+            meter = self._record_calls(calls, terminal=terminal, job_id=job_id, kind=kind)
+
+            if admission is None:
+                await meter
+            else:
+                await self._admissions.settle(admission, meter)
             await send({"type": "websocket.send", key: message})
+
+    async def _record_calls(
+        self, calls: list[_ObservedCall], *, terminal: bool, job_id: str, kind: RunKind
+    ) -> None:
+        for call in calls:
+            await record_model_call(
+                job_id=job_id,
+                kind=kind,
+                model=call.model,
+                provider_id=self._provider_id(),
+                buckets=call.buckets,
+            )
+        if terminal and not calls:
+            logger.warning("LLM proxy response ended without usage for run %s", job_id)
 
 
 class _NoSignalServer(uvicorn.Server):

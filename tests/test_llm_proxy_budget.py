@@ -2,13 +2,15 @@
 
 import asyncio
 import json
+from contextlib import AsyncExitStack
 
 import httpx
 import pytest
 from websockets.asyncio.client import connect
-from websockets.exceptions import InvalidStatus
+from websockets.asyncio.server import serve
+from websockets.exceptions import ConnectionClosed, InvalidStatus
 
-from openscientist.llm_proxy import create_llm_proxy_app
+from openscientist.llm_proxy import _Admissions, create_llm_proxy_app
 from openscientist.providers.base import LlmUpstream, StaticHeadersSigning
 from tests import test_llm_proxy as proxy_fixtures
 from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
@@ -113,3 +115,295 @@ class TestWebsocketBudget:
                 assert error["status"] == 403
                 assert "Job cost limit" in error["error"]["message"]
             assert stub_upstream.frames == [create]
+
+    @pytest.mark.parametrize(
+        "terminal", ["response.completed", "response.failed", "response.incomplete", "error"]
+    )
+    async def test_terminal_frames_release_admission_for_next_response(
+        self, terminal, test_engine, placeholder_for, live_proxy, stub_upstream
+    ):
+        await set_admin_settings_row(test_engine, max_job_cost_usd=1.0)
+        async with job_with_costs(test_engine, []) as job:
+            async with (
+                asyncio.timeout(10),
+                connect(
+                    f"ws://127.0.0.1:{live_proxy}/responses",
+                    additional_headers={"authorization": f"Bearer {placeholder_for(str(job.id))}"},
+                    proxy=None,
+                ) as connection,
+            ):
+                for index in range(6):
+                    stream = f"stream-{index % 2}"
+                    stub_upstream.reply = json.dumps(
+                        {
+                            "type": terminal,
+                            "stream_id": stream,
+                            "response": {
+                                "id": f"response-{index}",
+                                "model": "gpt-5.2",
+                                "usage": {"input_tokens": 0, "output_tokens": 0},
+                            },
+                        }
+                    )
+                    await connection.send(
+                        json.dumps(
+                            {"type": "response.create", "model": "gpt-5.2", "stream_id": stream}
+                        )
+                    )
+                    assert await connection.recv() == stub_upstream.reply
+            assert len(stub_upstream.frames) == 6
+
+
+@pytest.mark.parametrize("aborted", [False, True])
+async def test_http_parallel_admission_holds_until_metered(test_engine, placeholder_for, aborted):
+    await set_admin_settings_row(test_engine, max_job_cost_usd=1.0)
+    entered = asyncio.Queue()
+    release = asyncio.Event()
+
+    class HeldBody(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            await release.wait()
+            if aborted:
+                raise httpx.ReadError("Upstream aborted")
+            yield json.dumps({"usage": {"input_tokens": 1_000_000, "output_tokens": 1}}).encode()
+
+    attempts = 0
+
+    async def upstream(request):
+        nonlocal attempts
+        attempts += 1
+        await entered.put(request)
+        stream: httpx.AsyncByteStream
+        if aborted and attempts > 4:
+
+            class EmptyBody(httpx.AsyncByteStream):
+                async def __aiter__(self):
+                    yield b'{"usage": {"input_tokens": 0, "output_tokens": 0}}'
+
+            stream = EmptyBody()
+        else:
+            stream = HeldBody()
+        return httpx.Response(200, stream=stream, headers={"content-type": "application/json"})
+
+    async with job_with_costs(test_engine, []) as job:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as upstream_client:
+            app = create_llm_proxy_app(
+                upstream=lambda: LlmUpstream("https://upstream.test", StaticHeadersSigning({})),
+                client=upstream_client,
+                provider_id=lambda: "anthropic",
+            )
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://proxy"
+            ) as client:
+
+                async def call():
+                    return await client.post(
+                        "/v1/messages",
+                        headers={"x-api-key": placeholder_for(str(job.id))},
+                        json={"model": "claude-sonnet-4-6"},
+                    )
+
+                held = [asyncio.create_task(call()) for _ in range(4)]
+                try:
+                    async with asyncio.timeout(5):
+                        for _ in held:
+                            await entered.get()
+                    async with asyncio.timeout(1):
+                        refused = await call()
+                    assert refused.status_code == 429
+                    assert entered.empty()
+                finally:
+                    release.set()
+                    async with asyncio.timeout(5):
+                        results = await asyncio.gather(*held, return_exceptions=aborted)
+                if aborted:
+                    assert all(isinstance(result, httpx.ReadError) for result in results)
+                assert (await call()).status_code == (200 if aborted else 403)
+                assert entered.qsize() == (1 if aborted else 0)
+
+
+class TestAdmissionWebsocket:
+    live_proxy = WebsocketFixtures.live_proxy
+
+    @pytest.fixture
+    async def stub_upstream(self):
+        class Stub:
+            def __init__(self):
+                self.release = asyncio.Event()
+                self.frames = []
+                self.port = 0
+                self.abort = False
+
+            async def handler(self, connection):
+                async for message in connection:
+                    self.frames.append(message)
+                    await connection.send("ready")
+                    await self.release.wait()
+                    if self.abort:
+                        await connection.close()
+                        return
+                    await connection.send(
+                        json.dumps(
+                            {
+                                "type": "response.completed",
+                                "response": {
+                                    "id": f"r{len(self.frames)}",
+                                    "model": "gpt-5.2",
+                                    "usage": {"input_tokens": 1_000_000, "output_tokens": 1},
+                                },
+                            }
+                        )
+                    )
+
+        stub = Stub()
+        async with serve(stub.handler, "127.0.0.1", 0) as server:
+            stub.port = server.sockets[0].getsockname()[1]
+            yield stub
+            stub.release.set()
+
+    @pytest.mark.parametrize("aborted", [False, True])
+    async def test_parallel_admission_holds_until_metered(
+        self, test_engine, placeholder_for, live_proxy, stub_upstream, aborted
+    ):
+        await set_admin_settings_row(test_engine, max_job_cost_usd=1.0)
+        stub_upstream.abort = aborted
+        async with job_with_costs(test_engine, []) as job:
+            async with asyncio.timeout(10), AsyncExitStack() as stack:
+                connections = [
+                    await stack.enter_async_context(
+                        connect(
+                            f"ws://127.0.0.1:{live_proxy}/responses",
+                            additional_headers={
+                                "authorization": f"Bearer {placeholder_for(str(job.id))}"
+                            },
+                            proxy=None,
+                        )
+                    )
+                    for _ in range(5)
+                ]
+                create = json.dumps({"type": "response.create", "model": "gpt-5.2"})
+                try:
+                    for connection in connections[:4]:
+                        await connection.send(create)
+                        assert await connection.recv() == "ready"
+                    await connections[4].send(create)
+                    refusal = await connections[4].recv()
+                    assert json.loads(refusal)["status"] == 429
+                    assert len(stub_upstream.frames) == 4
+                finally:
+                    stub_upstream.release.set()
+                if aborted:
+                    for connection in connections[:4]:
+                        with pytest.raises(ConnectionClosed):
+                            await connection.recv()
+                    async with connect(
+                        f"ws://127.0.0.1:{live_proxy}/responses",
+                        additional_headers={
+                            "authorization": f"Bearer {placeholder_for(str(job.id))}"
+                        },
+                        proxy=None,
+                    ) as next_connection:
+                        await next_connection.send(create)
+                        assert await next_connection.recv() == "ready"
+                    assert len(stub_upstream.frames) == 5
+                else:
+                    for connection in connections[:4]:
+                        assert json.loads(await connection.recv())["type"] == "response.completed"
+                    await connections[0].send(create)
+                    assert json.loads(await connections[0].recv())["status"] == 403
+                    assert len(stub_upstream.frames) == 4
+
+
+async def test_cancelling_meter_wait_keeps_slots_until_settlement():
+    admissions = _Admissions()
+    entered = asyncio.Queue()
+    release = asyncio.Event()
+
+    async def meter():
+        await entered.put(None)
+        await release.wait()
+
+    held = [admissions.acquire("job") for _ in range(4)]
+    tasks = []
+    try:
+        for admission in held:
+            assert admission is not None
+            tasks.append(asyncio.create_task(admissions.settle(admission, meter())))
+        async with asyncio.timeout(5):
+            for _ in held:
+                await entered.get()
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        assert admissions.acquire("job") is None
+        assert admissions.active == {"job": 4}
+    finally:
+        release.set()
+        async with asyncio.timeout(5):
+            await asyncio.gather(*admissions.settlements)
+    assert admissions.active == {}
+    next_call = admissions.acquire("job")
+    assert next_call is not None
+    next_call.release()
+
+
+async def test_failed_meter_releases_admission():
+    admissions = _Admissions()
+
+    async def meter():
+        raise RuntimeError("Ledger unavailable")
+
+    for _ in range(5):
+        admission = admissions.acquire("job")
+        assert admission is not None
+        async with asyncio.timeout(5):
+            await admissions.settle(admission, meter())
+        assert admissions.active == {}
+
+
+async def test_http_cancellation_before_headers_releases_admission(
+    test_engine, placeholder_for, caplog
+):
+    entered = asyncio.Queue()
+    release = asyncio.Event()
+
+    async def upstream(request):
+        await entered.put(None)
+        await release.wait()
+        raise httpx.ConnectError("Upstream unavailable")
+
+    async with job_with_costs(test_engine, []) as job:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as upstream_client:
+            app = create_llm_proxy_app(
+                upstream=lambda: LlmUpstream("https://upstream.test", StaticHeadersSigning({})),
+                client=upstream_client,
+                provider_id=lambda: "anthropic",
+            )
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://proxy"
+            ) as client:
+
+                async def call():
+                    return await client.post(
+                        "/v1/messages",
+                        headers={"x-api-key": placeholder_for(str(job.id))},
+                        json={"model": "claude-sonnet-4-6"},
+                    )
+
+                held = [asyncio.create_task(call()) for _ in range(4)]
+                try:
+                    async with asyncio.timeout(5):
+                        for _ in held:
+                            await entered.get()
+                    assert (await call()).status_code == 429
+                finally:
+                    for task in held:
+                        task.cancel()
+                    async with asyncio.timeout(5):
+                        await asyncio.gather(*held, return_exceptions=True)
+                release.set()
+                async with asyncio.timeout(5):
+                    with pytest.raises(httpx.ConnectError):
+                        await call()
+                assert entered.qsize() == 1
+                assert caplog.text.count("ended before response headers") == 5
