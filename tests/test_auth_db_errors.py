@@ -10,7 +10,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -22,27 +22,30 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from openscientist.auth import middleware
 from openscientist.auth.fastapi_routes import router
 from openscientist.database.models import Session, User
+from openscientist.database.models.session import hash_session_token
 from tests.db_outage import Forwarder
 
 
 @pytest_asyncio.fixture
-async def session_token(test_engine: AsyncEngine) -> AsyncGenerator[UUID, None]:
+async def session_token(test_engine: AsyncEngine) -> AsyncGenerator[str, None]:
     """A signed-in visitor's valid session."""
     async with AsyncSession(test_engine, expire_on_commit=False) as db:
         user = User(email=f"auth-{uuid4().hex}@outage.test", name="Visitor", is_approved=True)
         db.add(user)
         await db.flush()
-        login = Session(user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         await db.commit()
-    yield login.id
+    yield login_token
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(User).where(User.id == user.id))
         await db.commit()
 
 
 @pytest.fixture
-def visitor(session_token: UUID, monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+def visitor(session_token: str, monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     """The NiceGUI context of a visitor carrying ``session_token``. Returns
     their stored session, which a sign-out would clear."""
     storage: dict[str, object] = {"session_token": str(session_token), "user_id": "kept"}
@@ -206,15 +209,20 @@ async def test_an_unexpected_validation_error_is_not_treated_as_an_outage(
     assert visitor == stored
 
 
-async def _session_exists(test_engine: AsyncEngine, token: UUID) -> bool:
+async def _session_exists(test_engine: AsyncEngine, token: str) -> bool:
     async with test_engine.connect() as conn:
-        return await conn.scalar(select(Session.id).where(Session.id == token)) is not None
+        return (
+            await conn.scalar(
+                select(Session.id).where(Session.token_hash == hash_session_token(token))
+            )
+            is not None
+        )
 
 
 async def test_logout_during_an_outage_signs_out_now_and_revokes_later(
     database: Forwarder,
     test_engine: AsyncEngine,
-    session_token: UUID,
+    session_token: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Signing out clears the per-browser copy NiceGUI keeps, or the next
@@ -248,7 +256,7 @@ async def test_logout_during_an_outage_signs_out_now_and_revokes_later(
 
 async def test_sign_out_fails_loudly_when_the_session_delete_is_rejected(
     test_engine: AsyncEngine,
-    session_token: UUID,
+    session_token: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A rejected delete is not an outage, so it must not read as a
@@ -297,7 +305,7 @@ async def test_sign_out_without_a_browser_still_works(monkeypatch: pytest.Monkey
 async def test_logout_answers_see_other_so_the_follow_up_is_a_get(
     database: Forwarder,
     test_engine: AsyncEngine,
-    session_token: UUID,
+    session_token: str,
 ) -> None:
     """The sign-out redirect is 303 See Other, so a conforming client
     follows it with a GET and the GET-only login page does not get the
@@ -318,7 +326,7 @@ async def test_logout_answers_see_other_so_the_follow_up_is_a_get(
 async def test_a_cross_site_get_to_logout_changes_nothing(
     database: Forwarder,
     test_engine: AsyncEngine,
-    session_token: UUID,
+    session_token: str,
 ) -> None:
     """A top-level GET from another site can no longer sign a visitor out."""
     app = FastAPI()
@@ -336,7 +344,7 @@ async def test_a_cross_site_get_to_logout_changes_nothing(
 
 async def test_a_failed_deferred_revoke_leaves_the_session_and_reports_it(
     test_engine: AsyncEngine,
-    session_token: UUID,
+    session_token: str,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:

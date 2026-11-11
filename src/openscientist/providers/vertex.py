@@ -229,21 +229,24 @@ class VertexProvider(ClaudeCompatible):
         return type(self).container_env(get_settings().provider)
 
     def harness_env(self, *, proxy: str | None) -> dict[str, str]:
-        """Route omp at Vertex through the proxy.
-
-        omp's Vertex fetcher reads ``GOOGLE_CLOUD_ACCESS_TOKEN`` before it would
-        mint a token from the default credentials, so the run's placeholder there
-        is exchanged by the proxy instead of reaching Vertex directly. Without
-        the proxy there is no safe route, so there is no route at all.
-        """
+        """Route omp's Vertex requests through the proxy with the run's placeholder."""
         if not proxy:
             raise ValueError(
                 "Vertex cannot be routed under the omp harness without the LLM proxy, "
                 "so omp would reach Vertex directly. The proxy must be running for "
                 "this harness."
             )
-        # The placeholder the container's env publishes; the proxy exchanges it.
-        return {"GOOGLE_CLOUD_ACCESS_TOKEN": os.environ.get("ANTHROPIC_AUTH_TOKEN", "")}
+        p = get_settings().provider
+        # omp requires its project and location names to select the Vertex path.
+        return {
+            "GOOGLE_CLOUD_ACCESS_TOKEN": os.environ.get("ANTHROPIC_AUTH_TOKEN", ""),
+            **env_from_pairs(
+                [
+                    ("GOOGLE_CLOUD_PROJECT", p.anthropic_vertex_project_id),
+                    ("GOOGLE_CLOUD_LOCATION", p.cloud_ml_region),
+                ]
+            ),
+        }
 
     def omp_model_catalog(self, *, context_window: int) -> OmpModelCatalog | None:
         """omp's catalog routing its Vertex model through the proxy, or None when
