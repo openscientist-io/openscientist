@@ -9,6 +9,7 @@ import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import FrameType
 from unittest.mock import patch
 
 import fitz  # type: ignore[import-untyped]
@@ -205,6 +206,55 @@ def test_cached_diagram_renders_while_another_thread_holds_the_slot(tmp_path: Pa
     run.assert_not_called()
     assert "<svg" in second
     assert second == first
+
+
+@pytest.mark.requires_graphviz
+def test_diagram_cached_before_lock_acquisition_is_reused() -> None:
+    source = "digraph { concurrent -> b }"
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+
+        def render_before_acquisition(frame: FrameType, event: str, arg: object) -> None:
+            if (
+                frame.f_code is diagrams.render_dot.__code__
+                and event == "c_call"
+                and arg == diagrams._render_lock.acquire
+            ):
+                sys.setprofile(None)
+                assert pool.submit(diagrams.render_dot, source).result(timeout=5) is not None
+                assert (
+                    pool.submit(diagrams.render_dot, "digraph { other -> b }").result(timeout=5)
+                    is not None
+                )
+
+        with patch.object(subprocess, "run", wraps=subprocess.run) as run:
+            previous_profile = sys.getprofile()
+            sys.setprofile(render_before_acquisition)
+            try:
+                svg = diagrams.render_dot(source)
+            finally:
+                sys.setprofile(previous_profile)
+
+    assert svg is not None
+    assert "concurrent" in svg
+    assert run.call_count == 2
+    assert len(diagrams._cache) == 2
+    assert next(reversed(diagrams._cache.values())) == svg
+    assert not diagrams._render_lock.locked()
+
+
+@pytest.mark.requires_graphviz
+def test_missing_graphviz_can_be_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = "digraph { retry -> b }"
+    with monkeypatch.context() as missing_graphviz:
+        missing_graphviz.setenv("PATH", str(tmp_path))
+        assert diagrams.render_dot(source) is None
+
+    assert not diagrams._cache
+    assert not diagrams._render_lock.locked()
+    svg = diagrams.render_dot(source)
+    assert svg is not None
+    assert "retry" in svg
 
 
 @pytest.mark.requires_graphviz
