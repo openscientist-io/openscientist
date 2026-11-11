@@ -322,11 +322,11 @@ async def test_a_login_session_lasting_the_rows_days(
     test_engine: AsyncEngine, admin_row: None, db_session: AsyncSession, test_user: User
 ) -> None:
     await set_admin_settings_row(test_engine, session_duration_days=30)
-    first = await create_session(db_session, str(test_user.id))
+    first, _ = await create_session(db_session, str(test_user.id))
     assert abs((first.expires_at - datetime.now(UTC)) - timedelta(days=30)) < timedelta(minutes=1)
 
     await set_admin_settings_row(test_engine, session_duration_days=7)
-    second = await create_session(db_session, str(test_user.id))
+    second, _ = await create_session(db_session, str(test_user.id))
     assert abs((second.expires_at - datetime.now(UTC)) - timedelta(days=7)) < timedelta(minutes=1)
 
 

@@ -141,10 +141,12 @@ async def settings_admin(test_engine: AsyncEngine) -> AsyncIterator[tuple[User, 
         db.add(admin)
         await db.flush()
         db.add(Administrator(user_id=admin.id))
-        login = Session(user_id=admin.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=admin.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         await db.commit()
-    yield admin, str(login.id)
+    yield admin, login_token
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(User).where(User.id == admin.id))
         await db.commit()

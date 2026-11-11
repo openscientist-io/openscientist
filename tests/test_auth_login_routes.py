@@ -6,7 +6,6 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
-from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
@@ -17,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from openscientist.auth import fastapi_routes
 from openscientist.auth.fastapi_routes import router
 from openscientist.database.models import Administrator, OAuthAccount, Session, User
+from openscientist.database.models.session import hash_session_token
 from openscientist.settings import clear_settings_cache
 from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 
@@ -52,7 +52,9 @@ def dev_mode(monkeypatch: pytest.MonkeyPatch):
 async def _user_of_token(db_session: AsyncSession, token: str) -> User:
     """The user the session behind ``token`` belongs to."""
     session_row = (
-        await db_session.execute(select(Session).where(Session.id == UUID(token)))
+        await db_session.execute(
+            select(Session).where(Session.token_hash == hash_session_token(token))
+        )
     ).scalar_one()
     return (
         await db_session.execute(select(User).where(User.id == session_row.user_id))
