@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 from alembic.migration import MigrationContext
@@ -13,10 +14,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 
-@pytest.mark.asyncio
-async def test_cost_migration_backfills_owners_and_preserves_deleted_job_spend(
-    test_engine: AsyncEngine,
-) -> None:
+def _migration() -> ModuleType:
     path = (
         Path(__file__).parent.parent
         / "src/openscientist/database/migrations/versions/2026-11-11_1300_durable_cost_ledger.py"
@@ -25,6 +23,61 @@ async def test_cost_migration_backfills_owners_and_preserves_deleted_job_spend(
     assert spec is not None and spec.loader is not None
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)
+    return migration
+
+
+@pytest.mark.asyncio
+async def test_cost_migration_preserves_policy_roles(test_engine: AsyncEngine) -> None:
+    migration = _migration()
+    shared_policies = {
+        "cost_records_agent_job": ["openscientist_agent"],
+        "cost_records_agent_only_own_job": ["openscientist_agent"],
+        "cost_records_delete_shared_edit": ["openscientist_app"],
+        "cost_records_modify_shared_edit": ["openscientist_app"],
+        "cost_records_select_shared": ["openscientist_app"],
+        "cost_records_update_shared_edit": ["openscientist_app"],
+    }
+    owner_policy = {**shared_policies, "cost_records_all_owner": ["openscientist_app"]}
+    ledger_policies = {
+        **shared_policies,
+        "cost_records_insert_owner": ["openscientist_app"],
+        "cost_records_select_owner": ["openscientist_app"],
+    }
+
+    def roles(connection: Connection) -> dict[str, list[str]]:
+        return dict(
+            connection.execute(
+                text(
+                    "SELECT policyname, roles FROM pg_policies "
+                    "WHERE schemaname = 'public' AND tablename = 'cost_records'"
+                )
+            )
+            .tuples()
+            .all()
+        )
+
+    def run(connection: Connection) -> None:
+        transaction = connection.begin()
+        try:
+            with Operations.context(MigrationContext.configure(connection)):
+                migration.downgrade()
+                assert roles(connection) == owner_policy
+                migration.upgrade()
+                assert roles(connection) == ledger_policies
+                migration.downgrade()
+                assert roles(connection) == owner_policy
+        finally:
+            transaction.rollback()
+
+    async with test_engine.connect() as connection:
+        await connection.run_sync(run)
+
+
+@pytest.mark.asyncio
+async def test_cost_migration_backfills_owners_and_preserves_deleted_job_spend(
+    test_engine: AsyncEngine,
+) -> None:
+    migration = _migration()
 
     def run(connection: Connection) -> None:
         transaction = connection.begin()

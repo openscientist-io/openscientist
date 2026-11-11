@@ -54,10 +54,10 @@ def upgrade() -> None:
     )
     op.execute("DROP POLICY cost_records_all_owner ON cost_records")
     op.execute(
-        f"CREATE POLICY cost_records_select_owner ON cost_records FOR SELECT USING (user_id::text = current_setting('app.current_user_id', TRUE) OR {_OWNER})"
+        f"CREATE POLICY cost_records_select_owner ON cost_records FOR SELECT TO openscientist_app USING (user_id::text = current_setting('app.current_user_id', TRUE) OR {_OWNER})"
     )
     op.execute(
-        f"CREATE POLICY cost_records_insert_owner ON cost_records FOR INSERT WITH CHECK ({_OWNER})"
+        f"CREATE POLICY cost_records_insert_owner ON cost_records FOR INSERT TO openscientist_app WITH CHECK ({_OWNER})"
     )
     op.execute("REVOKE UPDATE, DELETE ON cost_records FROM openscientist_app")
 
@@ -75,7 +75,9 @@ def downgrade() -> None:
     op.execute("GRANT UPDATE, DELETE ON cost_records TO openscientist_app")
     op.execute("DROP POLICY cost_records_insert_owner ON cost_records")
     op.execute("DROP POLICY cost_records_select_owner ON cost_records")
-    op.execute(f"CREATE POLICY cost_records_all_owner ON cost_records FOR ALL USING ({_OWNER})")
+    op.execute(
+        f"CREATE POLICY cost_records_all_owner ON cost_records FOR ALL TO openscientist_app USING ({_OWNER})"
+    )
     op.drop_constraint("cost_records_job_id_fkey", "cost_records", type_="foreignkey")
     op.alter_column("cost_records", "job_id", existing_type=sa.UUID(), nullable=False)
     op.create_foreign_key(
