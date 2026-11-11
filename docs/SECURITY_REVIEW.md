@@ -87,7 +87,7 @@ The main areas for improvement are **operational security gaps** rather than arc
 
 ### Dependencies
 
-Security floors for direct dependencies and transitive `uv` constraints are declared in `pyproject.toml`. Container builds install the versions in `uv.lock`. `NiceGUI` stays on the 3.x line, `Authlib` uses `httpx2` for OAuth requests, and `WeasyPrint` refuses EPS images.
+Minimum versions for direct dependencies and transitive `uv` constraints are declared in `pyproject.toml`. Container builds install the versions in `uv.lock`. `NiceGUI` stays on the 3.x line, `Authlib` uses `httpx2` for OAuth requests, and `WeasyPrint` refuses EPS images.
 
 ---
 
