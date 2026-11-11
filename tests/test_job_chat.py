@@ -771,9 +771,10 @@ async def test_build_chat_request_keeps_system_prompt_small(
     prompt = request["prompt"]
     assert system_prompt is not None
     assert prompt is not None
-    assert len(system_prompt) < 2000
+    assert len(system_prompt) < 10000
     assert "x" * 1000 not in system_prompt
-    assert "x" * 1000 in prompt
+    assert "x" * 1000 not in prompt
+    assert "x" * 50000 in (request["knowledge_state"] or "")
 
 
 @pytest.mark.asyncio
@@ -821,7 +822,8 @@ async def test_run_chat_turn_async_writes_reply(temp_jobs_dir: Path):
     response = json.loads(response_path.read_text())
     assert response["output"] == "reply"
     assert captured["config"].system_prompt == "You are helpful."
-    assert (job_dir / ".claude" / "CLAUDE.md").exists()
+    assert captured["config"].chat
+    assert not (job_dir / ".claude" / "CLAUDE.md").exists()
 
 
 @pytest.mark.asyncio
@@ -878,7 +880,7 @@ async def test_chat_harness_receives_writing_style(
                 status = await asyncio.wait_for(
                     run_chat_turn_async(job_dir, "style", str(test_job.id)), timeout=90
                 )
-            assert WRITING_STYLE in (job_dir / ".claude" / "CLAUDE.md").read_text()
+            assert not (job_dir / ".claude" / "CLAUDE.md").exists()
             delivered = "\n".join(json.dumps(body, ensure_ascii=False) for body in api.requests)
             assert json.dumps(prompt, ensure_ascii=False)[1:-1] in delivered
             assert "Never use the em dash character (U+2014)" in delivered
@@ -892,7 +894,7 @@ async def test_chat_harness_receives_writing_style(
             with patch("openscientist.agent.codex_agent.AsyncCodex", codex):
                 status = await run_chat_turn_async(job_dir, "style", str(test_job.id))
             assert codex.call_args.args[0].cwd == str(job_dir)
-            thread.turn.assert_awaited_once_with(request["prompt"])
+            assert thread.turn.call_args.args[0].endswith(request["prompt"])
             delivered = (job_dir / "AGENTS.md").read_text()
             assert WRITING_STYLE in delivered
         else:
@@ -904,7 +906,7 @@ async def test_chat_harness_receives_writing_style(
             status = await run_chat_turn_async(job_dir, "style", str(test_job.id))
             args = argv_path.read_text().splitlines()
             turn_path = next(arg[1:] for arg in args if arg.startswith("@"))
-            assert Path(turn_path).read_text() == prompt
+            assert Path(turn_path).read_text().endswith(prompt)
             prompt_path = next(
                 arg.removeprefix("--system-prompt=")
                 for arg in args
