@@ -1,12 +1,15 @@
 """Agent markdown preserves formatting without active HTML."""
 
+from collections.abc import Iterator
 from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
-from nicegui import ui
+from nicegui import core, ui
+from nicegui.client import Client
 from nicegui.elements.markdown import prepare_content
-from nicegui.testing.user_simulation import user_simulation
+from nicegui.page import page
+from nicegui.slot import Slot
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.database.models import Job, JobChatMessage, User
@@ -57,10 +60,28 @@ class _Fragment(HTMLParser):
         self.elements.append((tag, dict(attrs)))
 
 
+@pytest.fixture
+def script_page_between_requests(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    monkeypatch.setattr(core, "script_client", Client(page("/")).__enter__())
+    try:
+        yield
+        with Client(page("/")) as client:
+            client.delete()
+    finally:
+        Slot.get_stack().pop()
+        Slot.prune_stack()
+        if core.script_client is not None:
+            core.script_client.delete()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("renderer", ["assistant", "report"])
 async def test_agent_markdown_removes_active_html_and_preserves_markdown(
-    renderer: str, db_session: AsyncSession, webapp_user: User, tmp_path: Path
+    renderer: str,
+    db_session: AsyncSession,
+    webapp_user: User,
+    tmp_path: Path,
+    script_page_between_requests: None,
 ) -> None:
     job = Job(owner_id=webapp_user.id, research_question="Safe rendering", status="completed")
     db_session.add(job)
@@ -91,16 +112,15 @@ async def test_agent_markdown_removes_active_html_and_preserves_markdown(
     report_path = tmp_path / "final_report.md"
     report_path.write_text(message.content)
 
-    async def page() -> None:
-        if renderer == "assistant":
-            _ChatTabController(context)._render_message_bubble(message.role, message.content)
-        else:
-            await _render_report_markdown(ui.column(), report_path)
-
-    async with user_simulation(root=page) as browser:
-        client = await browser.open("/")
-        await browser.should_see("Findings")
+    client = Client(page("/"))
+    try:
+        with client:
+            if renderer == "assistant":
+                _ChatTabController(context)._render_message_bubble(message.role, message.content)
+            else:
+                await _render_report_markdown(ui.column(), report_path)
         [markdown] = [e for e in client.elements.values() if isinstance(e, ui.markdown)]
+        assert "<h1>Findings</h1>" in markdown.props["innerHTML"]
         fragment = _Fragment(markdown.props["innerHTML"])
         tags = {tag for tag, _ in fragment.elements}
         assert not tags.intersection(
@@ -123,6 +143,8 @@ async def test_agent_markdown_removes_active_html_and_preserves_markdown(
         assert "https://example.org/remote" not in image_sources
         assert "/web/jobs/example/files/plot.png" in image_sources
         assert "data:image/png;base64,iVBORw0KGgo=" in image_sources
+    finally:
+        client.delete()
 
 
 def test_highlighted_code_keeps_token_classes() -> None:
