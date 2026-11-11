@@ -46,6 +46,23 @@ The main areas for improvement are **operational security gaps** rather than arc
 - **Costs are metered at the proxy, and the web is the only writer of cost rows.** Every forwarded model call is teed: the response bytes pass through unchanged while the proxy reads the token buckets out of the wire (JSON, SSE, the Bedrock binary event-stream, and the Codex websocket's `response.completed`), and at response end it writes one `cost_records` row through the web's admin login, attributed to the job, the iteration and the phase (discovery, report, chat) the call belongs to. The agent login has no INSERT on `cost_records`, and CHECK constraints refuse negative token or cost values, so a compromised container can neither bill itself nor hide spend. The same cutover moves the slot end time, which the container could otherwise stretch to weigh its owner down in the scheduler's fair-share sums. The agent login no longer has UPDATE on `jobs.ended_at`, the web stamps the time on the ending it writes, and the worker's poll backfills the ending the container wrote.
 - **Web server runs as a non-root user.** The web image runs as its own user (UID 1002) in the jobs group (GID 1001), so a compromised web process has no root inside its container.
 - **Only the launcher holds the Docker socket.** The web and migrate services have no socket mount and no docker group. Every container operation the web makes — agent launches, chat turns, executor runs, stops, cleanup and the dashboard — goes through the launcher service over a unix socket that the launcher guards with a peer-credential check. The launcher builds every container from one of two server-side templates, and answers a uniform 404 for any container it did not create, so a compromised web cannot reach the Docker API, alter a container's mounts, capabilities, image or network, or touch a foreign container.
+- **Bounded container scratch and logs.** Agent and executor root filesystems are read-only. Agents get 512 MiB each for `/tmp` and `/home/agent`. Executors get 1 GiB for `/tmp` and 64 MiB for `/home/executor`. Scratch is charged to the container's memory limit. Docker retains three 10 MiB log files per container. The saved `agent-container.log` contains only the retained tail, at most about 30 MiB.
+- **Rust build storage.** Rust builds reuse the image's read-only registry and dependency artifacts. Per-execution build directories live under the job output directory, are covered by the jobs filesystem reserve guard, and are removed after execution.
+
+#### Jobs filesystem reserve
+
+The launcher checks `statvfs` before each launch and once per second while serving requests. `JOBS_FREE_SPACE_RESERVE_MIB` defaults to 1024 MiB. Available space includes allocations held by open, unlinked files. A low-space or unreadable filesystem stops every active container belonging to this launcher and refuses launches until a successful sample meets the reserve. Stopped runs report a jobs filesystem error.
+
+| Event | Reserve available | Below reserve or unreadable |
+|---|---|---|
+| Launcher startup or periodic sample | Keep active runs | Kill all active runs and retain their error |
+| Agent, chat or executor launch | Start after a fresh sample | Refuse with `507` |
+| Container exit | Report its exit status | Report the retained reserve error for a stopped run |
+| Container removal | Release its retained error | Release its retained error |
+| Docker monitoring failure | Log and retry at the next sample | Log and retry stopping active runs |
+| Launcher shutdown | Stop sampling | Stop sampling |
+
+This sampled guard cannot prevent writes from consuming the reserve between samples or while a Docker operation is delayed. Put the jobs root on a dedicated filesystem, separate from the PostgreSQL volume and Docker data root. Per-job hard quotas require a quota-capable backing store. Docker [bind mounts](https://docs.docker.com/engine/storage/bind-mounts/) have no size limit, and [`--storage-opt size`](https://docs.docker.com/reference/cli/docker/container/run/#storage-opt) constrains supported container storage drivers rather than bind-mounted job directories.
 
 ### Input Validation
 

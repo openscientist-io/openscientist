@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable
+import os
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from functools import partial
 from pathlib import Path
+from threading import Lock
 from typing import TypeVar, cast
 
 import anyio
@@ -48,6 +51,7 @@ _LONG_CALL_THREADS = 64
 #: Connections the shared Docker client keeps, one for every thread that can
 #: hold a call at once.
 _DOCKER_POOL_SIZE = _LONG_CALL_THREADS + 40
+_STORAGE_SAMPLE_SECONDS = 1.0
 
 
 class ApiError(Exception):
@@ -118,6 +122,61 @@ class Server:
     def __init__(self, cfg: LauncherConfig) -> None:
         self.cfg = cfg
         self.client = docker.from_env(max_pool_size=_DOCKER_POOL_SIZE)
+        self._storage_lock = Lock()
+        self._storage_failures: dict[str, ApiError] = {}
+
+    def _storage_error(self) -> ApiError | None:
+        try:
+            stats = os.statvfs(self.cfg.jobs_root)
+        except OSError:
+            return ApiError(507, "storage_reserve", "Cannot read free space on the jobs filesystem")
+        free = stats.f_bavail * stats.f_frsize
+        reserve = self.cfg.jobs_free_space_reserve_mib * 1024**2
+        if free < reserve:
+            return ApiError(
+                507,
+                "storage_reserve",
+                f"The jobs filesystem has {free // 1024**2} MiB available, below its "
+                f"{self.cfg.jobs_free_space_reserve_mib} MiB reserve",
+            )
+        return None
+
+    def _stop_for_storage(self, error: ApiError) -> None:
+        containers = _guard(self.client.containers.list)(
+            filters={"label": f"{MARKER_LABEL}={self.cfg.instance_id}"}
+        )
+        for container in containers:
+            self._storage_failures[cast("str", container.id)] = error
+            try:
+                container.kill()
+            except docker_errors.NotFound:
+                pass
+            except docker_errors.DockerException:
+                logger.exception(
+                    "Cannot stop container %s for the jobs filesystem reserve", container.id
+                )
+
+    def enforce_storage_reserve(self) -> None:
+        with self._storage_lock:
+            if error := self._storage_error():
+                self._stop_for_storage(error)
+
+    def _start(self, kwargs: dict[str, object]) -> Container:
+        with self._storage_lock:
+            if error := self._storage_error():
+                self._stop_for_storage(error)
+                raise error
+            return _create_started(self.client, kwargs)
+
+    def _raise_storage_failure(self, container: Container) -> None:
+        with self._storage_lock:
+            if error := self._storage_failures.get(cast("str", container.id)):
+                raise error
+
+    def _remove(self, container: Container) -> None:
+        _remove_forced(self.client, container)
+        with self._storage_lock:
+            self._storage_failures.pop(cast("str", container.id), None)
 
     def _resolve(self, ref: str) -> Container:
         """The container behind an id or name, or a uniform 404."""
@@ -133,9 +192,8 @@ class Server:
         if not image_available(self.client, self.cfg.agent_image, self.cfg.agent_image_digests):
             raise _image_missing(self.cfg.agent_image)
         network = _resolve_network(self.client, self.cfg.network)
-        container = _create_started(
-            self.client,
-            self._validated(lambda: agent_run_kwargs(self.cfg, launch, network=network)),
+        container = self._start(
+            self._validated(lambda: agent_run_kwargs(self.cfg, launch, network=network))
         )
         return {
             "id": container.id,
@@ -151,9 +209,8 @@ class Server:
         ):
             raise _image_missing(self.cfg.executor_image)
         network = _resolve_network(self.client, self.cfg.network)
-        container = _create_started(
-            self.client,
-            self._validated(lambda: executor_run_kwargs(self.cfg, req, network=network)),
+        container = self._start(
+            self._validated(lambda: executor_run_kwargs(self.cfg, req, network=network))
         )
         exit_code: int | None
         try:
@@ -170,16 +227,19 @@ class Server:
         else:
             code = outcome.get("StatusCode") if isinstance(outcome, dict) else None
             exit_code = code if isinstance(code, int) else 1
-        raw = cast("bytes", _guard(container.logs)(stdout=True, stderr=True, stream=False))
-        stdout = raw.decode("utf-8", "replace")
-        _remove_forced(self.client, container)
-        return {"stdout": stdout, "exit_code": exit_code}
+        try:
+            self._raise_storage_failure(container)
+            raw = cast("bytes", _guard(container.logs)(stdout=True, stderr=True, stream=False))
+            return {"stdout": raw.decode("utf-8", "replace"), "exit_code": exit_code}
+        finally:
+            self._remove(container)
 
     # -- container-scoped --------------------------------------------------
 
     def inspect(self, ref: str) -> dict[str, object]:
         container = self._resolve(ref)
         _guard(container.reload)()
+        self._raise_storage_failure(container)
         state = container.attrs.get("State", {})
         exit_code = None if state.get("Running") else state.get("ExitCode")
         return {"status": container.status, "exit_code": exit_code}
@@ -195,7 +255,7 @@ class Server:
 
     def remove(self, ref: str) -> dict[str, object]:
         container = self._resolve(ref)
-        _remove_forced(self.client, container)
+        self._remove(container)
         return {}
 
     def logs(self, ref: str) -> dict[str, object]:
@@ -214,6 +274,7 @@ class Server:
                 raise
             return {"exit_code": None, "timeout": True}
         code = outcome.get("StatusCode") if isinstance(outcome, dict) else None
+        self._raise_storage_failure(container)
         exit_code = code if isinstance(code, int) else 1
         return {"exit_code": exit_code, "timeout": False}
 
@@ -357,6 +418,24 @@ def create_app(cfg: LauncherConfig) -> Starlette:
     async def long_blocking(fn: Callable[..., _T], *args: object) -> _T:
         return await anyio.to_thread.run_sync(partial(fn, *args), limiter=long_calls)
 
+    async def monitor_storage() -> None:
+        while True:
+            try:
+                await blocking(server.enforce_storage_reserve)
+            except Exception:
+                logger.exception("Cannot enforce the jobs filesystem reserve")
+            await anyio.sleep(_STORAGE_SAMPLE_SECONDS)
+
+    @asynccontextmanager
+    async def lifespan(app: Starlette) -> AsyncIterator[None]:
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(monitor_storage)
+            try:
+                yield
+            finally:
+                tasks.cancel_scope.cancel()
+        server.client.close()
+
     async def agent_create(request: Request) -> JSONResponse:
         body = await _json_body(request)
         return JSONResponse(await blocking(server.create_agent, body))
@@ -393,6 +472,7 @@ def create_app(cfg: LauncherConfig) -> Starlette:
         return JSONResponse(await blocking(server.stats, request.path_params["ref"]))
 
     app = Starlette(
+        lifespan=lifespan,
         routes=[
             Route("/v1/containers/agent", agent_create, methods=["POST"]),
             Route("/v1/exec", exec_run, methods=["POST"]),

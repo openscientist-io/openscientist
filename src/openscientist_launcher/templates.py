@@ -8,7 +8,7 @@ import secrets
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from docker.types import Mount, Ulimit
+from docker.types import LogConfig, Mount, Ulimit
 
 from openscientist_launcher.config import LauncherConfig
 from openscientist_launcher.validation import AgentLaunch, ExecRequest, job_data_dir
@@ -98,6 +98,12 @@ def agent_run_kwargs(cfg: LauncherConfig, launch: AgentLaunch, *, network: str) 
         "ulimits": [Ulimit(name="nofile", soft=65536, hard=65536)],
         "platform": cfg.agent_platform,
         "security_opt": ["no-new-privileges:true"],
+        "read_only": True,
+        "tmpfs": {
+            "/tmp": "rw,exec,nosuid,nodev,size=512m,mode=1777",
+            "/home/agent": "rw,exec,nosuid,nodev,size=512m,uid=1001,gid=1001,mode=700",
+        },
+        "log_config": LogConfig(type="json-file", config={"max-size": "10m", "max-file": "3"}),
         # The container reaches a host-local model endpoint through the gateway.
         "extra_hosts": {"host.docker.internal": "host-gateway"},
         "labels": labels,
@@ -150,6 +156,12 @@ def executor_run_kwargs(cfg: LauncherConfig, req: ExecRequest, *, network: str) 
         "pids_limit": req.pids_limit,
         "ulimits": [Ulimit(name="nofile", soft=65536, hard=65536)],
         "security_opt": ["no-new-privileges:true"],
+        "read_only": True,
+        "tmpfs": {
+            "/tmp": "rw,exec,nosuid,nodev,size=1g,mode=1777",
+            "/home/executor": "rw,nosuid,nodev,size=64m,uid=1000,gid=1001,mode=700",
+        },
+        "log_config": LogConfig(type="json-file", config={"max-size": "10m", "max-file": "3"}),
         "user": "executor",
         "labels": _labels(cfg, req.job_id, "executor"),
         "mounts": mounts,

@@ -52,11 +52,16 @@ class LauncherDockerError(LauncherError):
     """The launcher answers 502: the daemon answered but the operation failed."""
 
 
+class LauncherStorageError(LauncherError):
+    """The jobs filesystem is unavailable or below its free-space reserve."""
+
+
 _STATUS_TO_ERROR: dict[int, type[LauncherError]] = {
     400: LauncherBadRequestError,
     404: LauncherNotFoundError,
     409: LauncherImageMissingError,
     502: LauncherDockerError,
+    507: LauncherStorageError,
 }
 
 

@@ -72,6 +72,7 @@ class LauncherConfig:
     executor_max_cpu: float
     max_lifetime_seconds: int
     max_egress_entries: int
+    jobs_free_space_reserve_mib: int = 1024
     agent_max_pids: int = 4096
     executor_max_pids: int = 4096
 
@@ -86,6 +87,9 @@ class LauncherConfig:
         executor_max_memory_mib = _int(env, "EXECUTOR_MAX_MEMORY_MIB")
         max_lifetime_seconds = _int(env, "MAX_LIFETIME_SECONDS")
         max_egress_entries = _int(env, "MAX_EGRESS_ENTRIES", default="64")
+        reserve_mib = _int(env, "JOBS_FREE_SPACE_RESERVE_MIB", default="1024")
+        if reserve_mib <= 0:
+            raise ConfigError("JOBS_FREE_SPACE_RESERVE_MIB must be positive")
         if agent_max_memory_mib <= 0 or executor_max_memory_mib <= 0:
             raise ConfigError("the memory bounds must be positive MiB values")
         if max_lifetime_seconds <= 0 or max_egress_entries <= 0:
@@ -119,4 +123,5 @@ class LauncherConfig:
             executor_max_pids=executor_max_pids,
             max_lifetime_seconds=max_lifetime_seconds,
             max_egress_entries=max_egress_entries,
+            jobs_free_space_reserve_mib=reserve_mib,
         )

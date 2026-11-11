@@ -490,19 +490,17 @@ def execute_rust_code(
     iteration: int = 0,
     data_files: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Execute Rust code with cargo run in a temporary cargo project.
-
-    The code is written to src/main.rs and built against the pre-seeded
-    crates in the executor image, so builds skip downloads and recompiles.
-    """
+    """Execute Rust in an on-disk Cargo project using read-only seeded dependencies."""
     import os
+    import shutil
     import subprocess
     import tempfile
 
-    _ = (plots_dir, description, iteration, data_files)
+    _ = (description, iteration, data_files)
     start_time = time.time()
+    plots_dir.mkdir(parents=True, exist_ok=True)
 
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory(dir=plots_dir.resolve(), prefix=".rust-") as tmpdir:
         project = Path(tmpdir) / "analysis"
         src_dir = project / "src"
         src_dir.mkdir(parents=True)
@@ -510,16 +508,25 @@ def execute_rust_code(
         (src_dir / "main.rs").write_text(code, encoding="utf-8")
 
         env = os.environ.copy()
-        # The executor image pre-seeds /usr/local/cargo with its registry and
-        # compiled artifacts, so cargo skips downloads and recompiles there.
-        _seeded_cargo = Path("/usr/local/cargo")
-        if _seeded_cargo.exists():
-            env.setdefault("CARGO_HOME", str(_seeded_cargo))
-            env.setdefault("CARGO_TARGET_DIR", str(_seeded_cargo / "target"))
+        command = ["cargo", "run"]
+        seeded_cargo = Path("/usr/local/cargo")
+        if seeded_cargo.is_dir():
+            target = Path(tmpdir) / "target"
+            shutil.copytree(
+                seeded_cargo / "target",
+                target,
+                symlinks=True,
+                copy_function=os.symlink,
+                ignore=shutil.ignore_patterns(".cargo-lock"),
+            )
+            # Registry paths must match the seeded fingerprints.
+            env["CARGO_HOME"] = str(seeded_cargo)
+            env["CARGO_TARGET_DIR"] = str(target)
+            command.append("--offline")
 
         try:
             run_result = subprocess.run(
-                ["cargo", "run"],
+                command,
                 capture_output=True,
                 text=True,
                 timeout=timeout,

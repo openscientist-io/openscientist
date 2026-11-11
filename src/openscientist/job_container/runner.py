@@ -51,6 +51,7 @@ from openscientist.job_container.launcher_client import (
     LauncherError,
     LauncherImageMissingError,
     LauncherNotFoundError,
+    LauncherStorageError,
 )
 from openscientist.job_container.run_home import (
     RUN_HOME_LABEL,
@@ -524,6 +525,8 @@ class JobContainerRunner:
             result = self.client.inspect(entry["id"])
         except LauncherNotFoundError:
             return None
+        except LauncherStorageError:
+            raise
         except LauncherError as error:
             logger.warning("Failed to get exit code for job %s: %s", job_id, error)
             return None

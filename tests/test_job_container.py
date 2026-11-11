@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock, call, patch
 
+import httpx
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -21,6 +22,7 @@ from openscientist.job_container.db_login import AGENT_LOGIN_LABEL, AgentLogin
 from openscientist.job_container.launcher_client import (
     LauncherClient,
     LauncherDockerError,
+    LauncherError,
     LauncherImageMissingError,
     LauncherNotFoundError,
     LauncherUnavailableError,
@@ -577,6 +579,21 @@ class TestJobContainerRunner:
         client.list_containers.return_value = [_listed_entry({})]
         client.inspect.return_value = {"status": "exited", "exit_code": 3}
         assert runner.get_exit_code("job-123") == 3
+
+    def test_get_exit_code_reports_storage_reserve_failure(self):
+        runner, client = _runner_with_client()
+        client.list_containers.return_value = [_listed_entry({})]
+        launcher = LauncherClient("/unused.sock")
+        client.inspect.side_effect = launcher.inspect
+        response = httpx.Response(
+            507, json={"error": "storage_reserve: The jobs filesystem is below its reserve"}
+        )
+        try:
+            with patch("httpx.Client.request", return_value=response):
+                with pytest.raises(LauncherError, match="jobs filesystem"):
+                    runner.get_exit_code("job-123")
+        finally:
+            launcher._http.close()
 
     def test_get_exit_code_returns_none_when_container_disappears(self):
         """Exit-code polling treats a vanished container as a benign miss."""
