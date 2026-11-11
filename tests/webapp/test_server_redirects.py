@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
 from urllib.parse import quote
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -22,6 +22,7 @@ from starlette.responses import RedirectResponse, Response
 from openscientist.auth.fastapi_routes import mock_admin_oauth_login, mock_oauth_login
 from openscientist.auth.middleware import require_auth
 from openscientist.database.models import Session, User
+from openscientist.database.models.session import hash_session_token
 from openscientist.settings import clear_settings_cache
 from openscientist.webapp_components.pages.admin import admin_page
 from openscientist.webapp_components.pages.index import index_page
@@ -40,11 +41,11 @@ async def logins(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str]]:
         db.add(user)
         await db.flush()
         now = datetime.now(UTC)
-        live = Session(user_id=user.id, expires_at=now + timedelta(days=1))
-        expired = Session(user_id=user.id, expires_at=now - timedelta(days=1))
+        live, live_token = Session.issue(user_id=user.id, expires_at=now + timedelta(days=1))
+        expired, expired_token = Session.issue(user_id=user.id, expires_at=now - timedelta(days=1))
         db.add_all([live, expired])
         await db.commit()
-    yield {"live": str(live.id), "expired": str(expired.id)}
+    yield {"live": live_token, "expired": expired_token}
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(User).where(User.id == user.id))
         await db.commit()
@@ -269,7 +270,7 @@ async def test_signing_in_refuses_a_next_that_names_the_admin_login(
             await db.execute(
                 select(User.email)
                 .join(Session, Session.user_id == User.id)
-                .where(Session.id == UUID(token))
+                .where(Session.token_hash == hash_session_token(token))
             )
         ).scalar_one()
     assert email.startswith("dev-")
@@ -320,7 +321,7 @@ async def test_signing_in_refuses_an_internal_or_controlled_target(
             await db.execute(
                 select(User.email)
                 .join(Session, Session.user_id == User.id)
-                .where(Session.id == UUID(token))
+                .where(Session.token_hash == hash_session_token(token))
             )
         ).scalar_one()
     assert email.startswith("dev-")
