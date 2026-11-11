@@ -3,11 +3,14 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import io
 import zipfile
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from html.parser import HTMLParser
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -212,6 +215,78 @@ async def test_agent_content_cannot_reach_other_hosts(
 
     assert directives["connect-src"] == "'none'"
     assert set(directives["img-src"].split()) == {"'self'", "data:"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["files/final_report.html", "files/plot.svg", "report.html"])
+async def test_agent_documents_allow_only_required_resources(
+    shared_job: _SharedJob, request_as, path: str
+) -> None:
+    (shared_job.job_dir / "plot.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg"/>')
+    response = await request_as(shared_job.owner, f"/web/jobs/{shared_job.job_id}/{path}")
+    assert response.status_code == 200
+    directives = _csp_directives(response.headers["content-security-policy"])
+    expected = {
+        "default-src": "'none'",
+        "sandbox": "",
+        "connect-src": "'none'",
+        "img-src": "'self' data:",
+        "style-src": "'unsafe-inline'",
+        "base-uri": "'none'",
+        "form-action": "'none'",
+        "frame-src": "'none'",
+        "frame-ancestors": "'self'",
+    }
+    if path == "report.html":
+        expected.update(
+            {
+                "sandbox": "allow-scripts allow-popups allow-popups-to-escape-sandbox",
+                "font-src": "data:",
+                "script-src": "'sha256-EsRwroiN/qKSiUMwcn6OHlw7bX69hIkv5S44ih9Moks='",
+            }
+        )
+    assert directives == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("saved_html", [False, True])
+async def test_only_the_served_link_script_is_authorized(
+    shared_job: _SharedJob, request_as, saved_html: bool
+) -> None:
+    class Scripts(HTMLParser):
+        def __init__(self) -> None:
+            super().__init__()
+            self.in_script = False
+            self.scripts: list[str] = []
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            self.in_script = tag == "script"
+
+        def handle_endtag(self, tag: str) -> None:
+            if tag == "script":
+                self.in_script = False
+
+        def handle_data(self, data: str) -> None:
+            if self.in_script:
+                self.scripts.append(data)
+
+    payload = "<script>window.open('https://example.org/remote')</script>"
+    (shared_job.job_dir / "final_report.md").write_text("# Report\n\n" + payload)
+    if saved_html:
+        (shared_job.job_dir / "final_report.md").unlink()
+        (shared_job.job_dir / "final_report.html").write_text(f"<body>{payload}</body>")
+    response = await request_as(shared_job.owner, f"/web/jobs/{shared_job.job_id}/report.html")
+    assert response.status_code == 200
+    parser = Scripts()
+    parser.feed(response.text)
+    assert len(parser.scripts) == 2
+    agent_script, link_script = parser.scripts
+    assert "e.target.closest('a')" in link_script
+    authorized = _csp_directives(response.headers["content-security-policy"])["script-src"]
+    digest = base64.b64encode(hashlib.sha256(link_script.encode()).digest()).decode()
+    assert authorized == f"'sha256-{digest}'"
+    agent_digest = base64.b64encode(hashlib.sha256(agent_script.encode()).digest()).decode()
+    assert agent_digest not in authorized
 
 
 @pytest.mark.asyncio
