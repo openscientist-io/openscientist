@@ -96,10 +96,12 @@ async def request_as(
     async def token_for(user_id: UUID) -> str:
         if user_id not in tokens:
             async with AsyncSession(test_engine, expire_on_commit=False) as db:
-                login = Session(user_id=user_id, expires_at=datetime.now(UTC) + timedelta(days=1))
+                login, login_token = Session.issue(
+                    user_id=user_id, expires_at=datetime.now(UTC) + timedelta(days=1)
+                )
                 db.add(login)
                 await db.commit()
-            tokens[user_id] = str(login.id)
+            tokens[user_id] = login_token
         return tokens[user_id]
 
     async def get(user_id: UUID | None, path: str):
@@ -263,10 +265,12 @@ async def test_a_signed_in_user_is_resolved_through_the_webs_own_login(
 
     user_id = UUID(str(getattr(committed_job, who)))
     async with AsyncSession(test_engine, expire_on_commit=False) as db:
-        login = Session(user_id=user_id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=user_id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         await db.commit()
-        token = str(login.id)
+        token = login_token
     app = FastAPI()
     app.include_router(router)
     url = f"/web/jobs/{committed_job.job_id}/files/provenance/plot.png"
@@ -471,10 +475,12 @@ async def test_the_public_zip_holds_no_chat_turn_files(
 
     async def token_for() -> str:
         async with AsyncSession(test_engine, expire_on_commit=False) as db:
-            login = Session(user_id=user, expires_at=datetime.now(UTC) + timedelta(days=1))
+            login, login_token = Session.issue(
+                user_id=user, expires_at=datetime.now(UTC) + timedelta(days=1)
+            )
             db.add(login)
             await db.commit()
-        return str(login.id)
+        return login_token
 
     app = FastAPI()
     app.dependency_overrides[get_session] = session_as_user
@@ -550,10 +556,12 @@ async def request_as_orphan(
     async def token_for(user_id: UUID) -> str:
         if user_id not in tokens:
             async with AsyncSession(test_engine, expire_on_commit=False) as db:
-                login = Session(user_id=user_id, expires_at=datetime.now(UTC) + timedelta(days=1))
+                login, login_token = Session.issue(
+                    user_id=user_id, expires_at=datetime.now(UTC) + timedelta(days=1)
+                )
                 db.add(login)
                 await db.commit()
-            tokens[user_id] = str(login.id)
+            tokens[user_id] = login_token
         return tokens[user_id]
 
     async def get(user_id: UUID | None, path: str) -> object:

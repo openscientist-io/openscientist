@@ -7,6 +7,7 @@ import json
 import socket
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock
@@ -49,7 +50,11 @@ _EXPECTED_KWARGS = {
 def broker_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     """Point the broker's confinement at a fixed /app <-> /host/proj mapping."""
     settings = SimpleNamespace(
-        container=SimpleNamespace(host_project_dir=_HOST_PROJECT, container_app_dir="/app")
+        container=SimpleNamespace(
+            host_project_dir=_HOST_PROJECT,
+            container_app_dir="/app",
+            executor_max_concurrent_per_job=2,
+        )
     )
     monkeypatch.setattr(exec_broker, "get_settings", lambda: settings)
 
@@ -97,6 +102,59 @@ def _body(job_id: str = "job-1", **overrides: Any) -> dict[str, Any]:
 
 @pytest.mark.usefixtures("broker_settings")
 class TestExecBrokerServer:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("cancel_request", [False, True])
+    async def test_concurrent_executions_are_limited_per_job(
+        self, token_for: Callable[[str], str], cancel_request: bool
+    ) -> None:
+        loop = asyncio.get_running_loop()
+        entered = asyncio.Queue[str]()
+        release = Event()
+        manager = _manager({})
+
+        def execute(*, job_id: str, **kwargs: object) -> dict[str, object]:
+            loop.call_soon_threadsafe(entered.put_nowait, job_id)
+            if job_id == "job-1":
+                if not release.wait(timeout=15):
+                    raise TimeoutError("job-1 executions were not released")
+            return {"success": True}
+
+        manager.execute_code.side_effect = execute
+        tokens = {job: token_for(job) for job in ("job-1", "job-2")}
+        app = create_exec_broker_app(manager=lambda: manager)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://broker"
+        ) as client:
+
+            async def post(job_id: str) -> httpx.Response:
+                return await asyncio.wait_for(
+                    client.post(
+                        "/execute",
+                        json=_body(job_id, timeout=None),
+                        headers={EXEC_TOKEN_HEADER: tokens[job_id]},
+                    ),
+                    timeout=10,
+                )
+
+            running = [asyncio.create_task(post("job-1")) for _ in range(2)]
+            try:
+                for _ in running:
+                    assert await asyncio.wait_for(entered.get(), timeout=5) == "job-1"
+                if cancel_request:
+                    running[0].cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await running[0]
+                refused = await post("job-1")
+                assert refused.status_code == 429, refused.text
+                assert "concurrent execution limit" in refused.json()["error"]
+                other = await post("job-2")
+                assert other.status_code == 200
+                assert await asyncio.wait_for(entered.get(), timeout=5) == "job-2"
+            finally:
+                release.set()
+                await asyncio.wait_for(asyncio.gather(*running, return_exceptions=True), timeout=5)
+            assert (await post("job-1")).status_code == 200
+
     def test_valid_request_runs_executor_and_returns_result(self, token_for) -> None:
         result = {"success": True, "output": "1", "plots": [], "execution_time": 0.1}
         manager = _manager(result)

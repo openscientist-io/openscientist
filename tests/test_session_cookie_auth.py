@@ -45,10 +45,12 @@ async def visitor_login(test_engine: AsyncEngine) -> AsyncIterator[tuple[User, s
         )
         db.add(user)
         await db.flush()
-        login = Session(user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         await db.commit()
-    yield user, str(login.id)
+    yield user, login_token
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(User).where(User.id == user.id))
         await db.commit()
@@ -194,10 +196,12 @@ async def test_an_expired_login_cookie_is_refused_by_the_web_routes(
     user, _ = visitor_login
     job = owned_job_with_plot
     async with AsyncSession(test_engine, expire_on_commit=False) as db:
-        expired = Session(user_id=user.id, expires_at=datetime.now(UTC) - timedelta(days=1))
+        expired, expired_token = Session.issue(
+            user_id=user.id, expires_at=datetime.now(UTC) - timedelta(days=1)
+        )
         db.add(expired)
         await db.commit()
-        token = str(expired.id)
+        token = expired_token
     _stored_browser(monkeypatch, user, token)
     app = _web_app()
     with patch("openscientist.web_app.get_job_manager", return_value=_jobs_manager(tmp_path)):
@@ -222,10 +226,12 @@ async def test_a_deleted_login_cookie_is_refused_by_the_web_routes(
     user, _ = visitor_login
     job = owned_job_with_plot
     async with AsyncSession(test_engine, expire_on_commit=False) as db:
-        signed_out = Session(user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        signed_out, signed_out_token = Session.issue(
+            user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(signed_out)
         await db.commit()
-        token = str(signed_out.id)
+        token = signed_out_token
         await db.delete(signed_out)
         await db.commit()
     _stored_browser(monkeypatch, user, token)
@@ -321,3 +327,35 @@ def test_the_session_cookie_stays_plain_for_an_http_app_url(
     flags = _session_cookie_flags(monkeypatch, "http://os.local:8080", tmp_path)
     assert flags.get("https_only") is False
     assert flags.get("same_site") == "lax"
+
+
+@pytest.mark.asyncio
+async def test_cookie_has_256_random_bits_and_is_not_a_database_credential(
+    database: Forwarder, db_session: AsyncSession, test_admin_user: User
+) -> None:
+    import base64
+    import hashlib
+
+    from sqlalchemy import select
+
+    from openscientist.auth.fastapi_routes import redeem_review_token
+    from tests.test_review_tokens import _create_review_token, _mock_admin_session
+
+    plaintext, grant = await _create_review_token(db_session, test_admin_user)
+    app = FastAPI()
+    app.add_api_route("/review/{token}", redeem_review_token, methods=["POST"])
+    with patch(
+        "openscientist.auth.fastapi_routes.get_admin_session", _mock_admin_session(db_session)
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(f"/review/{plaintext}", json={})
+    cookie = response.cookies["session_token"]
+    await db_session.refresh(grant)
+    row = await db_session.scalar(select(Session).where(Session.user_id == grant.redeemed_by_id))
+    assert row is not None
+    assert cookie != str(row.id)
+    assert len(base64.urlsafe_b64decode(cookie + "=" * (-len(cookie) % 4))) == 32
+    assert row.token_hash == hashlib.sha256(cookie.encode()).hexdigest()
+    assert await middleware.get_current_user(db_session, cookie) is not None
+    assert await middleware.get_current_user(db_session, str(row.id)) is None
+    assert await middleware.get_current_user(db_session, row.token_hash) is None
