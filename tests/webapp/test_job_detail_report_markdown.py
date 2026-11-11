@@ -84,7 +84,9 @@ async def report_job(test_engine: AsyncEngine, tmp_path: Path) -> AsyncIterator[
         db.add(owner)
         await db.flush()
         job = Job(owner_id=owner.id, research_question="Report render", status="completed")
-        login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add_all([job, login])
         await db.flush()
         job_dir = jobs_root / str(job.id)
@@ -94,7 +96,7 @@ async def report_job(test_engine: AsyncEngine, tmp_path: Path) -> AsyncIterator[
     yield {
         "owner": owner,
         "job_id": str(job.id),
-        "token": str(login.id),
+        "token": login_token,
         "marker": marker,
         "jobs_root": jobs_root,
     }

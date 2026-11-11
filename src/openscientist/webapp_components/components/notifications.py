@@ -12,6 +12,7 @@ from openscientist.database.models import User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session_ctx
 from openscientist.ntfy import ensure_user_has_topic, get_subscription_url, send_notification
+from openscientist.settings import get_settings
 from openscientist.webapp_components.components.badges import render_job_id_badge
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,12 @@ async def _render_notifications_content(
 ) -> None:
     """Fetch and render notifications content inside dialog."""
     content_container.clear()
+    if get_settings().airgap.enabled:
+        with content_container:
+            ui.label("Push notifications are unavailable in air-gapped mode.").classes(
+                "text-gray-500"
+            )
+        return
     try:
         settings = await _fetch_notification_settings(user_id)
         if settings is None:

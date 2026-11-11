@@ -119,7 +119,9 @@ async def web_job(test_engine: AsyncEngine, tmp_path: Path) -> AsyncIterator[tup
         owner = User(email=f"symlink-owner-{uuid4().hex}@symlink.test", name="Symlink Owner")
         db.add(owner)
         await db.flush()
-        login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         job = Job(owner_id=owner.id, research_question="Web symlink probe", status="completed")
         db.add(job)
@@ -127,7 +129,7 @@ async def web_job(test_engine: AsyncEngine, tmp_path: Path) -> AsyncIterator[tup
         await db.refresh(job)
     job_dir = tmp_path / "jobs" / str(job.id)
     (job_dir / "provenance").mkdir(parents=True)
-    yield owner, str(login.id), job
+    yield owner, login_token, job
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(Job).where(Job.id == job.id))
         await db.execute(delete(User).where(User.id == owner.id))

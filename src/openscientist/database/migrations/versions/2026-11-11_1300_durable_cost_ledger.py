@@ -1,7 +1,7 @@
 """Retain attributed expenditure independently of jobs.
 
 Revision ID: durable_cost_ledger
-Revises: drop_job_formatted_prompt
+Revises: session_token_hash
 Create Date: 2026-11-11 13:00:00
 """
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "durable_cost_ledger"
-down_revision: str | None = "drop_job_formatted_prompt"
+down_revision: str | None = "session_token_hash"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
