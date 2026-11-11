@@ -113,6 +113,9 @@ async def send_notification(
     Returns:
         True if notification was sent successfully, False otherwise
     """
+    if get_settings().airgap.enabled:
+        return False
+
     if not topic:
         logger.warning("No ntfy topic provided, skipping notification")
         return False
