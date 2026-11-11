@@ -295,19 +295,19 @@ Always use hypothesis tracking, even for literature-only investigations.""")
 **run_phenix_tool** - Execute any Phenix command-line tool
 
 - `tool_name`: e.g., `"phenix.molprobity"`, `"phenix.clashscore"`, `"phenix.superpose_pdbs"`
-- `input_files`: List of PDB/mmCIF file paths (relative to `data/`)
+- `input_files` accepts job-relative PDB/mmCIF paths, including `provenance/model.pdb`. Bare filenames resolve inside `data/`.
 - `arguments`: Optional dict of CLI arguments
 - Example: `run_phenix_tool(tool_name="phenix.molprobity", input_files=["structure.pdb"], description="Full validation")`
 
 **compare_structures** - Compare two protein structures (convenience wrapper for `phenix.superpose_pdbs`)
 
-- `experimental_pdb`: First PDB file (relative to `data/`)
-- `predicted_pdb`: Second PDB file (relative to `data/`)
+- `experimental_pdb` accepts a job-relative PDB path or a bare filename inside `data/`.
+- `predicted_pdb` accepts a job-relative PDB path or a bare filename inside `data/`.
 
 **parse_alphafold_confidence** - Extract pLDDT confidence metrics from an AlphaFold PDB
 
-- `alphafold_pdb`: AlphaFold PDB file (relative to `data/`)
-- `pae_json`: Optional PAE JSON file""")
+- `alphafold_pdb` accepts a job-relative PDB path or a bare filename inside `data/`.
+- `pae_json` accepts an optional job-relative PAE file path or a bare filename inside `data/`.""")
 
     parts.append("""
 ### Reading Data Files

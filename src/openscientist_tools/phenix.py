@@ -19,33 +19,32 @@ from typing import Any
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.phenix_setup import setup_phenix_env
 from openscientist.settings import phenix_installation_ok
+from openscientist_tools.job_paths import OutsideJobDirError, resolve_job_file
 from openscientist_tools.server import mcp
 from openscientist_tools.state import STATE
 
 logger = logging.getLogger(__name__)
 
 
-def _safe_data_filename(filename: str) -> str | None:
-    """Return *filename* if it is a bare name usable inside ``data/``.
-
-    Nothing else (path components, ``..``, absolute paths, empty names,
-    option-injecting ``-`` prefixes) is accepted.
-    """
-    name = Path(filename).name
-    if not name or name in (".", "..") or name.startswith("-") or name != filename:
-        return None
-    return name
+def _resolve_phenix_file(filename: str) -> Path:
+    """Resolve job-relative paths, with bare filenames rooted in ``data/``."""
+    path = Path(filename)
+    if not filename or path.name in ("", ".", "..") or path.name.startswith("-"):
+        raise OutsideJobDirError(filename)
+    if not path.is_absolute():
+        root = STATE.job_dir / "data" if filename == path.name else STATE.job_dir
+        path = root / path
+    return resolve_job_file(path, STATE.job_dir)
 
 
 def _resolve_phenix_file_paths(input_files: list[str]) -> tuple[list[str], str | None]:
-    """Resolve input filenames under the job's data directory."""
-    data_dir = STATE.job_dir / "data"
+    """Resolve regular files inside the job directory."""
     resolved_files: list[str] = []
     for filename in input_files:
-        name = _safe_data_filename(filename)
-        if name is None:
-            return [], f"❌ Error: File names must be bare filenames in data/: {filename}"
-        file_path = data_dir / name
+        try:
+            file_path = _resolve_phenix_file(filename)
+        except (OutsideJobDirError, OSError):
+            return [], f"❌ File not readable inside the job directory ({filename})"
         if not file_path.exists():
             return [], f"❌ Error: File not found: {filename}"
         resolved_files.append(str(file_path))
@@ -206,8 +205,7 @@ async def run_phenix_tool(
 
     Args:
         tool_name: Name of Phenix tool (e.g., "phenix.clashscore")
-        input_files: List of PDB/mmCIF filenames (bare names inside the
-            job data directory, e.g. "model.pdb")
+        input_files: Job-relative PDB/mmCIF paths, or bare names inside ``data/``.
         arguments: Optional dict of command-line arguments
         description: What you're investigating
 
@@ -228,10 +226,8 @@ async def compare_structures(
     """Compare experimental and predicted protein structures using Phenix.
 
     Args:
-        experimental_pdb: Experimental structure filename (bare name
-            inside the job data dir, e.g. "exp.pdb")
-        predicted_pdb: Predicted structure filename (bare name inside
-            the job data dir)
+        experimental_pdb: Job-relative structure path, or a bare name inside ``data/``.
+        predicted_pdb: Job-relative structure path, or a bare name inside ``data/``.
         description: What you're investigating
 
     Returns:
@@ -256,19 +252,16 @@ def parse_alphafold_confidence(alphafold_pdb: str, pae_json: str | None = None) 
     """Extract AlphaFold confidence metrics (pLDDT) from a PDB file.
 
     Args:
-        alphafold_pdb: AlphaFold PDB filename (bare name inside the job
-            data dir, e.g. "model.pdb")
-        pae_json: Optional PAE JSON filename (bare name inside the job
-            data dir)
+        alphafold_pdb: Job-relative PDB path, or a bare name inside ``data/``.
+        pae_json: Optional job-relative PAE path, or a bare name inside ``data/``.
 
     Returns:
         Per-residue confidence scores and summary statistics
     """
-    data_dir = STATE.job_dir / "data"
-    pdb_name = _safe_data_filename(alphafold_pdb)
-    if pdb_name is None:
-        return f"❌ Error: File names must be bare filenames in data/: {alphafold_pdb}"
-    pdb_path = data_dir / pdb_name
+    try:
+        pdb_path = _resolve_phenix_file(alphafold_pdb)
+    except (OutsideJobDirError, OSError):
+        return f"❌ File not readable inside the job directory ({alphafold_pdb})"
 
     if not pdb_path.exists():
         return f"❌ Error: File not found: {alphafold_pdb}"
@@ -305,11 +298,12 @@ def parse_alphafold_confidence(alphafold_pdb: str, pae_json: str | None = None) 
         output.append("\n✅ No low confidence regions detected")
 
     if pae_json:
-        pae_name = _safe_data_filename(pae_json)
-        if pae_name is None:
-            return f"❌ Error: File names must be bare filenames in data/: {pae_json}"
         try:
-            pae_count = _load_pae_entry_count(data_dir / pae_name)
+            pae_path = _resolve_phenix_file(pae_json)
+        except (OutsideJobDirError, OSError):
+            return f"❌ File not readable inside the job directory ({pae_json})"
+        try:
+            pae_count = _load_pae_entry_count(pae_path)
         except (OSError, ValueError, json.JSONDecodeError) as e:
             return f"❌ Error parsing AlphaFold file: {e}"
         if pae_count is not None:

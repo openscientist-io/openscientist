@@ -297,6 +297,62 @@ async def test_run_phenix_tool_valid_name_builds_expected_command(
     assert calls == [["phenix.clashscore", str(state_job_dir / "data" / "model.pdb")]]
 
 
+@pytest.mark.parametrize("filename", ["model.pdb", "provenance/model.pdb"])
+async def test_compare_structures_resolves_job_files(
+    monkeypatch: pytest.MonkeyPatch,
+    state_job_dir: Path,
+    patched_ks_persistence: KnowledgeState,
+    filename: str,
+) -> None:
+    model_path = state_job_dir / (filename if "/" in filename else f"data/{filename}")
+    _write_pdb(model_path, [(1, 95.0)])
+    _write_pdb(state_job_dir / "data" / "pred.pdb", [(1, 92.0)])
+    calls, recorder = _recording_subprocess_run()
+    monkeypatch.setattr(phenix_module, "setup_phenix_env", _fake_setup_phenix_env)
+    monkeypatch.setattr("openscientist_tools.phenix.subprocess.run", recorder)
+
+    result = await compare_structures(filename, "pred.pdb")
+
+    assert not result.startswith("❌")
+    assert calls == [
+        ["phenix.superpose_pdbs", str(model_path), str(state_job_dir / "data" / "pred.pdb")]
+    ]
+
+
+@pytest.mark.parametrize("filename", ["model.pdb", "provenance/model.pdb"])
+def test_parse_alphafold_confidence_resolves_job_files(state_job_dir: Path, filename: str) -> None:
+    model_path = state_job_dir / (filename if "/" in filename else f"data/{filename}")
+    _write_pdb(model_path, [(1, 95.0)])
+    pae_path = state_job_dir / "provenance" / "pae.json"
+    pae_path.parent.mkdir(exist_ok=True)
+    pae_path.write_text(json.dumps([{"predicted_aligned_error": [[0.0]]}]))
+
+    result = parse_alphafold_confidence(filename, "provenance/pae.json")
+
+    assert "Residues analyzed: 1" in result
+    assert "PAE data loaded: 1 entries" in result
+
+
+async def test_phenix_tools_refuse_paths_outside_job(
+    monkeypatch: pytest.MonkeyPatch, state_job_dir: Path
+) -> None:
+    outside = state_job_dir.parent / "outside.pdb"
+    _write_pdb(outside, [(1, 95.0)])
+    _write_pdb(state_job_dir / "data" / "model.pdb", [(1, 95.0)])
+    (state_job_dir / "provenance").mkdir(exist_ok=True)
+    (state_job_dir / "provenance" / "outside.pdb").symlink_to(outside)
+    calls, recorder = _recording_subprocess_run()
+    monkeypatch.setattr(phenix_module, "setup_phenix_env", _fake_setup_phenix_env)
+    monkeypatch.setattr("openscientist_tools.phenix.subprocess.run", recorder)
+
+    for filename in ("../outside.pdb", str(outside), "provenance/outside.pdb"):
+        assert (await run_phenix_tool("phenix.clashscore", [filename])).startswith("❌")
+        assert (await compare_structures(filename, "model.pdb")).startswith("❌")
+        assert parse_alphafold_confidence(filename).startswith("❌")
+        assert parse_alphafold_confidence("model.pdb", filename).startswith("❌")
+    assert calls == []
+
+
 async def test_compare_structures_refuses_out_of_data_name(
     monkeypatch: pytest.MonkeyPatch,
     state_job_dir: Path,
