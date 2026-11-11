@@ -3,7 +3,13 @@ in the HTML and the PDF, cleaned of anything that reaches outside the diagram.""
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import time
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest.mock import patch
 
 import fitz  # type: ignore[import-untyped]
 import pytest
@@ -26,6 +32,11 @@ digraph model {
 
 The deficit explains both branches.
 """
+
+
+@pytest.fixture(autouse=True)
+def fresh_diagram_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(diagrams, "_cache", OrderedDict())
 
 
 def _render(tmp_path: Path, markdown: str, *, embed: bool = True) -> str:
@@ -94,7 +105,7 @@ def test_an_oversized_diagram_is_not_drawn(monkeypatch: pytest.MonkeyPatch) -> N
     def run(*args: object, **kwargs: object) -> object:
         raise AssertionError("dot ran on an oversized diagram")
 
-    monkeypatch.setattr(diagrams.subprocess, "run", run)
+    monkeypatch.setattr(subprocess, "run", run)
     assert diagrams.render_dot("digraph { " + "a -> b; " * diagrams.MAX_DOT_CHARS + "}") is None
 
 
@@ -105,3 +116,107 @@ def test_the_report_prompt_asks_for_dot_and_never_ascii() -> None:
     assert "```dot" in prompt
     assert "use ASCII diagrams" not in prompt
     assert "never as ASCII art" in prompt
+
+
+@pytest.mark.requires_graphviz
+def test_report_caps_graphviz_calls(tmp_path: Path) -> None:
+    markdown = "\n".join(f"```dot\ndigraph {{ cap{i} -> b }}\n```" for i in range(12))
+    with patch.object(subprocess, "run", wraps=subprocess.run) as run:
+        html = _render(tmp_path, markdown)
+        assert _render(tmp_path, markdown) == html
+    assert run.call_count == 8
+    assert html.count('<figure class="diagram">') == 8
+    assert "cap11 -&gt; b" in html
+
+
+def test_report_shares_a_wall_clock_budget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(diagrams, "REPORT_DIAGRAM_BUDGET_SECONDS", 0.2)
+    run_process = subprocess.run
+
+    def slow_dot(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return run_process(
+            [sys.executable, "-c", "import time; time.sleep(0.15); print('<svg/>')"],
+            timeout=float(str(kwargs["timeout"])),
+            capture_output=True,
+            text=True,
+        )
+
+    markdown = "\n".join(f"```dot\ndigraph {{ slow{i} -> b }}\n```" for i in range(4))
+    with patch.object(subprocess, "run", side_effect=slow_dot) as run:
+        started = time.monotonic()
+        html = _render(tmp_path, markdown)
+        elapsed = time.monotonic() - started
+        calls = run.call_count
+        started = time.monotonic()
+        second = _render(tmp_path, markdown)
+        assert time.monotonic() - started < 0.45
+        assert run.call_count > calls
+        assert second.count("<svg") > html.count("<svg")
+    assert elapsed < 0.45
+    assert "slow3 -&gt; b" in html
+
+
+@pytest.mark.requires_graphviz
+@pytest.mark.parametrize("source", ["digraph { cached -> b }", "digraph { cached -> }"])
+def test_unchanged_report_reuses_diagram_results(tmp_path: Path, source: str) -> None:
+    markdown = f"```dot\n{source}\n```"
+    with patch.object(subprocess, "run", wraps=subprocess.run) as run:
+        first = _render(tmp_path, markdown)
+        second = _render(tmp_path, markdown)
+    assert first == second
+    assert run.call_count == 1
+
+
+@pytest.mark.requires_graphviz
+def test_changed_source_is_drawn(tmp_path: Path) -> None:
+    with patch.object(subprocess, "run", wraps=subprocess.run) as run:
+        first = _render(tmp_path, "```dot\ndigraph { original -> b }\n```")
+        second = _render(tmp_path, "```dot\ndigraph { revised -> b }\n```")
+    assert run.call_count == 2
+    assert "original" in first
+    assert "revised" in second
+
+
+@pytest.mark.requires_graphviz
+def test_diagram_cache_evicts_old_sources(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(diagrams, "MAX_CACHED_DIAGRAMS", 2)
+    with patch.object(subprocess, "run", wraps=subprocess.run) as run:
+        for node in ("first", "second", "first", "third", "second"):
+            assert diagrams.render_dot(f"digraph {{ {node} -> b }}") is not None
+    assert run.call_count == 4
+
+
+def test_busy_renderer_falls_back_without_waiting(tmp_path: Path) -> None:
+    with diagrams._render_lock:
+        with patch.object(subprocess, "run") as run:
+            html = _render(tmp_path, "```dot\ndigraph { busy -> b }\n```")
+    run.assert_not_called()
+    assert "busy -&gt; b" in html
+
+
+@pytest.mark.requires_graphviz
+def test_cached_diagram_renders_while_another_thread_holds_the_slot(tmp_path: Path) -> None:
+    markdown = "```dot\ndigraph { available -> b }\n```"
+    first = _render(tmp_path, markdown)
+    with patch.object(subprocess, "run") as run:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            with diagrams._render_lock:
+                second = pool.submit(_render, tmp_path, markdown).result(timeout=2)
+    run.assert_not_called()
+    assert "<svg" in second
+    assert second == first
+
+
+@pytest.mark.requires_graphviz
+def test_expired_budget_does_not_cache_failure() -> None:
+    source = "digraph { deferred -> b }"
+    assert diagrams.render_dot(source, deadline=time.monotonic() - 1) is None
+    assert diagrams.render_dot(source) is not None
+
+
+def test_full_diagram_timeout_is_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(diagrams, "DOT_TIMEOUT_SECONDS", 0.1)
+    with patch.object(subprocess, "run", side_effect=subprocess.TimeoutExpired("dot", 0.1)) as run:
+        assert diagrams.render_dot("digraph { expensive -> b }") is None
+        assert diagrams.render_dot("digraph { expensive -> b }") is None
+    run.assert_called_once()
