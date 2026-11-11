@@ -1,12 +1,18 @@
 """LLM model pricing lookup via the litellm pricing database."""
 
+from __future__ import annotations
+
+import json
 import logging
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import requests
 
 from openscientist.models import normalize_model_name
+
+if TYPE_CHECKING:
+    from openscientist.agent.base import TokenUsage
 
 logger = logging.getLogger(__name__)
 
@@ -14,6 +20,7 @@ _LITELLM_PRICING_URL = (
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 )
 _CACHE_TTL_SECONDS = 86_400
+_MAX_LEDGER_TOKENS = 2**31 - 1
 
 # Anthropic's published cache ratios (checked across Opus, Sonnet and Haiku).
 # 0.1 is also the modal read/input ratio among litellm entries that carry one.
@@ -77,6 +84,49 @@ def has_price(model: str) -> bool:
     return bool(pricing.get(model) or pricing.get(normalize_model_name(model)))
 
 
+def estimate_request_usage(model: str, body: bytes | str) -> TokenUsage:
+    """Bound request tokens using wire bytes and an explicit or published output limit."""
+    from openscientist.agent.base import TokenUsage
+
+    if not model.strip():
+        raise ValueError("A resolved model is required for a usage estimate")
+    request = json.loads(body)
+    if not isinstance(request, dict):
+        raise ValueError("The model request must be a JSON object")
+    output_tokens = 0
+    explicit_limit = False
+    for key in ("max_tokens", "max_output_tokens", "max_completion_tokens"):
+        value = request.get(key)
+        if value is None:
+            continue
+        if type(value) is not int or not 0 <= value <= _MAX_LEDGER_TOKENS:
+            raise ValueError(f"Invalid output token limit in {key}")
+        explicit_limit = True
+        output_tokens = max(output_tokens, value)
+    if not explicit_limit:
+        pricing = _get_litellm_pricing()
+        entry = pricing.get(model) or pricing.get(normalize_model_name(model))
+        if isinstance(entry, dict):
+            for key in ("max_output_tokens", "max_tokens"):
+                value = entry.get(key)
+                if type(value) is int and 0 < value <= _MAX_LEDGER_TOKENS:
+                    output_tokens = value
+                    break
+        if not output_tokens:
+            raise ValueError(f"No published output token ceiling for model {model!r}")
+    candidates = 1
+    for key in ("n", "best_of"):
+        value = request.get(key, 1)
+        if type(value) is not int or not 1 <= value <= _MAX_LEDGER_TOKENS:
+            raise ValueError(f"Invalid candidate count in {key}")
+        candidates = max(candidates, value)
+    output_tokens *= candidates
+    if output_tokens > _MAX_LEDGER_TOKENS:
+        raise ValueError("Generated output exceeds the ledger token limit")
+    input_tokens = len(body.encode("utf-8")) if isinstance(body, str) else len(body)
+    return TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens)
+
+
 def estimate_cost_usd(
     model: str,
     input_tokens: int,
@@ -134,6 +184,7 @@ def estimate_cost_usd(
 # a hand-maintained table drifts silently otherwise.
 _FALLBACK_PRICING: dict[str, Any] = {
     "claude-opus-4-6": {
+        "max_output_tokens": 128_000,
         "input_cost_per_token": 5e-6,
         "output_cost_per_token": 25e-6,
         "cache_read_input_token_cost": 0.5e-6,
@@ -141,6 +192,7 @@ _FALLBACK_PRICING: dict[str, Any] = {
         "cache_creation_input_token_cost_above_1hr": 10e-6,
     },
     "claude-sonnet-5-5": {
+        "max_output_tokens": 128_000,
         "input_cost_per_token": 2e-6,
         "output_cost_per_token": 10e-6,
         "cache_read_input_token_cost": 0.1e-6,
@@ -148,6 +200,7 @@ _FALLBACK_PRICING: dict[str, Any] = {
         "cache_creation_input_token_cost_above_1hr": 4e-6,
     },
     "claude-sonnet-4-6": {
+        "max_output_tokens": 128_000,
         "input_cost_per_token": 3e-6,
         "output_cost_per_token": 15e-6,
         "cache_read_input_token_cost": 0.3e-6,
@@ -155,6 +208,7 @@ _FALLBACK_PRICING: dict[str, Any] = {
         "cache_creation_input_token_cost_above_1hr": 6e-6,
     },
     "claude-haiku-4-5": {
+        "max_output_tokens": 64_000,
         "input_cost_per_token": 1e-6,
         "output_cost_per_token": 5e-6,
         "cache_read_input_token_cost": 0.1e-6,

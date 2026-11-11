@@ -1,19 +1,16 @@
-"""The web's metering of every model call the LLM proxy forwards.
-
-The proxy tees each response: the bytes and frames pass through unchanged
-while a wire-format decoder accumulates the token buckets the response
-carries, and at response end the web writes the cost row through its admin
-session. The container writes no cost rows, so the tokens and the cost come
-from the wire the proxy observed, not from the harness's word.
-"""
+"""Decode provider usage and persist actual or estimated model costs."""
 
 from __future__ import annotations
 
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
+
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
 
 from openscientist.agent.base import TokenUsage
 from openscientist.database.models import CostRecord
@@ -41,6 +38,7 @@ class _ObservedCall:
 
     model: str
     buckets: TokenUsage
+    usage_reported: bool = True
 
 
 def _int(value: object) -> int:
@@ -156,8 +154,8 @@ class _JsonDecoder:
                 _ObservedCall(self._model, TokenUsage())
             ], "response body was not parseable as JSON"
         usage = _dict(parsed).get("usage")
-        if not isinstance(usage, dict):
-            return [_ObservedCall(self._model, TokenUsage())], None
+        if not isinstance(usage, dict) or not usage:
+            return [_ObservedCall(self._model, TokenUsage(), usage_reported=False)], None
         return [_ObservedCall(self._model, self._buckets_from_usage(usage))], None
 
 
@@ -368,7 +366,11 @@ class _ResponsesDecoder:
                 model = self._model
             usage = response.get("usage")
             buckets = _responses_buckets(usage) if isinstance(usage, dict) else TokenUsage()
-            self._calls.append(_ObservedCall(model, buckets))
+            self._calls.append(
+                _ObservedCall(
+                    model, buckets, usage_reported=isinstance(usage, dict) and bool(usage)
+                )
+            )
             self._completed = True
 
     def take_completed(self) -> list[_ObservedCall]:
@@ -480,11 +482,12 @@ async def record_model_call(
     model: str,
     provider_id: str,
     buckets: TokenUsage,
-) -> None:
-    """Write the cost row of one observed model call, as the web's admin
-    login. A lost database connection is retried, and a write that still
-    fails logs every bucket so the call can still be billed by hand. It never
-    raises, so a metering failure cannot drop a forwarded response."""
+    record_id: UUID | None = None,
+    cost_usd: float | None = None,
+    estimated: bool = False,
+    created_at: datetime | None = None,
+) -> bool:
+    """Persist a cost row idempotently and report whether it is durable."""
     try:
         uid = UUID(job_id)
     except ValueError:
@@ -500,9 +503,10 @@ async def record_model_call(
             buckets.cache_write_tokens + buckets.cache_write_1h_tokens,
             buckets.reasoning_tokens,
         )
-        return
+        return False
 
-    async def _write() -> None:
+    async def _write() -> bool:
+        nonlocal record_id
         async with get_admin_session() as session:
             job = await session.get(JobModel, uid)
             if job is None:
@@ -515,38 +519,43 @@ async def record_model_call(
                     buckets.input_tokens,
                     buckets.output_tokens,
                 )
-                return
+                return False
+            if record_id is None:
+                record_id = await session.scalar(select(func.uuidv7()))
             operation, iteration = _operation_labels(job, kind)
-            cost_usd = estimate_cost_usd(
-                model,
-                buckets.input_tokens,
-                buckets.output_tokens,
-                cache_read_tokens=buckets.cache_read_tokens,
-                cache_write_tokens=buckets.cache_write_tokens,
-                cache_write_1h_tokens=buckets.cache_write_1h_tokens,
-                reasoning_tokens=buckets.reasoning_tokens,
-            )
-            session.add(
-                CostRecord(
-                    job_id=uid,
-                    iteration=iteration,
-                    operation_type=operation,
-                    provider=provider_id,
-                    model=model,
-                    input_tokens=buckets.input_tokens,
-                    output_tokens=buckets.output_tokens,
+            amount = cost_usd
+            if amount is None:
+                amount = estimate_cost_usd(
+                    model,
+                    buckets.input_tokens,
+                    buckets.output_tokens,
                     cache_read_tokens=buckets.cache_read_tokens,
-                    # The column holds every cache write. Only the price keeps
-                    # the tiers apart, and `cost_usd` already does.
-                    cache_write_tokens=buckets.cache_write_tokens + buckets.cache_write_1h_tokens,
+                    cache_write_tokens=buckets.cache_write_tokens,
+                    cache_write_1h_tokens=buckets.cache_write_1h_tokens,
                     reasoning_tokens=buckets.reasoning_tokens,
-                    cost_usd=cost_usd,
                 )
+            statement = insert(CostRecord).values(
+                id=record_id,
+                job_id=uid,
+                iteration=iteration,
+                operation_type=f"{operation}_estimated" if estimated else operation,
+                provider=provider_id,
+                model=model,
+                input_tokens=buckets.input_tokens,
+                output_tokens=buckets.output_tokens,
+                cache_read_tokens=buckets.cache_read_tokens,
+                cache_write_tokens=buckets.cache_write_tokens + buckets.cache_write_1h_tokens,
+                reasoning_tokens=buckets.reasoning_tokens,
+                cost_usd=amount,
             )
+            if created_at is not None:
+                statement = statement.values(created_at=created_at)
+            await session.execute(statement.on_conflict_do_nothing(index_elements=[CostRecord.id]))
             await session.commit()
+            return True
 
     try:
-        await retry_async(
+        return await retry_async(
             _write, within=_WRITE_RETRY_SECONDS, what=f"writing the cost of job {job_id}"
         )
     except Exception as e:
@@ -564,3 +573,4 @@ async def record_model_call(
             buckets.reasoning_tokens,
             e,
         )
+        return False

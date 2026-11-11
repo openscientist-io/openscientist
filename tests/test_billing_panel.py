@@ -357,3 +357,24 @@ async def test_a_chat_record_is_labelled_chat() -> None:
     _, table = await _render([record])
 
     assert table.call_args.kwargs["rows"][0]["iteration"] == "chat"
+
+
+async def test_estimated_records_show_operation_and_provenance() -> None:
+    records = [
+        _record(
+            operation_type=f"{operation}_estimated",
+            iteration=3 if operation == "discovery" else None,
+            input_tokens=1,
+            output_tokens=1,
+            cache_read_tokens=0,
+            cache_write_tokens=0,
+            reasoning_tokens=0,
+        )
+        for operation in ("discovery", "chat", "report")
+    ]
+    _, table = await _render(records)
+    assert [row["iteration"] for row in table.call_args.kwargs["rows"]] == [
+        "3 discovery estimated",
+        "chat estimated",
+        "report estimated",
+    ]

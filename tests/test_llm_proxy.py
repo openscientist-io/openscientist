@@ -1995,7 +1995,12 @@ class TestUnpricedModelRefusal:
         way this class spells it, with no network."""
         monkeypatch.setattr(
             "openscientist.providers.pricing._get_litellm_pricing",
-            lambda: {_PRICED_REFUSAL_MODEL: {"input_cost_per_token": 1e-6}},
+            lambda: {
+                _PRICED_REFUSAL_MODEL: {
+                    "input_cost_per_token": 1e-6,
+                    "max_output_tokens": 100,
+                }
+            },
         )
         yield
 

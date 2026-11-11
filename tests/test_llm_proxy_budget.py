@@ -56,7 +56,7 @@ async def test_http_budget_gate(limit, spent, test_engine, placeholder_for):
             response = await client.post(
                 "/v1/messages",
                 headers={"x-api-key": placeholder_for(str(job.id))},
-                json={"model": "claude-sonnet-4-6", "messages": []},
+                json={"model": "claude-sonnet-4-6", "messages": [], "max_tokens": 10},
             )
         assert response.status_code == (403 if spent == 1.0 else 200)
         assert len(recorded) == (0 if spent == 1.0 else 1)
@@ -95,12 +95,12 @@ class TestWebsocketBudget:
             async with (
                 asyncio.timeout(5),
                 connect(
-                    f"ws://127.0.0.1:{live_proxy}/responses",
+                    f"ws://127.0.0.1:{live_proxy}/responses?model=gpt-5.2",
                     additional_headers={"authorization": f"Bearer {placeholder_for(str(job.id))}"},
                     proxy=None,
                 ) as connection,
             ):
-                frame = {"type": "response.create"}
+                frame = {"type": "response.create", "max_output_tokens": 10}
                 if model:
                     frame["model"] = model
                 text = json.dumps(frame)
@@ -147,7 +147,12 @@ class TestWebsocketBudget:
                     )
                     await connection.send(
                         json.dumps(
-                            {"type": "response.create", "model": "gpt-5.2", "stream_id": stream}
+                            {
+                                "type": "response.create",
+                                "model": "gpt-5.2",
+                                "stream_id": stream,
+                                "max_output_tokens": 10,
+                            }
                         )
                     )
                     assert await connection.recv() == stub_upstream.reply
@@ -200,7 +205,7 @@ async def test_http_parallel_admission_holds_until_metered(test_engine, placehol
                     return await client.post(
                         "/v1/messages",
                         headers={"x-api-key": placeholder_for(str(job.id))},
-                        json={"model": "claude-sonnet-4-6"},
+                        json={"model": "claude-sonnet-4-6", "max_tokens": 10},
                     )
 
                 held = [asyncio.create_task(call()) for _ in range(4)]
@@ -281,7 +286,9 @@ class TestAdmissionWebsocket:
                     )
                     for _ in range(5)
                 ]
-                create = json.dumps({"type": "response.create", "model": "gpt-5.2"})
+                create = json.dumps(
+                    {"type": "response.create", "model": "gpt-5.2", "max_output_tokens": 10}
+                )
                 try:
                     for connection in connections[:4]:
                         await connection.send(create)
@@ -296,6 +303,20 @@ class TestAdmissionWebsocket:
                     for connection in connections[:4]:
                         with pytest.raises(ConnectionClosed):
                             await connection.recv()
+                    from sqlalchemy import func, select
+
+                    from openscientist.database.models import CostRecord
+
+                    while True:
+                        async with committed(test_engine) as session:
+                            count = await session.scalar(
+                                select(func.count())
+                                .select_from(CostRecord)
+                                .where(CostRecord.job_id == job.id)
+                            )
+                        if count == 4:
+                            break
+                        await asyncio.sleep(0.01)
                     async with connect(
                         f"ws://127.0.0.1:{live_proxy}/responses",
                         additional_headers={
@@ -312,6 +333,45 @@ class TestAdmissionWebsocket:
                     await connections[0].send(create)
                     assert json.loads(await connections[0].recv())["status"] == 403
                     assert len(stub_upstream.frames) == 4
+
+    async def test_aborted_connections_exhaust_reserved_budget(
+        self, test_engine, placeholder_for, live_proxy, stub_upstream
+    ):
+        await set_admin_settings_row(test_engine, max_job_cost_usd=0.001)
+        stub_upstream.abort = True
+        stub_upstream.release.set()
+        async with job_with_costs(test_engine, []) as job:
+            async with asyncio.timeout(15):
+                for _ in range(10):
+                    try:
+                        async with connect(
+                            f"ws://127.0.0.1:{live_proxy}/responses",
+                            additional_headers={
+                                "authorization": f"Bearer {placeholder_for(str(job.id))}"
+                            },
+                            proxy=None,
+                        ) as connection:
+                            await connection.send(
+                                json.dumps(
+                                    {
+                                        "type": "response.create",
+                                        "model": "gpt-5.2",
+                                        "max_output_tokens": 10,
+                                    }
+                                )
+                            )
+                            response = await connection.recv()
+                            if response != "ready":
+                                assert json.loads(response)["status"] == 403
+                                break
+                            with pytest.raises(ConnectionClosed):
+                                await connection.recv()
+                    except InvalidStatus as exc:
+                        assert exc.response.status_code == 403
+                        break
+                else:
+                    pytest.fail("Aborted websocket calls never exhausted the job budget")
+        assert 0 < len(stub_upstream.frames) < 10
 
 
 async def test_cancelling_meter_wait_keeps_slots_until_settlement():
@@ -407,3 +467,112 @@ async def test_http_cancellation_before_headers_releases_admission(
                         await call()
                 assert entered.qsize() == 1
                 assert caplog.text.count("ended before response headers") == 5
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("POST", "/v1/messages"),
+        ("POST", "/v1/messages/count_tokens"),
+        ("GET", "/v1/models"),
+        ("HEAD", "/api/hello"),
+    ],
+)
+async def test_admission_precedes_every_body_read(method, path, test_engine, placeholder_for):
+    async with job_with_costs(test_engine, []) as job:
+        app = create_llm_proxy_app(
+            upstream=lambda: LlmUpstream("https://upstream.test", StaticHeadersSigning({})),
+            client=_recording_upstream([]),
+            provider_id=lambda: "anthropic",
+        )
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0", "spec_version": "2.4"},
+            "method": method,
+            "path": path,
+            "raw_path": path.encode(),
+            "query_string": b"",
+            "headers": [(b"x-api-key", placeholder_for(str(job.id)).encode())],
+        }
+        entered = asyncio.Queue()
+        blocked = asyncio.Event()
+        replies = []
+
+        async def receive():
+            await entered.put(None)
+            await blocked.wait()
+            return {"type": "http.request", "body": b"{}", "more_body": False}
+
+        async def send(message):
+            replies.append(message)
+
+        async def forbidden_receive():
+            pytest.fail("Refused request body was read")
+
+        held = [asyncio.create_task(app(scope, receive, send)) for _ in range(4)]
+        try:
+            async with asyncio.timeout(5):
+                for _ in held:
+                    await entered.get()
+                await app(scope, forbidden_receive, send)
+                assert replies[0]["status"] == 429
+                held[0].cancel()
+                await asyncio.gather(held[0], return_exceptions=True)
+                replacement = asyncio.create_task(app(scope, receive, send))
+                held.append(replacement)
+                await entered.get()
+                assert not replacement.done()
+        finally:
+            for task in held:
+                task.cancel()
+            async with asyncio.timeout(5):
+                await asyncio.gather(*held, return_exceptions=True)
+
+
+@pytest.mark.parametrize("ending", ["before_headers", "without_usage", "partial_usage"])
+async def test_aborted_http_calls_exhaust_reserved_budget(ending, test_engine, placeholder_for):
+    await set_admin_settings_row(test_engine, max_job_cost_usd=0.001)
+    attempts = 0
+
+    class AbortedBody(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            if ending == "partial_usage":
+                yield (
+                    b'event: message_start\ndata: {"type":"message_start","message":'
+                    b'{"model":"claude-sonnet-4-6","usage":{"input_tokens":1}}}\n\n'
+                )
+            raise httpx.ReadError("Upstream aborted")
+
+    async def upstream(request):
+        nonlocal attempts
+        attempts += 1
+        if ending == "before_headers":
+            raise httpx.ConnectError("Upstream aborted")
+        return httpx.Response(
+            200, stream=AbortedBody(), headers={"content-type": "text/event-stream"}
+        )
+
+    async with job_with_costs(test_engine, []) as job:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(upstream)) as upstream_client:
+            app = create_llm_proxy_app(
+                upstream=lambda: LlmUpstream("https://upstream.test", StaticHeadersSigning({})),
+                client=upstream_client,
+                provider_id=lambda: "anthropic",
+            )
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://proxy"
+            ) as client:
+                for _ in range(10):
+                    try:
+                        response = await client.post(
+                            "/v1/messages",
+                            headers={"x-api-key": placeholder_for(str(job.id))},
+                            json={"model": "claude-sonnet-4-6", "max_tokens": 10},
+                        )
+                    except httpx.TransportError:
+                        continue
+                    assert response.status_code == 403
+                    break
+                else:
+                    pytest.fail("Aborted model calls never exhausted the job budget")
+    assert 0 < attempts < 10
