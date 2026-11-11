@@ -46,10 +46,32 @@ from openscientist.job_container.secrets import (
 from openscientist.llm_proxy import _NoSignalServer, create_llm_proxy_app
 from openscientist.providers.base import LlmUpstream, StaticHeadersSigning
 
-_PROVIDER = "stub-provider"
+_PROVIDER = "anthropic"
 _PRICED_MODEL = "stub-sonnet"
 _BEDROCK_MODEL = "amazon.nova-lite-v1"
 _UNPRICED_MODEL = "stub-no-rate"
+
+
+@pytest.fixture(autouse=True)
+def wire_provider(request, monkeypatch):
+    providers = {
+        "TestOpenAiChatWire": "ollama",
+        "TestResponsesWire": "openai",
+        "TestResponsesWebsocket": "openai",
+        "TestBedrockWire": "bedrock",
+        "TestVertexWire": "vertex",
+        "TestNotMetered": "vertex",
+    }
+    monkeypatch.setattr(
+        "tests.test_llm_metering._PROVIDER", providers.get(request.cls.__name__, "anthropic")
+    )
+    monkeypatch.setenv("ANTHROPIC_VERTEX_PROJECT_ID", "proj")
+    from openscientist.settings import get_settings
+
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
 
 _RATES = {
     "input_cost_per_token": 3e-6,
@@ -462,6 +484,13 @@ class TestAnthropicWire:
     """Rows A and B, the Anthropic Messages JSON and SSE the proxy also sees
     from CBORG, Foundry and the self-hosted Anthropic gateways."""
 
+    async def test_count_tokens_writes_no_cost(self, test_engine, job, run_for):
+        placeholder = run_for(str(job), "discovery").llm_placeholder
+        plan = _Plan(chunks=[b'{"input_tokens": 12}'])
+        app = _proxy_app(_upstream_client({"/v1/messages/count_tokens": plan}))
+        _post(app, "/v1/messages/count_tokens", placeholder, {"model": _PRICED_MODEL})
+        assert await _rows(test_engine, job) == []
+
     @pytest.mark.asyncio
     async def test_a_non_streaming_answer_writes_its_full_row(
         self, test_engine: AsyncEngine, job: UUID, run_for
@@ -751,6 +780,21 @@ class TestResponsesWire:
     """Row E, the OpenAI Responses REST SSE. Usage is reported only at
     completion, so a cut or a failed stream writes no row, and the harness's
     retry meters itself."""
+
+    async def test_compaction_records_responses_usage(self, test_engine, job, run_for):
+        placeholder = run_for(str(job), "discovery").llm_placeholder
+        usage = {
+            "input_tokens": 100,
+            "output_tokens": 25,
+            "input_tokens_details": {"cached_tokens": 20},
+            "output_tokens_details": {"reasoning_tokens": 5},
+        }
+        plan = _Plan(chunks=[json.dumps({"usage": usage}).encode()])
+        app = _proxy_app(_upstream_client({"/responses/compact": plan}))
+        _post(app, "/responses/compact", placeholder, {"model": _PRICED_MODEL})
+        rows = await _rows(test_engine, job)
+        assert len(rows) == 1
+        assert rows[0][4:9] == (80, 20, 20, 0, 5)
 
     @pytest.mark.asyncio
     async def test_a_completed_response_writes_its_row_at_its_own_model(

@@ -407,7 +407,7 @@ def _usage_decoder(
     """The decoder for a forwarded request, chosen from the request path and
     the upstream content type, or None when the path is not a model call the
     proxy meters (a count-tokens lookup)."""
-    if "count-tokens" in path:
+    if path.endswith(("/count_tokens", ":count-tokens:rawPredict")):
         return None
     if path.endswith(":streamRawPredict"):
         return _AnthropicSseDecoder(model)
@@ -417,6 +417,8 @@ def _usage_decoder(
         return _BedrockStreamDecoder(model)
     if path.endswith("/invoke"):
         return _JsonDecoder(model, _anthropic_buckets)
+    if path.endswith("/responses/compact"):
+        return _JsonDecoder(model, _responses_buckets)
     if path.rsplit("/", 1)[-1] == "responses":
         return _ResponsesDecoder(model)
     streaming = "text/event-stream" in content_type

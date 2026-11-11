@@ -10,13 +10,16 @@ import asyncio
 import json
 import logging
 import os
+import re
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
+from urllib.parse import unquote_to_bytes
 
 import httpx
 import uvicorn
 from starlette.applications import Starlette
 from starlette.background import BackgroundTask
+from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route, WebSocketRoute
@@ -35,12 +38,17 @@ from openscientist.llm_metering import (
 )
 from openscientist.providers import get_provider
 from openscientist.providers.base import LlmUpstream, UpstreamCredentialError
+from openscientist.request_body import read_request_body
 from openscientist.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
 _WEB_HOST_ENV = "OPENSCIENTIST_WEB_HOST"
 _DEFAULT_WEB_HOST = "openscientist"
+
+# https://platform.claude.com/docs/en/api/errors#request-size-limits
+# https://developers.openai.com/api/docs/guides/production-best-practices#compress-request-bodies
+_MAX_REQUEST_BYTES = 128 * 1024 * 1024
 
 # Dropped when forwarding: connection-scoped headers and the auth header we replace.
 _DROP_REQUEST_HEADERS = frozenset(
@@ -117,6 +125,74 @@ _WS_DROP_HEADERS = frozenset(
 
 # RFC 6455 codes reserved for local use, which a close frame must not carry.
 _LOCAL_ONLY_CLOSE_CODES = {1005, 1006, 1015}
+
+
+def _endpoint_allowed(
+    provider_id: str, method: str, path: str, raw_path: bytes, *, websocket: bool = False
+) -> bool:
+    """Allow only the provider's harness inference and discovery endpoints."""
+    if "\\" in path or "%" in path or any(segment in {".", ".."} for segment in path.split("/")):
+        return False
+    if provider_id == "bedrock" and not websocket:
+        # https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_InvokeModel.html
+        route = re.fullmatch(
+            rb"/model/([^/]+)/(?:invoke|invoke-with-response-stream)", raw_path or path.encode()
+        )
+        if method != "POST" or route is None:
+            return False
+        try:
+            model = unquote_to_bytes(route[1]).decode("ascii")
+        except UnicodeDecodeError:
+            return False
+        return (
+            re.fullmatch(
+                r"(?:[A-Za-z0-9][A-Za-z0-9._:-]*|"
+                r"arn:aws:bedrock:[a-z0-9-]+:"
+                r"(?:[0-9]{12}:(?:inference-profile|application-inference-profile)|"
+                r"(?:[0-9]{12})?:foundation-model)/[A-Za-z0-9][A-Za-z0-9._:-]*)",
+                model,
+            )
+            is not None
+        )
+    if re.search(rb"%(?:2f|5c|25)", raw_path, re.IGNORECASE):
+        return False
+    if websocket:
+        # https://developers.openai.com/api/docs/guides/websocket-mode
+        return provider_id in {"openai", "azure-openai"} and path == "/responses"
+    if provider_id in {"anthropic", "cborg", "foundry"}:
+        # https://platform.claude.com/docs/en/api/messages and /messages/count_tokens
+        return (method, path) in {
+            ("POST", "/v1/messages"),
+            ("POST", "/v1/messages/count_tokens"),
+            ("GET", "/v1/models"),
+            # The bundled Claude Code CLI probes connectivity here before sending messages.
+            ("HEAD", "/api/hello"),
+        }
+    if provider_id in {"openai", "azure-openai"}:
+        # https://developers.openai.com/api/reference/resources/responses
+        return (method, path) in {
+            ("POST", "/responses"),
+            ("POST", "/responses/compact"),
+            ("GET", "/models"),
+        }
+    if provider_id in {"ollama", "vllm", "llamacpp", "github-copilot"}:
+        # SelfHostedOpenAiWire.omp_model_catalog uses the OpenAI chat-completions API.
+        return (method, path) in {("POST", "/chat/completions"), ("GET", "/models")}
+    if provider_id == "vertex":
+        # https://platform.claude.com/docs/en/build-with-claude/claude-on-vertex-ai
+        project = get_settings().provider.anthropic_vertex_project_id
+        return (
+            bool(project)
+            and method == "POST"
+            and re.fullmatch(
+                rf"/projects/{re.escape(project or '')}/locations/[a-z0-9-]+/"
+                r"publishers/anthropic/models/[A-Za-z0-9._@-]+"
+                r"(?::rawPredict|:streamRawPredict|:count-tokens:rawPredict)",
+                path,
+            )
+            is not None
+        )
+    return False
 
 
 def _meter(
@@ -224,12 +300,34 @@ def create_llm_proxy_app(
             logger.warning("LLM proxy: active provider is not supported")
             return Response("provider not supported", status_code=502)
 
-        body = await request.body()
+        if not _endpoint_allowed(
+            provider(), request.method, request.url.path, request.scope.get("raw_path", b"")
+        ):
+            logger.warning(
+                "LLM endpoint refused for run %s (%s) at %s",
+                run.job_id,
+                run.kind,
+                request.url.path,
+            )
+            return Response("LLM endpoint not allowed", status_code=403)
+
+        try:
+            body = await read_request_body(request, limit=_MAX_REQUEST_BYTES)
+        except HTTPException as exc:
+            logger.warning(
+                "LLM request refused for run %s at %s with %s",
+                run.job_id,
+                request.url.path,
+                exc.detail,
+            )
+            return Response(str(exc.detail), status_code=exc.status_code)
         # The fallback name of a model-less body is refused by the upstream, not by the price table.
         model: str | None = None
         if request.method == "POST":
             model = _model_from_body(body) or _model_from_path(request.url.path)
-            if model != "unknown" and "count-tokens" not in request.url.path:
+            if model != "unknown" and not request.url.path.endswith(
+                ("/count_tokens", ":count-tokens:rawPredict")
+            ):
                 refusal = await unpriced_model_violation(provider_id=provider(), model=model)
                 if refusal is not None:
                     logger.warning(
@@ -244,13 +342,20 @@ def create_llm_proxy_app(
             run.kind,
         )
         headers = {
-            k: v for k, v in request.headers.items() if k.lower() not in _DROP_REQUEST_HEADERS
+            k: v
+            for k, v in request.headers.items()
+            if k.lower() not in _DROP_REQUEST_HEADERS and not k.lower().startswith("x-goog-")
         }
+        path = (
+            request.scope.get("raw_path", request.url.path.encode()).decode("ascii")
+            if provider() == "bedrock"
+            else request.url.path
+        )
         try:
             headers.update(
                 target.signing.credential_headers(
                     method=request.method,
-                    path=request.url.path,
+                    path=path,
                     query=request.url.query,
                     body=body,
                 )
@@ -259,7 +364,7 @@ def create_llm_proxy_app(
             logger.warning("LLM proxy: upstream credential unusable for run %s", run.job_id)
             return Response("upstream credential unavailable", status_code=401)
         url = target.signing.upstream_url(
-            base_url=target.base_url, path=request.url.path, query=request.url.query
+            base_url=target.base_url, path=path, query=request.url.query
         )
 
         upstream_req = client.build_request(request.method, url, headers=headers, content=body)
@@ -303,7 +408,7 @@ def create_llm_proxy_app(
     )
     return Starlette(
         routes=[
-            WebSocketRoute("/responses", terminator),
+            WebSocketRoute("/{path:path}", terminator),
             Route(
                 "/{path:path}",
                 handler,
@@ -379,6 +484,17 @@ class _ResponsesWebsocketTerminator:
         if target is None:
             await _refuse_websocket(send, 502, "provider not proxied")
             return
+        if not _endpoint_allowed(
+            self._provider_id(), "GET", scope["path"], scope.get("raw_path", b""), websocket=True
+        ):
+            logger.warning(
+                "LLM endpoint refused for run %s (%s) at %s",
+                run.job_id,
+                run.kind,
+                scope["path"],
+            )
+            await _refuse_websocket(send, 403, "LLM endpoint not allowed")
+            return
         query = scope.get("query_string", b"").decode()
         try:
             signing_headers = target.signing.credential_headers(
@@ -392,11 +508,19 @@ class _ResponsesWebsocketTerminator:
         url = target.signing.upstream_websocket_url(
             base_url=target.base_url, path=scope["path"], query=query
         )
-        forwarded = {k: v for k, v in headers.items() if k not in _WS_DROP_HEADERS}
+        forwarded = {
+            k: v
+            for k, v in headers.items()
+            if k not in _WS_DROP_HEADERS and not k.startswith("x-goog-")
+        }
         forwarded.update(signing_headers)
         try:
             connection = await ws_connect(
-                url, additional_headers=forwarded, proxy=None, max_size=2**24
+                url,
+                additional_headers=forwarded,
+                proxy=None,
+                max_size=_MAX_REQUEST_BYTES,
+                max_queue=1,
             )
         except Exception as exc:
             logger.warning("LLM proxy: upstream websocket unreachable (%s)", exc)
@@ -433,6 +557,24 @@ class _ResponsesWebsocketTerminator:
                 if code is None or code in _LOCAL_ONLY_CLOSE_CODES:
                     code, reason = 1011, ""
                 await connection.close(code, reason)
+                return
+            payload = message.get("text")
+            if payload is None:
+                payload = message.get("bytes")
+            if payload is not None and (
+                len(payload) > _MAX_REQUEST_BYTES
+                or isinstance(payload, str)
+                and len(payload.encode("utf-8")) > _MAX_REQUEST_BYTES
+            ):
+                await connection.close(1009, "Request body too large")
+                with suppress(RuntimeError):
+                    await send(
+                        {
+                            "type": "websocket.close",
+                            "code": 1009,
+                            "reason": "Request body too large",
+                        }
+                    )
                 return
             if message.get("text") is not None:
                 refusal = await self._unpriced_refusal(message["text"])
@@ -551,7 +693,9 @@ async def start_llm_proxy() -> None:
     app = create_llm_proxy_app(
         upstream=_active_upstream, client=client, provider_id=_active_provider_id
     )
-    config = uvicorn.Config(app, log_level="warning")
+    config = uvicorn.Config(
+        app, log_level="warning", ws_max_size=_MAX_REQUEST_BYTES, ws_max_queue=1
+    )
     _proxy_server = _NoSignalServer(config)
     _proxy_task = asyncio.create_task(_proxy_server.serve(sockets=[sock]))
     logger.info("LLM key-replacement proxy listening on port %d", port)

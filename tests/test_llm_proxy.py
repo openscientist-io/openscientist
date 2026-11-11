@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
+from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
@@ -609,6 +610,119 @@ def _recording_upstream(recorded: list[dict]) -> httpx.AsyncClient:
 class TestProxyForwarding:
     """The proxy authenticates, substitutes the real key, and forwards."""
 
+    @pytest.mark.parametrize(
+        ("provider", "method", "path"),
+        [
+            ("anthropic", "POST", "/v1/messages"),
+            ("cborg", "POST", "/v1/messages"),
+            ("foundry", "POST", "/v1/messages"),
+            ("anthropic", "HEAD", "/api/hello"),
+            ("cborg", "HEAD", "/api/hello"),
+            ("foundry", "HEAD", "/api/hello"),
+            ("anthropic", "POST", "/v1/messages/count_tokens"),
+            ("anthropic", "GET", "/v1/models"),
+            ("openai", "POST", "/responses"),
+            ("openai", "POST", "/responses/compact"),
+            ("azure-openai", "POST", "/responses"),
+            ("openai", "GET", "/models"),
+            ("ollama", "POST", "/chat/completions"),
+            ("vllm", "POST", "/chat/completions"),
+            ("llamacpp", "POST", "/chat/completions"),
+            ("github-copilot", "POST", "/chat/completions"),
+        ],
+    )
+    def test_allows_harness_endpoints(self, provider, method, path, placeholder_for):
+        recorded: list[dict] = []
+        app = create_llm_proxy_app(
+            upstream=lambda: LlmUpstream(
+                "https://upstream.test", StaticHeadersSigning({"x-api-key": "REAL"})
+            ),
+            client=_recording_upstream(recorded),
+            provider_id=lambda: provider,
+        )
+        with TestClient(app) as client:
+            resp = client.request(
+                method, path, headers={"x-api-key": placeholder_for("run")}, json={}
+            )
+        assert resp.status_code == 200
+        assert len(recorded) == 1
+
+    @pytest.mark.parametrize(
+        ("provider", "path"),
+        [
+            ("anthropic", "/responses"),
+            ("openai", "/v1/messages"),
+            (
+                "vertex",
+                "/projects/other/locations/us-east5/publishers/anthropic/models/m:rawPredict",
+            ),
+            ("bedrock", "/model/m/converse"),
+            ("unsupported", "/responses"),
+        ],
+    )
+    def test_refuses_other_provider_endpoints(self, provider, path, placeholder_for):
+        recorded: list[dict] = []
+        app = create_llm_proxy_app(
+            upstream=lambda: LlmUpstream(
+                "https://upstream.test", StaticHeadersSigning({"x-api-key": "REAL"})
+            ),
+            client=_recording_upstream(recorded),
+            provider_id=lambda: provider,
+        )
+        with TestClient(app) as client:
+            resp = client.post(path, headers={"x-api-key": placeholder_for("run")}, json={})
+        assert resp.status_code == 403
+        assert recorded == []
+
+    @pytest.mark.parametrize("provider", ["anthropic", "openai", "vertex", "bedrock"])
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/v1/messages/batches",
+            "/batches",
+            "/files",
+            "/fine_tuning/jobs",
+            "/%2e%2e/",
+            "/%2e%2e/responses",
+            "/v1%2fmessages",
+            "/v1%5cmessages",
+            "/%252e%252e/responses",
+        ],
+    )
+    def test_refuses_unapproved_paths(self, provider, path, placeholder_for, caplog):
+        recorded: list[dict] = []
+        job_id = str(uuid4())
+        app = create_llm_proxy_app(
+            upstream=lambda: LlmUpstream(
+                "https://upstream.test/base", StaticHeadersSigning({"x-api-key": "REAL"})
+            ),
+            client=_recording_upstream(recorded),
+            provider_id=lambda: provider,
+        )
+        with TestClient(app) as client:
+            resp = client.post(path, headers={"x-api-key": placeholder_for(job_id)}, json={})
+        assert resp.status_code == 403
+        assert resp.text == "LLM endpoint not allowed"
+        assert recorded == []
+        assert job_id in caplog.text
+
+    @pytest.mark.parametrize("method", ["GET", "PUT", "PATCH", "DELETE", "OPTIONS"])
+    def test_refuses_non_inference_methods(self, method, placeholder_for):
+        recorded: list[dict] = []
+        app = create_llm_proxy_app(
+            upstream=lambda: LlmUpstream(
+                "https://upstream.test", StaticHeadersSigning({"x-api-key": "REAL"})
+            ),
+            client=_recording_upstream(recorded),
+            provider_id=lambda: "anthropic",
+        )
+        with TestClient(app) as client:
+            resp = client.request(
+                method, "/v1/messages", headers={"x-api-key": placeholder_for("run")}
+            )
+        assert resp.status_code == 403
+        assert recorded == []
+
     def test_substitutes_key_and_preserves_request(self, placeholder_for):
         placeholder = placeholder_for("job-1")
         recorded: list[dict] = []
@@ -667,6 +781,7 @@ class TestProxyForwarding:
                 StaticHeadersSigning({"authorization": "Bearer REAL"}),
             ),
             client=_recording_upstream(recorded),
+            provider_id=lambda: "openai",
         )
         with TestClient(app) as client:
             resp = client.post(
@@ -734,6 +849,13 @@ class TestVertexProxyForwarding:
     """The proxy signs Vertex calls with the web's credential and forwards them
     to the regional Vertex endpoint; the stub upstream stands in for it."""
 
+    @pytest.fixture(autouse=True)
+    def vertex_project(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_VERTEX_PROJECT_ID", "proj-1")
+        get_settings.cache_clear()
+        yield
+        get_settings.cache_clear()
+
     _VERTEX_PATH = (
         "/projects/proj-1/locations/europe-west1/publishers/anthropic/"
         "models/claude-sonnet-4-5@20250929:rawPredict"
@@ -744,7 +866,30 @@ class TestVertexProxyForwarding:
             "https://us-east5-aiplatform.googleapis.com/v1",
             GoogleAdcSigning(credentials),
         )
-        return create_llm_proxy_app(upstream=lambda: upstream, client=_recording_upstream(recorded))
+        return create_llm_proxy_app(
+            upstream=lambda: upstream,
+            client=_recording_upstream(recorded),
+            provider_id=lambda: "vertex",
+        )
+
+    def test_discards_caller_google_billing_and_routing_headers(self, placeholder_for):
+        recorded: list[dict] = []
+        app = self._app(recorded, FakeVertexCredentials())
+        with TestClient(app) as client:
+            response = client.post(
+                self._VERTEX_PATH,
+                headers={
+                    "authorization": f"Bearer {placeholder_for('run')}",
+                    "X-Goog-User-Project": "caller-project",
+                    "x-goog-request-params": "project=caller-project",
+                    "x-goog-api-key": "caller-key",
+                },
+                json={},
+            )
+        assert response.status_code == 200
+        assert len(recorded) == 1
+        assert not any(name.startswith("x-goog-") for name in recorded[0]["headers"])
+        assert recorded[0]["headers"]["authorization"] == "Bearer tok-1"
 
     def test_raw_predict_reaches_the_regional_vertex_endpoint(self, placeholder_for):
         """The container's rawPredict reaches the regional Vertex endpoint with a
@@ -835,6 +980,7 @@ def _recording_bedrock_upstream(recorded: list[dict], payload: bytes) -> httpx.A
                 "method": request.method,
                 "host": request.url.hostname,
                 "path": request.url.path,
+                "raw_path": request.scope["raw_path"].decode("ascii"),
                 "query": request.url.query,
                 "headers": dict(request.headers),
                 "body": body,
@@ -879,7 +1025,66 @@ class TestBedrockSigV4ProxyForwarding:
         return create_llm_proxy_app(
             upstream=lambda: upstream,
             client=_recording_bedrock_upstream(recorded, payload),
+            provider_id=lambda: "bedrock",
         )
+
+    @pytest.mark.parametrize("action", ["invoke", "invoke-with-response-stream"])
+    @pytest.mark.parametrize(
+        "resource",
+        [
+            "123456789012:inference-profile/us.anthropic.claude-sonnet-4-5-v1:0",
+            "123456789012:application-inference-profile/abcdefgh1234",
+            ":foundation-model/anthropic.claude-sonnet-4-5-v1:0",
+        ],
+    )
+    def test_encoded_model_arn_reaches_upstream(
+        self, action, resource, placeholder_for, monkeypatch
+    ):
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "TESTAKID")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "TESTSECRET")
+        monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+        model = f"arn:aws:bedrock:us-east-1:{resource}"
+        path = f"/model/{quote(model, safe='')}/{action}"
+        recorded: list[dict] = []
+        app = self._app(recorded)
+        with TestClient(app) as client:
+            response = client.post(
+                path,
+                headers={"authorization": f"Bearer {placeholder_for('run')}"},
+                content=self._BODY,
+            )
+        assert response.status_code == 200
+        assert len(recorded) == 1
+        assert recorded[0]["raw_path"] == path
+        verify_sigv4(
+            {**recorded[0], "path": path},
+            access_key="TESTAKID",
+            secret="TESTSECRET",
+            region="us-east-1",
+        )
+
+    @pytest.mark.parametrize(
+        "component",
+        [
+            "arn%3Aaws%3Abedrock%3Aus-east-1%3A123456789012%3Ainference-profile%2F..",
+            "arn%3Aaws%3Abedrock%3Aus-east-1%3A123456789012%3Ainference-profile%2Fx%2F..",
+            "arn%3Aaws%3Abedrock%3Aus-east-1%3A123456789012%3Ainference-profile%2Fx%252F..",
+            "arn%3Aaws%3Abedrock%3Aus-east-1%3A123456789012%3Ainference-profile/x",
+            "arn%3Aaws%3Abedrock%3Aus-east-1%3A123456789012%3Ainference-profile%5Cx",
+            "arn%3Aaws%3Abedrock%3Aus-east-1%3A123456789012%3Ainference-profile%2F.",
+        ],
+    )
+    def test_refuses_arn_shaped_path_traversal(self, component, placeholder_for):
+        recorded: list[dict] = []
+        app = self._app(recorded)
+        with TestClient(app) as client:
+            response = client.post(
+                f"/model/{component}/invoke",
+                headers={"authorization": f"Bearer {placeholder_for('run')}"},
+                content=self._BODY,
+            )
+        assert response.status_code == 403
+        assert recorded == []
 
     def test_stream_reaches_the_stub_with_a_valid_sigv4(self, placeholder_for, monkeypatch):
         """A streamed InvokeModelWithResponseStream reaches the stub with a valid
@@ -1014,9 +1219,14 @@ class TestVaultProxyForwarding:
             upstream = vault_llm_upstream(vault_dir, provider)
             assert upstream is not None
             recorded: list[dict] = []
+
+            def provider_id(provider: str = provider) -> str:
+                return "openai" if provider == "openai-codex" else provider
+
             app = create_llm_proxy_app(
                 upstream=lambda: upstream,  # noqa: B023  resolved before the next iteration
                 client=_recording_upstream(recorded),
+                provider_id=provider_id,
             )
             with TestClient(app) as client:
                 resp = client.post(
@@ -1595,6 +1805,17 @@ class TestChatgptResponsesWebsocket:
     placeholder, opens the upstream socket with the web-held credential, and
     pumps frames unchanged in both directions."""
 
+    @pytest.mark.parametrize("path", ["/files", "/%2e%2e/responses", "/%2fresponses"])
+    async def test_refuses_websocket_paths(self, path, stub_upstream, live_proxy, placeholder_for):
+        with pytest.raises(InvalidStatus) as raised:
+            await connect(
+                f"ws://127.0.0.1:{live_proxy}{path}",
+                additional_headers={"authorization": f"Bearer {placeholder_for('run')}"},
+                proxy=None,
+            )
+        assert raised.value.response.status_code == 403
+        assert stub_upstream.handshakes == []
+
     @pytest.fixture
     async def stub_upstream(self):
         stub = _WebsocketStub()
@@ -1614,6 +1835,7 @@ class TestChatgptResponsesWebsocket:
                 StaticHeadersSigning({"authorization": "Bearer REAL-TOK"}),
             ),
             client=client,
+            provider_id=lambda: "openai",
         )
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
@@ -1710,6 +1932,7 @@ class TestChatgptResponsesWebsocket:
                 ChatgptSigning(str(login)),
             ),
             client=_recording_upstream(recorded),
+            provider_id=lambda: "openai",
         )
         with TestClient(app) as client:
             resp = client.post(
@@ -1736,6 +1959,7 @@ class TestChatgptResponsesWebsocket:
                 ChatgptSigning(str(tmp_path / "missing.json")),
             ),
             client=_recording_upstream(recorded),
+            provider_id=lambda: "openai",
         )
         with TestClient(app) as client:
             resp = client.post(
@@ -1794,7 +2018,7 @@ class TestUnpricedModelRefusal:
             base_url="http://testserver", transport=httpx.ASGITransport(app=app)
         ) as client:
             resp = await client.post(
-                "/v1/chat/completions",
+                "/chat/completions" if provider_id == "ollama" else "/v1/messages",
                 headers={"x-api-key": placeholder},
                 content=json.dumps({"model": model}),
             )
@@ -1852,7 +2076,7 @@ class TestUnpricedModelRefusal:
                 StaticHeadersSigning({"authorization": "Bearer REAL-TOK"}),
             ),
             client=client,
-            provider_id=lambda: "anthropic",
+            provider_id=lambda: "openai",
         )
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", 0))
