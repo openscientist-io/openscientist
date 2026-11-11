@@ -2,31 +2,50 @@
 
 import re
 
+from nicegui.client import Client
+from nicegui.elements.upload_files import _sanitize_filename
 from python_multipart import MultipartParser
 from python_multipart.multipart import parse_options_header
 from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException
+from starlette.formparsers import _user_safe_decode
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from openscientist.admin_settings import current_admin_settings
+from openscientist.webapp_components.utils.session import (
+    PendingUpload,
+    check_upload_quota,
+    finish_upload,
+    reserve_upload,
+)
 
 MAX_UPLOAD_FILES_PER_REQUEST = 100
 MAX_FORM_OVERHEAD_BYTES = 1024 * 1024
-_NICEGUI_UPLOAD = re.compile(r"/_nicegui/client/[^/]+/upload/[^/]+/?")
+_NICEGUI_UPLOAD = re.compile(
+    r"/_nicegui/client/(?P<client_id>[^/]+)/upload/(?P<upload_id>[0-9]+)/?"
+)
 
 
 class _MultipartLimits:
-    def __init__(self, limit: int) -> None:
+    def __init__(self, limit: int, session_id: str | None, charset: str, max_files: int) -> None:
         self.limit = limit
         self.files = 0
         self.total = 0
         self.is_file = False
         self.header_name = bytearray()
         self.header_value = bytearray()
+        self.filename: bytes | None = None
+        self.session_id = session_id
+        self.charset = charset
+        self.reservations: list[PendingUpload] = []
+        self.current_upload: PendingUpload | None = None
+        self.max_files = max_files
 
     def on_part_begin(self) -> None:
         self.is_file = False
+        self.filename = None
+        self.current_upload = None
 
     def on_header_field(self, data: bytes, start: int, end: int) -> None:
         self.header_name.extend(data[start:end])
@@ -38,6 +57,7 @@ class _MultipartLimits:
         if self.header_name.lower() == b"content-disposition":
             _, options = parse_options_header(bytes(self.header_value))
             self.is_file = b"filename" in options
+            self.filename = options.get(b"filename")
         self.header_name.clear()
         self.header_value.clear()
 
@@ -46,12 +66,36 @@ class _MultipartLimits:
             self.files += 1
             if self.files > MAX_UPLOAD_FILES_PER_REQUEST:
                 raise HTTPException(413, "Too many uploaded files")
+            if self.session_id is not None and self.filename is not None:
+                name = _sanitize_filename(_user_safe_decode(self.filename, self.charset))
+                try:
+                    self.current_upload = reserve_upload(self.session_id, name)
+                    self.reservations.append(self.current_upload)
+                except ValueError as error:
+                    raise HTTPException(409, str(error)) from error
+                self.check_page_quota()
 
     def on_part_data(self, data: bytes, start: int, end: int) -> None:
         if self.is_file:
             self.total += end - start
             if self.total > self.limit:
                 raise HTTPException(413, "Uploaded files exceed the size limit")
+            if self.current_upload is not None:
+                self.current_upload.size += end - start
+                self.check_page_quota()
+
+    def check_page_quota(self) -> None:
+        if self.session_id is not None:
+            try:
+                check_upload_quota(self.session_id, self.max_files, self.limit)
+            except ValueError as error:
+                raise HTTPException(413, str(error)) from error
+
+    def release_unclaimed(self) -> None:
+        if self.session_id is not None:
+            for upload in self.reservations:
+                if not upload.claimed:
+                    finish_upload(self.session_id, upload)
 
 
 class UploadLimitsMiddleware:
@@ -90,10 +134,30 @@ class UploadLimitsMiddleware:
                 )(scope, receive, send)
                 return
 
+        session_id: str | None = None
+        max_files = MAX_UPLOAD_FILES_PER_REQUEST
+        upload_match = _NICEGUI_UPLOAD.fullmatch(scope["path"])
+        if upload_match is not None:
+            client = Client.instances.get(upload_match["client_id"])
+            if client is not None:
+                try:
+                    element = client.elements.get(int(upload_match["upload_id"]))
+                except ValueError:
+                    element = None
+                candidate = getattr(element, "_upload_session_id", None)
+                if isinstance(candidate, str):
+                    session_id = candidate
+                    if element is not None:
+                        page_max_files = element.props.get("max-files")
+                        if isinstance(page_max_files, int):
+                            max_files = page_max_files
+
         content_type, options = parse_options_header(headers.get("content-type", ""))
         parser = None
+        limits = None
         if content_type == b"multipart/form-data" and b"boundary" in options:
-            limits = _MultipartLimits(limit)
+            charset = options.get(b"charset", b"utf-8").decode("latin-1")
+            limits = _MultipartLimits(limit, session_id, charset, max_files)
             parser = MultipartParser(
                 options[b"boundary"],
                 {
@@ -106,7 +170,7 @@ class UploadLimitsMiddleware:
                 },
             )
         received = 0
-        rejection: str | None = None
+        rejection: HTTPException | None = None
 
         async def limited_receive() -> Message:
             nonlocal received, rejection
@@ -115,13 +179,13 @@ class UploadLimitsMiddleware:
                 body = message.get("body", b"")
                 received += len(body)
                 if received > body_limit:
-                    rejection = "Upload body exceeds the size limit"
-                    raise HTTPException(413, rejection)
+                    rejection = HTTPException(413, "Upload body exceeds the size limit")
+                    raise rejection
                 if parser is not None:
                     try:
                         parser.write(body)
                     except HTTPException as error:
-                        rejection = str(error.detail)
+                        rejection = error
                         raise
             return message
 
@@ -130,9 +194,15 @@ class UploadLimitsMiddleware:
                 await send(message)
 
         try:
-            await self.app(scope, limited_receive, limited_send)
-        except Exception:
-            if rejection is None:
-                raise
-        if rejection is not None:
-            await JSONResponse({"detail": rejection}, status_code=413)(scope, receive, send)
+            try:
+                await self.app(scope, limited_receive, limited_send)
+            except Exception:
+                if rejection is None:
+                    raise
+            if rejection is not None:
+                await JSONResponse({"detail": rejection.detail}, status_code=rejection.status_code)(
+                    scope, receive, send
+                )
+        finally:
+            if limits is not None:
+                limits.release_unclaimed()

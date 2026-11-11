@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -14,6 +14,7 @@ from nicegui import ui
 from nicegui.client import Client
 from nicegui.elements.upload_files import SmallFileUpload
 from nicegui.events import UploadEventArguments
+from nicegui.testing import user_simulation
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
@@ -225,54 +226,34 @@ async def test_an_upload_under_the_rows_size_limit_is_recorded(
 
 
 async def test_the_page_shows_the_rows_file_size_limit(
-    test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    test_engine: AsyncEngine,
+    database: Forwarder,
+    signed_in_job_user: tuple[User, str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The signed-in page shows the limit the admin settings row holds in the upload
-    header, and the research-question field."""
+    """The uploader displays and enforces the admin row's per-file limit."""
     from openscientist import web_app
-    from openscientist.auth import middleware
     from openscientist.webapp_components.pages import new_job
 
     await set_admin_settings_row(test_engine, max_file_size_mb=250)
+    monkeypatch.setattr(web_app, "get_job_manager", lambda: object())
+    monkeypatch.setattr(new_job, "check_provider_config", lambda: (True, "Mock", None))
+    _, token = signed_in_job_user
+
+    async def root() -> None:
+        await new_job.new_job_page()
+
     try:
-        storage: dict[str, object] = {}
-        ui = MagicMock()
-        ui.context.client.request.cookies = {"session_token": "page-token"}
-        ui.context.client.page.path = "/new"
-        ui.context.client.page.response_timeout = 30.0
-        monkeypatch.setattr(
-            middleware, "app", SimpleNamespace(storage=SimpleNamespace(user=storage))
-        )
-        monkeypatch.setattr(middleware, "ui", ui)
-
-        async def _valid(_token: str) -> dict[str, object]:
-            return {
-                "user_id": "user-123",
-                "email": "visitor@example.com",
-                "name": "Visitor",
-                "can_start_jobs": True,
-            }
-
-        monkeypatch.setattr(middleware, "validate_session", _valid)
-        mock_ui = MagicMock()
-        with (
-            patch.object(new_job, "ui", mock_ui),
-            patch.object(new_job, "render_navigator", MagicMock()),
-            patch.object(new_job, "check_provider_config", lambda: (True, "Anthropic", None)),
-            patch.object(web_app, "get_job_manager", MagicMock()),
-        ):
-            await new_job.new_job_page()
-            mock_ui.upload.call_args.kwargs["on_rejected"]()
-
-        assert mock_ui.upload.call_args.kwargs["label"] == (
-            "Upload Data Files (Optional - Max 250 MB per file)"
-        )
-        assert mock_ui.upload.call_args.kwargs["max_file_size"] == 250 * 1024 * 1024
-        assert "max_total_size" not in mock_ui.upload.call_args.kwargs
-        assert mock_ui.upload.call_args.kwargs["max_files"] == 100
-        assert mock_ui.notify.call_args.kwargs["type"] == "negative"
-        assert "per file" in mock_ui.notify.call_args.args[0]
-        mock_ui.textarea.assert_called_once()
-        assert mock_ui.textarea.call_args.kwargs["label"] == "Research Question"
+        async with user_simulation(root=root) as browser:
+            browser.http_client.cookies.set("session_token", token)
+            await browser.open("/")
+            upload = next(iter(browser.find(ui.upload).elements))
+            assert upload.props["label"] == "Upload Data Files (Optional - Max 250 MB per file)"
+            assert upload.props["max-file-size"] == 250 * 1024 * 1024
+            assert "max-total-size" not in upload.props
+            assert upload.props["max-files"] == 100
+            browser.find(ui.upload).trigger("rejected")
+            await browser.should_see("up to 250 MB per file")
+            assert len(browser.find(ui.textarea).elements) == 1
     finally:
         await reset_admin_settings_row(test_engine)

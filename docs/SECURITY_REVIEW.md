@@ -51,10 +51,30 @@ The main areas for improvement are **operational security gaps** rather than arc
 
 - **Pydantic models for API input.** All API request bodies are validated through Pydantic V2 schemas with type checking and length constraints (e.g., job titles: 1--255 characters, max iterations: 1--20).
 - **File upload safety checks.** Web and API upload requests enforce the admin `max_file_size_mb` limit on combined file bytes and a maximum of 100 files while receiving the body, before each chunk reaches multipart spooling. The body limit allows an additional 1 MiB for form fields and multipart framing, rejects excessive `Content-Length` immediately, and returns HTTP `413` when a streaming limit is exceeded. Accepted uploads are validated by extension and magic-number detection, executable files are blocked, and filenames are sanitized.
-- **Bounded page upload storage.** Each page retains at most 100 files totalling at most 100 times the admin `max_file_size_mb` limit, with simultaneous saves sharing that quota. Files are staged under `NICEGUI_STORAGE_PATH/uploads` (`.nicegui/uploads` by default), removed on disconnect or successful submission, and cleared on web startup and shutdown.
+- **Bounded page upload storage.** Each page retains at most 100 files totalling at most 100 times the admin `max_file_size_mb` limit, with simultaneous saves sharing that quota. Files are staged under `NICEGUI_STORAGE_PATH/uploads` (`.nicegui/uploads` by default), removed when deselected, reset, disconnected, or successfully submitted, and cleared on web startup and shutdown.
 - **Parameterized SQL queries.** All database access uses SQLAlchemy ORM, which generates parameterized queries. No raw SQL string interpolation was found.
 - **Job page renders no agent-written HTML.** The research question shows as the scientist wrote it, and the page's only HTML built from job data is the attachment links, whose URLs and names the page escapes itself. A reader who sees the job only because it is public gets no attachment URLs, so the page cannot show the owner's uploads to them.
 - **Vulnerability scanner blocking.** A middleware layer blocks common scanner paths (`.git/`, `wp-admin/`, etc.) to reduce noise and exposure.
+
+#### Upload staging lifecycle
+
+Each page reserves a NiceGUI-sanitized filename when its multipart headers arrive. A reserved or stored name returns HTTP `409` before the duplicate part is spooled. Page count and byte quotas return HTTP `413` while receiving the body. Removal selects a unique name only when Quasar reports `__status` as `uploaded`.
+
+| Event | Receiving | Pending or writing | Finished without a file | Stored | Absent |
+|---|---|---|---|---|---|
+| Same-name part headers | Reject with `409` | Reject with `409` | Reject with `409` | Reject with `409` | Reserve name and check quota |
+| Upload callback | Claim reservation | Reject duplicate callback | Reject duplicate callback | Reject duplicate callback | Register direct upload |
+| Request ends or fails | Release unclaimed reservation | Keep claimed reservation | Keep name | No action | No action |
+| Save slot acquired | No action | Check cancellation and quota, then write | No action | No action | No action |
+| Removal with `uploaded` status | Cancel reservation | Cancel and discard any partial file | Release name | Delete and release quota | No action |
+| Removal with any other status | No action | No action | No action | No action | No action |
+| Batch removal | Apply each item's status and name | Apply each item's status and name | Apply each item's status and name | Apply each item's status and name | No action |
+| Reset, disconnect, or successful submission | Cancel reservation | Cancel and discard any partial file | Release name | Delete and release quota | No action |
+| Save succeeds | No action | Retain unless cancelled, then release reservation | No action | No action | No action |
+| Save fails or is interrupted | No action | Delete partial file and keep name unless cancelled | No action | No action | No action |
+| Submit job | Omit | Omit | Omit | Include | Omit |
+
+Cancelled reservations remain unavailable until their request or save finishes. A failed save retains its name because NiceGUI has already acknowledged the upload to the browser.
 
 ### Security Headers
 
