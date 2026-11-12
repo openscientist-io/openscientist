@@ -44,6 +44,7 @@ from openscientist.security import (
     register_security_headers_middleware,
 )
 from openscientist.settings import Settings, dev_mode_problems, get_settings
+from openscientist.upload_limits import UploadLimitsMiddleware
 from openscientist.version import get_version_string
 from openscientist.webapp_components.components.badges import register_badge_head_html
 from openscientist.webapp_components.components.common import (
@@ -699,6 +700,7 @@ def _configure_host_app(host_app: FastAPI, jobs_dir: Path) -> None:
 
     # Middleware and routes must be registered before startup. The scanner
     # middleware stays outermost so probe 404s carry no app headers.
+    host_app.add_middleware(UploadLimitsMiddleware)
     register_security_headers_middleware(host_app)
     register_scanner_block_middleware(host_app)
     _register_openapi_docs(host_app)

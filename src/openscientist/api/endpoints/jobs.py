@@ -38,6 +38,7 @@ from openscientist.job.types import JobStatus
 from openscientist.job_manager import JobManager
 from openscientist.report.download import report_download_response
 from openscientist.share_service import set_job_public, withheld_artifact_dirs
+from openscientist.upload_limits import MAX_UPLOAD_FILES_PER_REQUEST
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +48,6 @@ router = APIRouter(prefix="/jobs", tags=["Jobs"])
 # One Starlette spool size in flight at a time, so no part of an upload is
 # held in memory whole, matching the parser's 1 MiB spool threshold.
 UPLOAD_CHUNK_SIZE = 1024 * 1024
-# The per-request file count cap. The total bytes per request is the
-# max_file_size_mb value from the admin settings row.
-MAX_UPLOAD_FILES_PER_REQUEST = 100
 
 CURRENT_USER_DEP = Depends(get_current_user_from_api_key)
 SESSION_DEP = Depends(get_session)

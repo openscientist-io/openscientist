@@ -1234,7 +1234,7 @@ class TestJobEndpoints:
         test_api_key_db: tuple[APIKey, str],
     ):
         """More files than the per-request cap stop with 413 and create no job."""
-        from openscientist.api.endpoints.jobs import MAX_UPLOAD_FILES_PER_REQUEST
+        from openscientist.upload_limits import MAX_UPLOAD_FILES_PER_REQUEST
 
         _, full_key = test_api_key_db
         app = _build_authenticated_app(db_session, test_user_db)
