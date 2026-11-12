@@ -11,7 +11,7 @@ from sqlalchemy import delete, event
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.database import session as db_session
-from openscientist.database.models import AnalysisLog, Finding, Job, User
+from openscientist.database.models import AnalysisLog, AnalysisLogOutput, Finding, Job, User
 from openscientist.job.types import completed_iterations
 from openscientist.job_manager import _load_progress
 from tests.db_outage import Forwarder
@@ -49,7 +49,7 @@ async def running_job(test_engine: AsyncEngine) -> AsyncIterator[str]:
                     step_number=1,
                     action_type="execute_code",
                     description="Run",
-                    output_data={"output": "x" * 10_000},
+                    output=AnalysisLogOutput(job_id=job.id, output="x" * 10_000),
                 ),
             ]
         )

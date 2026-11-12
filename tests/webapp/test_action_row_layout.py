@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 import openscientist.webapp_components.pages.job_detail.analysis_log as analysis_log
 from openscientist import web_app
-from openscientist.database.models import AnalysisLog, Job, Session, User
+from openscientist.database.models import AnalysisLog, AnalysisLogOutput, Job, Session, User
 from openscientist.job.types import JobStatus
 from openscientist.webapp_components.pages.job_detail import job_detail_page
 from openscientist.webapp_components.pages.job_detail.analysis_log import (
@@ -47,23 +47,21 @@ _ACTIONS: tuple[dict[str, object], ...] = (
         "action_type": "execute_code",
         "description": "Load the primary dataset",
         "input_data": {"code": "print(data.shape)", "language": "python"},
-        "output_data": {"output": SHORT_OUTPUT},
+        "output": SHORT_OUTPUT,
         "duration_seconds": 2.4,
     },
     {
         "action_type": "execute_code",
         "description": "Profile carnosine by condition",
         "input_data": {"code": "data.describe()\nprint(data)", "language": "python"},
-        "output_data": {"output": LONG_OUTPUT},
+        "output": LONG_OUTPUT,
         "duration_seconds": 41.7,
     },
     {
         "action_type": "execute_code",
         "description": "Fit PCA on the expression matrix",
         "input_data": {"code": "from sklearn.decomposition import PCA\nprint(PCA(2))"},
-        "output_data": {
-            "output": "ValueError: could not convert string to float: 'n/a'\nTraceback (most recent call last):"
-        },
+        "output": "ValueError: could not convert string to float: 'n/a'\nTraceback (most recent call last):",
         "duration_seconds": 0.8,
         "success": False,
     },
@@ -87,7 +85,7 @@ _ACTIONS: tuple[dict[str, object], ...] = (
         "action_type": "read_document",
         "description": "Read the protocol PDF",
         "input_data": {"file_path": "protocol.pdf"},
-        "output_data": {"output": "STUDY PROTOCOL\n1. Animals were cooled to 33 C for 120 min."},
+        "output": "STUDY PROTOCOL\n1. Animals were cooled to 33 C for 120 min.",
     },
     {
         "action_type": "update_hypothesis",
@@ -111,20 +109,20 @@ _ACTIONS: tuple[dict[str, object], ...] = (
         "action_type": "run_phenix_tool",
         "description": "Full validation",
         "input_data": {"tool_name": "phenix.molprobity", "input_files": ["structure.pdb"]},
-        "output_data": {"output": "MolProbity: 99.2% ideal rotamers.\nClashscore 2.1 (worst 1.8)."},
+        "output": "MolProbity: 99.2% ideal rotamers.\nClashscore 2.1 (worst 1.8).",
         "duration_seconds": 12.1,
     },
     {
         "action_type": "compare_structures",
         "description": "Superpose experimental and predicted",
         "input_data": {"experimental_pdb": "exp.pdb", "predicted_pdb": "af.pdb"},
-        "output_data": {"output": "RMSD (CA): 1.42 A over 201 residues"},
+        "output": "RMSD (CA): 1.42 A over 201 residues",
     },
     {
         "action_type": "parse_alphafold_confidence",
         "description": "pLDDT profile",
         "input_data": {"alphafold_pdb": "af.pdb"},
-        "output_data": {"output": "mean pLDDT 84.3, 2.1% of residues below 50"},
+        "output": "mean pLDDT 84.3, 2.1% of residues below 50",
     },
     {
         "action_type": "save_iteration_summary",
@@ -136,7 +134,7 @@ _ACTIONS: tuple[dict[str, object], ...] = (
         "action_type": "execute_code",
         "description": "Run the R model",
         "input_data": {"code": "fit <- lm(y ~ x)", "language": "r"},
-        "output_data": {"output": FAILED_INLINE_OUTPUT},
+        "output": FAILED_INLINE_OUTPUT,
         "duration_seconds": 0.3,
         "success": False,
     },
@@ -347,7 +345,12 @@ async def all_types_job(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str
                 iteration=1,
                 step_number=number + 1,
                 created_at=start + timedelta(minutes=number),
-                **spec,
+                output=(
+                    AnalysisLogOutput(job_id=job.id, output=spec["output"])
+                    if spec.get("output")
+                    else None
+                ),
+                **{key: value for key, value in spec.items() if key != "output"},
             )
             for number, spec in enumerate(_ACTIONS)
         ]

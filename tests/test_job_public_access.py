@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.database.models import (
     AnalysisLog,
+    AnalysisLogOutput,
     CostRecord,
     FeedbackHistory,
     Finding,
@@ -53,7 +54,9 @@ ANALYSIS = frozenset(
     }
 )
 # The tables a public job keeps owner/share-only.
-WITHHELD = frozenset({"job_data_files", "job_chat_messages", "cost_records"})
+WITHHELD = frozenset(
+    {"job_data_files", "job_chat_messages", "cost_records", "analysis_log_outputs"}
+)
 SHARED = frozenset({"job_shares"})
 ALL_TABLES = ANALYSIS | WITHHELD | SHARED
 
@@ -86,7 +89,12 @@ async def _seed(db_session: AsyncSession, owner: User, *, is_public: bool) -> _S
     )
     literature = Literature(job_id=job.id, iteration=1, title="A paper")
     analysis_log = AnalysisLog(
-        job_id=job.id, iteration=1, step_number=1, action_type="analysis", description="Step"
+        job_id=job.id,
+        iteration=1,
+        step_number=1,
+        action_type="execute_code",
+        description="Step",
+        output=AnalysisLogOutput(job_id=job.id, output="private action output"),
     )
     iteration_summary = IterationSummary(job_id=job.id, iteration=1, summary_text="Summary")
     feedback_history = FeedbackHistory(
@@ -164,6 +172,9 @@ def _table_selects(seeded: _Seeded) -> dict[str, Select]:
         "job_chat_messages": select(JobChatMessage.id).where(JobChatMessage.job_id == job.id),
         "cost_records": select(CostRecord.id).where(CostRecord.job_id == job.id),
         "job_shares": select(JobShare.id).where(JobShare.job_id == job.id),
+        "analysis_log_outputs": select(AnalysisLogOutput.analysis_log_id).where(
+            AnalysisLogOutput.job_id == job.id
+        ),
     }
 
 
@@ -386,6 +397,65 @@ async def test_another_jobs_agent_login_reads_nothing(
             text("DELETE FROM users WHERE id = ANY(:ids)"),
             {"ids": [ids["agent_owner"], ids["public_owner"]]},
         )
+
+
+@pytest.mark.asyncio
+async def test_an_agent_login_cannot_attach_output_to_another_jobs_log(
+    test_engine: AsyncEngine, test_database_url: str
+) -> None:
+    """An output row names its log's own job, so an agent writing its job id
+    against another job's log is refused and that log's output stays free."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    async with AsyncSession(test_engine, expire_on_commit=False) as session:
+        owner = User(email=f"logowner-{uuid4().hex}@pub.test", name="Log owner")
+        session.add(owner)
+        await session.flush()
+        own_job = Job(owner_id=owner.id, research_question="The agent's own job")
+        other_job = Job(owner_id=owner.id, research_question="Another job")
+        session.add_all([own_job, other_job])
+        await session.flush()
+        own_log, other_log = (
+            AnalysisLog(
+                job_id=job.id,
+                iteration=1,
+                step_number=1,
+                action_type="execute_code",
+                description="Step",
+            )
+            for job in (own_job, other_job)
+        )
+        session.add_all([own_log, other_log])
+        await session.commit()
+        ids = {"own": own_job.id, "other": other_job.id, "owner": owner.id}
+        log_ids = {"own": own_log.id, "other": other_log.id}
+
+    agen = _agent_login(test_engine, test_database_url, ids["own"])
+    login_url = await agen.__anext__()
+    insert = (
+        "INSERT INTO analysis_log_outputs (analysis_log_id, job_id, output) VALUES ($1, $2, $3)"
+    )
+    try:
+        conn = await asyncpg.connect(login_url.replace("postgresql+asyncpg://", "postgresql://", 1))
+        try:
+            with pytest.raises(asyncpg.exceptions.ForeignKeyViolationError):
+                await conn.execute(insert, log_ids["other"], ids["own"], "planted")
+            await conn.execute(insert, log_ids["own"], ids["own"], "own output")
+        finally:
+            await conn.close()
+    finally:
+        await agen.aclose()
+
+    async with test_engine.begin() as conn:
+        outputs = (
+            await conn.execute(text("SELECT analysis_log_id FROM analysis_log_outputs"))
+        ).scalars()
+        attached = set(outputs) & set(log_ids.values())
+        await conn.execute(
+            text("DELETE FROM jobs WHERE id = ANY(:ids)"), {"ids": [ids["own"], ids["other"]]}
+        )
+        await conn.execute(text("DELETE FROM users WHERE id = :id"), {"id": ids["owner"]})
+    assert attached == {log_ids["own"]}
 
 
 async def _is_public(db_session: AsyncSession, job_id: UUID) -> bool:

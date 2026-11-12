@@ -11,7 +11,7 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.budget import job_spends
-from openscientist.database.models.analysis_log import AnalysisLog
+from openscientist.database.models.analysis_log import AnalysisLog, AnalysisLogOutput
 from openscientist.database.models.feedback_history import FeedbackHistory
 from openscientist.database.models.finding import Finding
 from openscientist.database.models.hypothesis import Hypothesis
@@ -226,7 +226,7 @@ async def upsert_analysis_log(state: KnowledgeState, session: AsyncSession, job_
                 "execution_time",
             }
         }
-        output_data = {"output": log_entry.get("output")} if log_entry.get("output") else None
+        output = log_entry.get("output")
         session.add(
             AnalysisLog(
                 job_id=job_uuid,
@@ -235,7 +235,7 @@ async def upsert_analysis_log(state: KnowledgeState, session: AsyncSession, job_
                 action_type=log_entry["action"],
                 description=description,
                 input_data=sanitize_for_json(input_data) or None,
-                output_data=sanitize_for_json(output_data),
+                output=AnalysisLogOutput(job_id=job_uuid, output=output) if output else None,
                 duration_seconds=(
                     float(log_entry["execution_time"])
                     if log_entry.get("execution_time") is not None
@@ -451,7 +451,7 @@ def _serialized_log_entry(
     success: bool | None,
     duration_seconds: float | None,
     input_data: dict[str, Any] | None,
-    output_data: dict[str, Any] | None,
+    output: str | None,
 ) -> dict[str, Any]:
     """One analysis log row in knowledge state format."""
     serialized: dict[str, Any] = {
@@ -465,8 +465,8 @@ def _serialized_log_entry(
         serialized["execution_time"] = duration_seconds
     if input_data:
         serialized.update(input_data)
-    if output_data:
-        serialized.update(output_data)
+    if output:
+        serialized["output"] = output
     return serialized
 
 
@@ -565,16 +565,20 @@ async def load_iteration_analysis_log(
     """One iteration's log rows in knowledge state format, oldest first, each
     output cut to ``output_chars`` plus one character, so a caller can tell a
     cut output from a whole one."""
-    output = func.left(AnalysisLog.output_data["output"].astext, output_chars + 1).label("output")
-    query = select(
-        AnalysisLog.action_type,
-        AnalysisLog.created_at,
-        AnalysisLog.description,
-        AnalysisLog.success,
-        AnalysisLog.duration_seconds,
-        AnalysisLog.input_data,
-        output,
-    ).where(AnalysisLog.job_id == job_uuid, AnalysisLog.iteration == iteration)
+    output = func.left(AnalysisLogOutput.output, output_chars + 1).label("output")
+    query = (
+        select(
+            AnalysisLog.action_type,
+            AnalysisLog.created_at,
+            AnalysisLog.description,
+            AnalysisLog.success,
+            AnalysisLog.duration_seconds,
+            AnalysisLog.input_data,
+            output,
+        )
+        .outerjoin(AnalysisLogOutput, AnalysisLogOutput.analysis_log_id == AnalysisLog.id)
+        .where(AnalysisLog.job_id == job_uuid, AnalysisLog.iteration == iteration)
+    )
     if action_type is not None:
         query = query.where(AnalysisLog.action_type == action_type)
     query = query.order_by(AnalysisLog.created_at, AnalysisLog.id).offset(offset).limit(limit)
@@ -588,7 +592,7 @@ async def load_iteration_analysis_log(
             row.success,
             row.duration_seconds,
             row.input_data,
-            {"output": row.output} if row.output is not None else None,
+            row.output,
         )
         for row in result.all()
     ]

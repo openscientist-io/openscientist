@@ -657,8 +657,7 @@ async def update_job_visibility(
 
     A public job is reachable by ID or link but stays off other users' job
     pages. A reader who is neither the owner nor a share recipient does not
-    receive the job's uploaded input files, the agent's transcripts or its
-    iteration log.
+    receive the job's uploaded input files or the agent's raw tool output.
     """
     await set_current_user(session, user.id)
     job = await set_job_public(

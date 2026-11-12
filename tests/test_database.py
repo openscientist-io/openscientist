@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.database.models import (
     AnalysisLog,
+    AnalysisLogOutput,
     APIKey,
     CostRecord,
     Finding,
@@ -258,17 +259,20 @@ async def test_analysis_log_creation(db_session: AsyncSession, test_job: Job):
         action_type="code_execution",
         description="Executed analysis code",
         input_data={"code": "print('hello')"},
-        output_data={"output": "hello"},
+        output=AnalysisLogOutput(job_id=test_job.id, output="hello"),
         success=True,
     )
     db_session.add(log)
     await db_session.commit()
     await db_session.refresh(log)
+    await db_session.refresh(log, ["output"])
 
     assert isinstance(log.id, UUID)
     assert log.action_type == "code_execution"
     assert log.success is True
-    assert log.output_data is not None and log.output_data["output"] == "hello"
+    assert log.output is not None and log.output.output == "hello"
+    assert log.output.analysis_log_id == log.id
+    assert log.output.job_id == test_job.id
 
 
 @pytest.mark.asyncio
