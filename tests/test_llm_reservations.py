@@ -205,7 +205,9 @@ async def test_ambiguous_commit_never_counts_ledger_and_debt_twice(
 async def test_project_limits_include_other_job_reservations(
     test_engine: AsyncEngine, jobs, limit, field
 ):
-    await set_admin_settings_row(test_engine, **{field: 0.5})
+    _, total, recent = await budget._ledger_totals()
+    baseline = total if limit == "project_total" else recent
+    await set_admin_settings_row(test_engine, **{field: baseline + 0.5})
     reservation = await reserve(jobs[0])
     assert isinstance(reservation, ModelCallReservation)
     refused = await reserve(jobs[1])
@@ -237,7 +239,9 @@ async def test_cancel_releases_unattempted_reservation(test_engine: AsyncEngine,
 
 @pytest.mark.parametrize("field", ["max_project_spend_total_usd", "max_project_spend_24h_usd"])
 async def test_deleted_job_closes_reservation(test_engine: AsyncEngine, jobs, field):
-    await set_admin_settings_row(test_engine, **{field: 0.5})
+    _, total, recent = await budget._ledger_totals()
+    baseline = total if field == "max_project_spend_total_usd" else recent
+    await set_admin_settings_row(test_engine, **{field: baseline + 0.5})
     reservation = await reserve(jobs[0])
     assert isinstance(reservation, ModelCallReservation)
     async with test_engine.begin() as conn:
@@ -266,7 +270,8 @@ async def test_record_model_call_idempotent_retry(test_engine: AsyncEngine, jobs
 
 
 async def test_recent_limit_ignores_old_durable_cost(test_engine: AsyncEngine, jobs):
-    await set_admin_settings_row(test_engine, max_project_spend_24h_usd=0.5)
+    _, _, baseline = await budget._ledger_totals()
+    await set_admin_settings_row(test_engine, max_project_spend_24h_usd=baseline + 0.5)
     async with AsyncSession(test_engine) as session:
         session.add(
             CostRecord(
@@ -304,14 +309,15 @@ async def test_pending_cost_adds_to_provider_billed_baseline(
 ):
     from openscientist.providers.base import CostInfo
 
-    await set_admin_settings_row(test_engine, max_project_spend_total_usd=0.6)
+    _, baseline, _ = await budget._ledger_totals()
+    await set_admin_settings_row(test_engine, max_project_spend_total_usd=baseline + 0.6)
     monkeypatch.setattr(
         budget,
         "_provider_billing",
         AsyncMock(
             return_value=CostInfo(
                 provider_name="anthropic",
-                total_spend_usd=0.4,
+                total_spend_usd=baseline + 0.4,
                 recent_spend_usd=0.0,
                 recent_period_hours=24,
             )

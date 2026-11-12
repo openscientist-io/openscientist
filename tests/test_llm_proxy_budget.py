@@ -10,6 +10,7 @@ from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
+from openscientist import budget
 from openscientist.llm_proxy import _Admissions, create_llm_proxy_app
 from openscientist.providers.base import LlmUpstream, StaticHeadersSigning
 from tests import test_llm_proxy as proxy_fixtures
@@ -40,7 +41,13 @@ async def _no_billing():
 )
 @pytest.mark.parametrize("spent", [0.5, 1.0])
 async def test_http_budget_gate(limit, spent, test_engine, placeholder_for):
-    await set_admin_settings_row(test_engine, **{limit: 1.0})
+    _, total, recent = await budget._ledger_totals()
+    baseline = {
+        "max_job_cost_usd": 0.0,
+        "max_project_spend_total_usd": total,
+        "max_project_spend_24h_usd": recent,
+    }[limit]
+    await set_admin_settings_row(test_engine, **{limit: baseline + 1.0})
     async with job_with_costs(test_engine, [(spent, None)]) as job:
         recorded = []
         app = create_llm_proxy_app(
