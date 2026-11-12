@@ -225,9 +225,8 @@ async def find_share_target_by_email(
         return result.scalars().first()
 
 
-# Top-level job-directory entries withheld from a viewer who can see a job only
-# because it is public. ``data/`` holds the owner's uploaded input files.
-PUBLIC_VIEWER_EXCLUDED_DIRS: tuple[str, ...] = ("data",)
+# Uploaded inputs and their viewing copies stay owner/share-only.
+PUBLIC_VIEWER_EXCLUDED_DIRS: tuple[str, ...] = ("data", "previews")
 
 
 async def set_job_public(

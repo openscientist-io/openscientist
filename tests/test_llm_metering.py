@@ -130,6 +130,7 @@ async def job(test_engine: AsyncEngine) -> AsyncGenerator[UUID, None]:
         await session.commit()
     yield row.id
     async with test_engine.begin() as conn:
+        await conn.execute(delete(CostRecord).where(CostRecord.job_id == row.id))
         await conn.execute(delete(Job).where(Job.id == row.id))
 
 

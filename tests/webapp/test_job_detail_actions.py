@@ -7,8 +7,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from starlette.responses import StreamingResponse
 
 from openscientist.job.types import JobStatus
+from openscientist.report.download import report_download_response
 from openscientist.webapp_components.pages.job_detail import iterations, report
 
 
@@ -103,12 +105,16 @@ class TestDownloadArtifactsZipStreamsOverHttp:
 
 
 class TestDownloadPdfReport:
-    """The report PDF is rendered off the event loop and handed to the browser."""
+    """Report downloads use HTTP and render missing PDFs off the event loop."""
+
+    def test_download_uses_authenticated_report_route(self) -> None:
+        with patch.object(report, "ui") as mock_ui:
+            report._download_pdf_report("job-9")
+        mock_ui.download.assert_called_once_with("/web/jobs/job-9/report.pdf")
 
     async def test_pdf_render_runs_off_the_loop_and_downloads_the_file(self, tmp_path) -> None:
         report_path = tmp_path / "final_report.md"
         report_path.write_text("# Report\n\nSome text", encoding="utf-8")
-        pdf_path = tmp_path / "final_report.pdf"
 
         loop_thread = threading.get_ident()
         render_threads: list[int] = []
@@ -120,19 +126,36 @@ class TestDownloadPdfReport:
             footers.append(run_environment)
             target.write_bytes(b"PDF-CONTENT")
 
-        with (
-            patch.object(report, "ui") as mock_ui,
-            patch.object(report, "markdown_to_pdf", side_effect=fake_markdown_to_pdf),
-        ):
-            await report._download_pdf_report(
-                report_path, pdf_path, "job-9", "Run environment: OpenScientist abc123"
+        with patch("openscientist.pdf_generator.markdown_to_pdf", side_effect=fake_markdown_to_pdf):
+            response = await report_download_response(
+                tmp_path, "job-9", run_environment="Run environment: OpenScientist abc123"
             )
 
-        mock_ui.download.assert_called_once_with(b"PDF-CONTENT", filename="job-9_report.pdf")
+        assert isinstance(response, StreamingResponse)
+        chunks = [chunk async for chunk in response.body_iterator]
+        assert chunks == [b"PDF-CONTENT"]
         assert not (tmp_path / "_final_report_stripped.md").exists()
         assert footers == ["Run environment: OpenScientist abc123"]
         # Rendering a long report takes seconds of CPU, so it must not run on the loop thread.
         assert render_threads and render_threads[0] != loop_thread
+
+
+@pytest.mark.parametrize("direct_access", [True, False])
+@pytest.mark.parametrize("has_markdown", [True, False])
+def test_pdf_button_requires_public_render_source(tmp_path, direct_access, has_markdown) -> None:
+    report_path = tmp_path / "final_report.md"
+    pdf_path = tmp_path / "final_report.pdf"
+    pdf_path.write_bytes(b"CACHED-PRIVATE-REPORT")
+    if has_markdown:
+        report_path.write_text("# Report")
+    context = SimpleNamespace(job_dir=tmp_path, job_id="job-9", direct_access=direct_access)
+    with (
+        patch.object(report, "ui") as mock_ui,
+        patch.object(report, "_can_regenerate_report", return_value=False),
+    ):
+        report._render_report_actions(context, report_path, pdf_path)  # type: ignore[arg-type]
+    expected = "Download PDF" if direct_access or has_markdown else "PDF Unavailable"
+    assert mock_ui.button.call_args_list[0].args[0] == expected
 
 
 class TestRegenerateConfirmDialog:

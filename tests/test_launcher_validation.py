@@ -5,11 +5,13 @@ from __future__ import annotations
 import base64
 import dataclasses
 import json
+import socket
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
+from openscientist_launcher.api import _airgap_hosts
 from openscientist_launcher.config import LauncherConfig
 from openscientist_launcher.host_paths import jobs_root_problem
 from openscientist_launcher.templates import agent_run_kwargs, executor_run_kwargs
@@ -92,6 +94,7 @@ class TestAgentRequestValidation:
             "labels",
             "security_opt",
             "entrypoint",
+            "extra_hosts",
             "stop_signal",
         ],
     )
@@ -434,6 +437,32 @@ def _binds(kwargs: dict[str, Any]) -> dict[str, tuple[str, bool]]:
     assert "volumes" not in kwargs
     assert all(mount["Type"] == "bind" for mount in kwargs["mounts"])
     return {mount["Source"]: (mount["Target"], mount["ReadOnly"]) for mount in kwargs["mounts"]}
+
+
+def test_airgap_hosts_pin_each_ipv4_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    def resolve(host: str, port: None, family: int, kind: int):
+        calls.append(host)
+        assert (port, family, kind) == (None, socket.AF_INET, socket.SOCK_STREAM)
+        if host == "gone.invalid":
+            raise socket.gaierror(socket.EAI_NONAME, "No address")
+        return [
+            (family, kind, 6, "", ("172.26.0.3", 0)),
+            (family, kind, 6, "", ("172.26.0.2", 0)),
+            (family, kind, 6, "", ("172.26.0.3", 0)),
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    assert _airgap_hosts(
+        ("web:8081", "web:8082", "gone.invalid:443", "host.docker.internal:11434"),
+        {"host.docker.internal": "host-gateway"},
+    ) == [
+        "host.docker.internal:host-gateway",
+        "web:172.26.0.2",
+        "web:172.26.0.3",
+    ]
+    assert calls == ["web", "gone.invalid"]
 
 
 class TestAgentTemplate:
