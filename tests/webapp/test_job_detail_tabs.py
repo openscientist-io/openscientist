@@ -143,7 +143,7 @@ def _rendered_labels(job: JobInfo, ks_data: dict[str, object] | None) -> list[st
         ks_data=ks_data,
         owner_name=None,
         spend=0.0,
-        spend_visible=False,
+        direct_access=False,
         action_counts={},
     )
     with (

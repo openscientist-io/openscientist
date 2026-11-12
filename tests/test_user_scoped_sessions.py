@@ -22,7 +22,7 @@ from openscientist.database.models import Job, User
 from openscientist.database.models.job_share import JobShare
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import thread_safe_user_session
-from openscientist.job_chat import load_job_context
+from openscientist.job_chat import _load_chat_context
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import update_job_status
 from openscientist.webapp_components.pages import job_detail
@@ -129,10 +129,10 @@ async def test_chat_context_comes_only_from_the_chatting_users_jobs(
 ) -> None:
     async with get_session_ctx() as session:
         await set_current_user(session, alices_job.owner)
-        own = await load_job_context(alices_job.job_id, session)
+        own = (await _load_chat_context(alices_job.job_id, session))[0]
     async with get_session_ctx() as session:
         await set_current_user(session, alices_job.stranger)
-        foreign = await load_job_context(alices_job.job_id, session)
+        foreign = (await _load_chat_context(alices_job.job_id, session))[0]
     assert "Alice's question" in own
     assert "Alice's finding" in own
     assert "Alice" not in foreign

@@ -1,17 +1,19 @@
 """New job submission page."""
 
 import logging
-import tempfile
 import uuid
+from collections.abc import Awaitable
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
-from nicegui import ui
+from nicegui import app, ui
+from nicegui.events import GenericEventArguments, UploadEventArguments
 
 from openscientist.admin_settings import current_admin_settings
 from openscientist.auth import can_current_user_start_jobs, get_current_user_id, require_auth
 from openscientist.exceptions import BudgetExceededError
 from openscientist.providers import check_provider_config
+from openscientist.upload_limits import MAX_UPLOAD_FILES_PER_REQUEST
 from openscientist.webapp_components.components.banners import (
     render_config_error_banner,
     render_pending_approval_notice,
@@ -19,12 +21,20 @@ from openscientist.webapp_components.components.banners import (
 from openscientist.webapp_components.components.navigation import render_navigator
 from openscientist.webapp_components.utils.permissions import revalidate_session
 from openscientist.webapp_components.utils.session import (
-    add_uploaded_file,
+    PendingUpload,
+    begin_upload,
+    clear_upload_storage,
     clear_uploaded_files,
+    finish_upload,
     get_uploaded_files,
+    remove_uploaded_files,
+    save_uploaded_file,
 )
 
 logger = logging.getLogger(__name__)
+
+app.on_startup(clear_upload_storage)
+app.on_shutdown(clear_upload_storage)
 
 
 def _build_upload_session_id(user_id: str | None, client: object) -> str:
@@ -106,8 +116,13 @@ async def _submit_job(
         _notify_creation_error(exc)
 
 
-async def _handle_upload(e: Any, session_id: str) -> None:
-    """Stream upload directly to a temp file and record its path in session state."""
+def _handle_upload(e: UploadEventArguments, session_id: str) -> Awaitable[None]:
+    """Claim the filename before scheduling its upload handler."""
+    return _save_upload(e, session_id, begin_upload(session_id, e.file))
+
+
+async def _save_upload(e: UploadEventArguments, session_id: str, upload: PendingUpload) -> None:
+    """Save a live upload within the page's limits."""
     try:
         name = e.file.name
         admin = await current_admin_settings()
@@ -117,14 +132,70 @@ async def _handle_upload(e: Any, session_id: str) -> None:
                 type="negative",
             )
             return
-        temp_path = Path(tempfile.mkdtemp()) / name
-        await e.file.save(temp_path)
-        add_uploaded_file(session_id, name, temp_path)
+        if not await save_uploaded_file(
+            session_id,
+            e.file,
+            upload,
+            max_files=MAX_UPLOAD_FILES_PER_REQUEST,
+            max_file_size_bytes=admin.max_file_size_mb * 1024 * 1024,
+        ):
+            return
         ui.notify(f"Uploaded: {name}", type="positive")
         logger.info("Successfully uploaded %s (%d bytes)", name, e.file.size())
     except (ValueError, OSError) as exc:
         logger.error("Upload failed: %s", exc, exc_info=True)
         ui.notify(f"Upload failed: {exc}", type="negative")
+    finally:
+        finish_upload(session_id, upload)
+
+
+class _JobUpload(ui.upload):
+    def __init__(self, session_id: str, max_file_size_mb: int) -> None:
+        self._upload_session_id = session_id
+        super().__init__(
+            label=f"Upload Data Files (Optional - Max {max_file_size_mb} MB per file)",
+            multiple=True,
+            auto_upload=True,
+            on_upload=self._uploaded,
+            max_file_size=max_file_size_mb * 1024 * 1024,
+            max_files=MAX_UPLOAD_FILES_PER_REQUEST,
+            on_rejected=lambda: ui.notify(
+                f"Upload at most {MAX_UPLOAD_FILES_PER_REQUEST} files "
+                f"up to {max_file_size_mb} MB per file",
+                type="negative",
+            ),
+        )
+        self.props(':field-name="file => encodeURIComponent(file.__key)"')
+        self.on(
+            "removed",
+            self._removed,
+            js_handler="files => emit(files.map(({__key}) => ({__key})))",
+        )
+
+    def _uploaded(self, event: UploadEventArguments) -> Awaitable[None]:
+        return _handle_upload(event, self._upload_session_id)
+
+    def _removed(self, event: GenericEventArguments) -> None:
+        payload: object = event.args
+        if not isinstance(payload, list):
+            return
+        removed: list[str] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            key = item.get("__key")
+            if isinstance(key, str):
+                removed.append(key)
+        try:
+            remove_uploaded_files(self._upload_session_id, removed)
+        except OSError:
+            logger.exception("Could not remove an uploaded file")
+            ui.notify("Could not remove an uploaded file. Please try again.", type="negative")
+
+    def reset(self) -> Self:
+        if self.enabled:
+            clear_uploaded_files(self._upload_session_id)
+        return super().reset()
 
 
 @ui.page("/new")
@@ -155,9 +226,6 @@ async def new_job_page() -> None:
         render_config_error_banner(provider_name, config_errors, show_back_button=True)
         return
 
-    async def on_upload(event: Any) -> None:
-        await _handle_upload(event, session_id)
-
     # The page height minus the header (4.5rem) and the page padding, so the card centres.
     with (
         ui.column()
@@ -177,12 +245,7 @@ async def new_job_page() -> None:
             .props("outlined autogrow input-style={'minHeight': '72px'}")
         )
 
-        ui.upload(
-            label=f"Upload Data Files (Optional - Max {max_file_size_mb} MB per file)",
-            multiple=True,
-            auto_upload=True,
-            on_upload=on_upload,
-        ).classes("w-full os-compact-upload")
+        _JobUpload(session_id, max_file_size_mb).classes("w-full os-compact-upload")
 
         ui.separator()
 

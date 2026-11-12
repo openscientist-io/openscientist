@@ -29,20 +29,16 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from openscientist.admin_settings import current_admin_settings
 from openscientist.api.auth import get_current_user_from_api_key
 from openscientist.api.utils import parse_uuid
-from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES, create_artifacts_zip_file
+from openscientist.artifact_packager import create_artifacts_zip_file
 from openscientist.database.models import Job, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
 from openscientist.file_loader import FileTooBigError, validate_uploaded_file
 from openscientist.job.types import JobStatus
-from openscientist.job_files import (
-    install_file,
-    read_job_file_text,
-    serve_job_file,
-    try_open_job_file,
-)
 from openscientist.job_manager import JobManager
+from openscientist.report.download import report_download_response
 from openscientist.share_service import set_job_public, withheld_artifact_dirs
+from openscientist.upload_limits import MAX_UPLOAD_FILES_PER_REQUEST
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +48,6 @@ router = APIRouter(prefix="/jobs", tags=["Jobs"])
 # One Starlette spool size in flight at a time, so no part of an upload is
 # held in memory whole, matching the parser's 1 MiB spool threshold.
 UPLOAD_CHUNK_SIZE = 1024 * 1024
-# The per-request file count cap. The total bytes per request is the
-# max_file_size_mb value from the admin settings row.
-MAX_UPLOAD_FILES_PER_REQUEST = 100
 
 CURRENT_USER_DEP = Depends(get_current_user_from_api_key)
 SESSION_DEP = Depends(get_session)
@@ -702,65 +695,9 @@ async def download_report(
     job_dir = _get_jobs_dir() / str(job.id)
     download_label = (job.short_title or job.research_question[:50]).replace(" ", "_")
 
-    # The job directory is agent-writable, so every report file is read
-    # through the symlink-safe walk and served from the fd it opened.
-    # Serve the existing PDF if available so the WeasyPrint PDF is not overwritten.
-    pdf_file = try_open_job_file(job_dir, "final_report.pdf", max_size=MAX_ARTIFACT_FILE_SIZE_BYTES)
-    if pdf_file is not None:
-        return serve_job_file(
-            pdf_file,
-            media_type="application/pdf",
-            filename=f"{download_label}_final_report.pdf",
-        )
-
-    raw_md = read_job_file_text(job_dir, "final_report.md", max_size=MAX_ARTIFACT_FILE_SIZE_BYTES)
-    if raw_md is not None:
-        try:
-            from openscientist.pdf_generator import markdown_to_pdf
-            from openscientist.report.processor import strip_figure_tags
-
-            # The generated PDF renders outside the job directory and is moved
-            # into place atomically, so a link planted at either name cannot
-            # redirect the write.
-            with tempfile.TemporaryDirectory(prefix=f"openscientist_{job.id}_") as tmp_dir:
-                stripped_path = Path(tmp_dir) / "_final_report_stripped.md"
-                stripped_path.write_text(strip_figure_tags(raw_md), encoding="utf-8")
-                generated_pdf = Path(tmp_dir) / "final_report.pdf"
-                # Rendering a long report takes seconds of CPU.
-                await asyncio.to_thread(markdown_to_pdf, stripped_path, generated_pdf)
-                install_file(job_dir, "final_report.pdf", generated_pdf)
-
-            pdf_file = try_open_job_file(
-                job_dir, "final_report.pdf", max_size=MAX_ARTIFACT_FILE_SIZE_BYTES
-            )
-            if pdf_file is not None:
-                return serve_job_file(
-                    pdf_file,
-                    media_type="application/pdf",
-                    filename=f"{download_label}_final_report.pdf",
-                )
-        except Exception as exc:
-            logger.warning(
-                "Failed to generate PDF from markdown for job %s: %s", job_id, exc, exc_info=True
-            )
-
-    for name, media_type in (
-        ("final_report.html", "text/html"),
-        ("final_report.md", "text/markdown"),
-        ("report.pdf", "application/pdf"),
-        ("report.md", "text/markdown"),
-    ):
-        job_file = try_open_job_file(job_dir, name, max_size=MAX_ARTIFACT_FILE_SIZE_BYTES)
-        if job_file is not None:
-            return serve_job_file(
-                job_file,
-                media_type=media_type,
-                filename=f"{download_label}_{name}",
-            )
-
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail="Report not found",
+    excluded_dirs = await withheld_artifact_dirs(session, job, user.id)
+    return await report_download_response(
+        job_dir, download_label, excluded_top_level_dirs=excluded_dirs
     )
 
 
