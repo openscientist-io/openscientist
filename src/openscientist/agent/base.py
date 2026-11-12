@@ -120,6 +120,7 @@ class AgentConfig:
     job_dir: Path
     data_file: Path | None = None
     system_prompt: str | None = None
+    chat: bool = False
     use_hypotheses: bool = False
     data_files: tuple[Path, ...] = ()
     mcp_servers: tuple[McpServerSpec, ...] = ()
@@ -369,16 +370,8 @@ class AbstractAgent[P: Provider](abc.ABC):
 
     @classmethod
     def chat_system_prompt(cls, base_system_prompt: str) -> str:
-        """The in-page-chat system prompt. Default folds ``chat_doc`` in, correct for
-        backends that read everything from the system prompt (e.g. codex). Claude
-        overrides to keep the base prompt and deliver guidance via
-        ``.claude/CLAUDE.md``."""
+        """The in-page chat system prompt, including the chat guidance."""
         return f"{base_system_prompt}\n\n{cls.chat_doc()}"
-
-    def write_chat_context(self) -> None:
-        """Materialise on-disk chat context. Default no-op (Claude writes
-        ``.claude/CLAUDE.md``)."""
-        return None
 
     @classmethod
     def chat_model_override(cls) -> str | None:

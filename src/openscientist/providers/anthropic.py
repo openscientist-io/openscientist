@@ -6,7 +6,7 @@ from pathlib import Path
 
 from openscientist.settings import ProviderSettings, get_settings
 
-from ._anthropic_common import anthropic_container_env
+from ._anthropic_common import ANTHROPIC_CREDENTIAL_ENV_KEYS, anthropic_container_env
 from ._env_cleanup import VERTEX_PROVIDER_ENV_VARS
 from .base import (
     AirgapEgress,
@@ -32,6 +32,7 @@ class AnthropicProvider(ClaudeCompatible):
         return "anthropic"
 
     display_name = "Anthropic"
+    credential_env_keys = ANTHROPIC_CREDENTIAL_ENV_KEYS
 
     def validate_required_config(self) -> list[str]:
         return self.required_config_errors(get_settings().provider)
