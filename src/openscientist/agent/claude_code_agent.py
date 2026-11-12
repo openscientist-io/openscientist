@@ -202,22 +202,6 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
         self._provider.setup_environment()
 
     @classmethod
-    def chat_system_prompt(cls, base_system_prompt: str) -> str:
-        # Claude reads chat guidance from .claude/CLAUDE.md (written by
-        # write_chat_context), so the system prompt is the base unchanged.
-        return base_system_prompt
-
-    def write_chat_context(self) -> None:
-        # Identity substitution keeps the file content the packaged template.
-        from openscientist.prompts.common import render_chat_context
-
-        claude_dir = self._config.job_dir / ".claude"
-        claude_dir.mkdir(parents=True, exist_ok=True)
-        (claude_dir / "CLAUDE.md").write_text(
-            render_chat_context(self.prompt_fragments()), encoding="utf-8"
-        )
-
-    @classmethod
     def chat_model_override(cls) -> str | None:
         # ANTHROPIC_CHAT_MODEL escape hatch, routing chat to a different model
         # than discovery (e.g. when the discovery model rejects chat prompts).
@@ -272,6 +256,10 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
 
         return ClaudeAgentOptions(
             system_prompt=self._config.system_prompt,
+            tools=["Read", "Grep", "Glob"] if self._config.chat else None,
+            setting_sources=[] if self._config.chat else None,
+            skills=[] if self._config.chat else None,
+            env={"CLAUDE_CODE_DISABLE_ATTACHMENTS": "1"} if self._config.chat else {},
             mcp_servers={
                 "openscientist-tools": cast(McpStdioServerConfig, spec.to_sdk_config()),
             },
@@ -279,7 +267,7 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
             can_use_tool=self._allow_all_tools,
             cwd=str(job_dir),
             stderr=self._stderr_callback,
-            extra_args={},
+            extra_args={"strict-mcp-config": None} if self._config.chat else {},
             max_buffer_size=MAX_MESSAGE_BYTES,
         )
 
