@@ -7,14 +7,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from openscientist.exceptions import ProviderError
-from openscientist.providers import get_provider
+from openscientist.providers import get_provider, provider_ids
 from openscientist.providers.anthropic import AnthropicProvider
 from openscientist.providers.base import CostInfo, Provider
 from openscientist.providers.bedrock import BedrockProvider
 from openscientist.providers.cborg import CborgProvider
 from openscientist.providers.foundry import FoundryProvider
 from openscientist.providers.vertex import VertexProvider
-from openscientist.settings import clear_settings_cache
+from openscientist.settings import clear_settings_cache, get_settings
 
 # ─── Concrete stub for testing the Provider base ──────────────────────
 
@@ -473,3 +473,100 @@ def test_live_check_without_a_provider_override_reports_no_check() -> None:
     """A provider that leaves the base _live_check in place reports no check."""
     result = StubProvider.live_check("stub", {})
     assert result.ok
+
+
+@pytest.fixture
+def provider_credentials(monkeypatch, tmp_path):
+    credentials = {
+        key: f"sk-real-{key.lower()}"
+        for key in (
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_OAUTH_TOKEN",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "ANTHROPIC_FOUNDRY_API_KEY",
+            "OPENAI_API_KEY",
+            "CODEX_API_KEY",
+            "AZURE_OPENAI_API_KEY",
+            "AZURE_CLIENT_SECRET",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "AWS_BEARER_TOKEN_BEDROCK",
+            "GOOGLE_CLOUD_ACCESS_TOKEN",
+            "VLLM_API_KEY",
+            "LLAMACPP_API_KEY",
+        )
+    }
+    gcp_credentials = tmp_path / "gcp.json"
+    gcp_credentials.write_text('{"type": "service_account"}')
+    credentials["GOOGLE_APPLICATION_CREDENTIALS"] = str(gcp_credentials)
+    for key, value in credentials.items():
+        monkeypatch.setenv(key, value)
+    for key, value in {
+        "ANTHROPIC_BASE_URL": "https://api.cborg.lbl.gov",
+        "ANTHROPIC_FOUNDRY_RESOURCE": "foundry-resource",
+        "AZURE_OPENAI_RESOURCE": "azure-resource",
+        "ANTHROPIC_VERTEX_PROJECT_ID": "vertex-project",
+        "GCP_BILLING_ACCOUNT_ID": "012345-ABCDEF",
+        "CLOUD_ML_REGION": "us-east5",
+        "AWS_REGION": "us-east-1",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv("OPENSCIENTIST_MODEL", raising=False)
+    clear_settings_cache()
+    yield credentials
+    clear_settings_cache()
+
+
+@pytest.mark.parametrize("provider_id", provider_ids())
+@pytest.mark.parametrize("proxy_mode", ["routed", "no-route", "credential-override"])
+def test_proxied_container_env_excludes_every_real_credential(
+    monkeypatch, provider_credentials, provider_id, proxy_mode
+):
+    monkeypatch.setenv("OPENSCIENTIST_PROVIDER", provider_id)
+    if provider_id in ("vllm", "llamacpp", "azure-openai"):
+        monkeypatch.setenv("OPENSCIENTIST_MODEL", "served-model")
+    provider = get_provider()
+    if proxy_mode == "no-route":
+        monkeypatch.setattr(provider, "proxy_env_overrides", lambda **kwargs: {})
+    elif proxy_mode == "credential-override":
+        monkeypatch.setattr(
+            provider,
+            "proxy_env_overrides",
+            lambda **kwargs: provider.container_env(get_settings().provider),
+        )
+    env = provider.proxied_container_env(
+        proxy_base_url="http://proxy:8081", placeholder="job-placeholder"
+    )
+    for secret in provider_credentials.values():
+        assert all(secret not in value for value in env.values()), env
+
+
+@pytest.mark.parametrize(
+    ("provider_id", "oauth_only", "container_key", "harness_key"),
+    [
+        ("anthropic", False, "ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY"),
+        ("anthropic", True, "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_OAUTH_TOKEN"),
+        ("cborg", False, "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"),
+    ],
+)
+def test_proxied_anthropic_credentials_reach_both_harnesses(
+    monkeypatch, provider_credentials, provider_id, oauth_only, container_key, harness_key
+):
+    monkeypatch.setenv("OPENSCIENTIST_PROVIDER", provider_id)
+    if oauth_only:
+        monkeypatch.delenv("ANTHROPIC_API_KEY")
+    provider = get_provider()
+    proxy = "http://proxy:8081"
+    env = provider.proxied_container_env(proxy_base_url=proxy, placeholder="job-placeholder")
+    assert env[container_key] == "job-placeholder"
+    for key in provider_credentials:
+        monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    clear_settings_cache()
+    env.update(get_provider().harness_env(proxy=proxy))
+    assert env[harness_key] == "job-placeholder"
+    for secret in provider_credentials.values():
+        assert all(secret not in value for value in env.values()), env

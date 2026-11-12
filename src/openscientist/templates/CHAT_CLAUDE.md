@@ -22,7 +22,7 @@ The current directory is the job directory. It contains:
 
 ## Answering Questions
 
-1. **Use the context sections injected in the system prompt.** They contain structured findings, hypotheses, literature, and iteration summaries from the database
+1. **Use the bounded job preview in the message.** Read the turn's knowledge snapshot for complete findings, hypotheses, literature abstracts, and iteration summaries.
 2. **Read `final_report.md`**, which has the agent's synthesis and consensus answer
 3. Reference findings by ID (`F001`, `F002`, …) and hypotheses by ID (`H001`, `H002`, …)
 4. Cite specific statistical evidence when discussing results

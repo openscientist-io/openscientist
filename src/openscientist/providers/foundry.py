@@ -63,6 +63,7 @@ class FoundryProvider(ClaudeCompatible):
         return "foundry"
 
     display_name = "Azure AI Foundry"
+    credential_env_keys = ("ANTHROPIC_FOUNDRY_API_KEY",)
 
     mode_flag = "CLAUDE_CODE_USE_FOUNDRY"
 

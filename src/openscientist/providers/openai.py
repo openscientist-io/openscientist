@@ -303,6 +303,7 @@ class OpenAIDirectProvider(CodexCompatible):
         return "openai"
 
     display_name = "OpenAI API"
+    credential_env_keys = ("OPENAI_API_KEY", "CODEX_API_KEY")
 
     @classmethod
     def container_env(cls, provider: ProviderSettings) -> dict[str, str]:

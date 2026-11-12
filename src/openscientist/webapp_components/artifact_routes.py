@@ -21,6 +21,7 @@ from openscientist.database.models import Job, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
 from openscientist.job_files import job_file_exists, read_job_file_text, serve_job_file
+from openscientist.report.download import report_download_response
 from openscientist.run_environment import run_environment_text
 from openscientist.share_service import withheld_artifact_dirs
 from openscientist.webapp_components.share_routes import get_current_user_from_session
@@ -31,15 +32,17 @@ router = APIRouter(prefix="/web/jobs", include_in_schema=False)
 CURRENT_SESSION_USER_DEP = Depends(get_current_user_from_session)
 SESSION_DEP = Depends(get_session)
 
-# The agent writes every artifact and the report, raw HTML included, so the
-# browser renders them in an opaque origin, where the session cookie never
-# reaches the app. The report keeps its script, which opens links in new tabs.
-# connect/img are closed so rendered content cannot reach other hosts; the
-# report is framed only by the app page that embeds it.
-_SANDBOX = "sandbox; connect-src 'none'; img-src 'self' data:"
+_CONTENT_CSP = (
+    "default-src 'none'; connect-src 'none'; img-src 'self' data:; "
+    "style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'; "
+    "frame-src 'none'; frame-ancestors 'self'"
+)
+_SANDBOX = f"{_CONTENT_CSP}; sandbox"
+# Only the link handler runs, and clicked destinations need their own browser permissions.
 _REPORT_SANDBOX = (
+    f"{_CONTENT_CSP}; "
     "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; "
-    "connect-src 'none'; img-src 'self' data:; frame-ancestors 'self'"
+    "script-src 'sha256-EsRwroiN/qKSiUMwcn6OHlw7bX69hIkv5S44ih9Moks='"
 )
 
 _OPEN_LINKS_IN_NEW_TABS = """<script>
@@ -137,6 +140,22 @@ async def job_artifact(
     return serve_job_file(job_file, headers=_sandboxed(_SANDBOX))
 
 
+@router.get("/{job_id}/report.pdf")
+async def job_report_pdf(
+    job_id: str,
+    user: User = CURRENT_SESSION_USER_DEP,
+    session: AsyncSession = SESSION_DEP,
+) -> Response:
+    job, job_dir = await _visible_job(job_id, user, session)
+    excluded_dirs = await withheld_artifact_dirs(session, job, user.id)
+    return await report_download_response(
+        job_dir,
+        str(job.id),
+        excluded_top_level_dirs=excluded_dirs,
+        run_environment=run_environment_text(job.version_info),
+    )
+
+
 def _report_html(
     job_dir: Path,
     version_info: dict[str, str] | None,
@@ -161,6 +180,8 @@ def _report_html(
             excluded_top_level_dirs=excluded_top_level_dirs,
         )
     except Exception:
+        if excluded_top_level_dirs:
+            return None
         logger.warning("Failed to re-render HTML with base64 images, using on-disk version")
         saved = read_job_file_text(
             job_dir, "final_report.html", max_size=MAX_ARTIFACT_FILE_SIZE_BYTES

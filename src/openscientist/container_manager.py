@@ -16,7 +16,6 @@ from typing import Any
 
 from openscientist.admin_settings import current_admin_settings_sync
 from openscientist.exceptions import MissingImageError
-from openscientist.job_container import to_host_path
 from openscientist.job_container.identity import apply_job_ownership
 from openscientist.job_container.launcher_client import (
     LauncherBadRequestError,
@@ -26,6 +25,7 @@ from openscientist.job_container.launcher_client import (
     LauncherImageMissingError,
     LauncherUnavailableError,
 )
+from openscientist.job_container.utils import to_host_path
 from openscientist.settings import get_settings
 
 logger = logging.getLogger(__name__)

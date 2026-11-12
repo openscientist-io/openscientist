@@ -18,8 +18,10 @@ Reply = Callable[[dict[str, object]], "ReadFile | Say"]
 
 
 class ReadFile:
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, *, offset: int = 1, limit: int = 2000) -> None:
         self.path = path
+        self.offset = offset
+        self.limit = limit
 
 
 class Say:
@@ -53,7 +55,9 @@ def _events(reply: ReadFile | Say) -> list[dict[str, object]]:
         }
         delta: dict[str, object] = {
             "type": "input_json_delta",
-            "partial_json": json.dumps({"file_path": reply.path}),
+            "partial_json": json.dumps(
+                {"file_path": reply.path, "offset": reply.offset, "limit": reply.limit}
+            ),
         }
         stop = "tool_use"
     else:

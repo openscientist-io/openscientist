@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
@@ -108,6 +109,23 @@ def _resolve_network(client: docker.DockerClient, configured: str | None) -> str
     return "bridge"
 
 
+def _airgap_hosts(egress_allow: tuple[str, ...], extra_hosts: dict[str, str]) -> list[str]:
+    """Pin allowlisted IPv4 addresses while retaining launcher-owned host mappings."""
+    hosts = [f"{host}:{address}" for host, address in extra_hosts.items()]
+    names = dict.fromkeys(entry.rsplit(":", 1)[0] for entry in egress_allow)
+    for host in names:
+        if host in extra_hosts:
+            continue
+        try:
+            answers = socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_STREAM)
+        except socket.gaierror:
+            continue
+        hosts.extend(
+            f"{host}:{address}" for address in sorted({answer[4][0] for answer in answers})
+        )
+    return hosts
+
+
 class Server:
     """The state every route handler needs: config, docker client, marker.
 
@@ -133,9 +151,10 @@ class Server:
         if not image_available(self.client, self.cfg.agent_image, self.cfg.agent_image_digests):
             raise _image_missing(self.cfg.agent_image)
         network = _resolve_network(self.client, self.cfg.network)
-        container = _create_started(
-            self.client, agent_run_kwargs(self.cfg, launch, network=network)
-        )
+        kwargs = agent_run_kwargs(self.cfg, launch, network=network)
+        if launch.airgapped:
+            kwargs["extra_hosts"] = _airgap_hosts(launch.egress_allow, kwargs["extra_hosts"])
+        container = _create_started(self.client, kwargs)
         return {
             "id": container.id,
             "short_id": container.short_id,

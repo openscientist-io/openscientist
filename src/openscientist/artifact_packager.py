@@ -17,6 +17,9 @@ from openscientist.job_files import JobFile, JobFileError, open_job_file, try_op
 logger = logging.getLogger(__name__)
 
 EXCLUDED_FILES_MANIFEST = "EXCLUDED_FILES.txt"
+PERSISTED_REPORT_FILES = frozenset(
+    {"final_report.pdf", "final_report.html", "report.pdf", "report.html"}
+)
 
 # The run's recorded environment, written from the database at the archive root.
 # The job directory is agent-writable, so a file there under this name is never
@@ -93,6 +96,8 @@ def _artifact_allowed(parts: tuple[str, ...], excluded_top_level_dirs: tuple[str
     if parts == (PROVENANCE_FILE,):
         return False
     if parts[0] in excluded_top_level_dirs:
+        return False
+    if excluded_top_level_dirs and len(parts) == 1 and parts[0] in PERSISTED_REPORT_FILES:
         return False
     if (
         any(part in _EXCLUDE_DIRS for part in parts[:-1])

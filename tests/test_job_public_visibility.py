@@ -18,10 +18,12 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
+import pymupdf  # type: ignore[import-untyped]
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI, HTTPException
 from httpx import ASGITransport, AsyncClient
+from PIL import Image
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
@@ -276,6 +278,12 @@ async def test_api_artifacts_omit_uploads_for_public_viewers(
     (job_dir / "data").mkdir(parents=True)
     (job_dir / "data" / "cohort.csv").write_text("id\n1\n")
     (job_dir / "report.md").write_text("# Report")
+    (job_dir / "previews").mkdir()
+    (job_dir / "previews" / "scan.png.jpg").write_bytes(b"private image")
+    (job_dir / "provenance").mkdir()
+    (job_dir / "provenance" / "figure.png").write_bytes(b"generated figure")
+    for name in ("final_report.pdf", "final_report.html", "report.pdf"):
+        (job_dir / name).write_bytes(b"EMBEDDED-UPLOADED-INPUT")
 
     names: dict[str, set[str]] = {}
     for label, user in (("owner", test_user), ("viewer", test_user2)):
@@ -291,6 +299,12 @@ async def test_api_artifacts_omit_uploads_for_public_viewers(
     assert {"report.md", "data/cohort.csv"} <= names["owner"]
     assert "report.md" in names["viewer"]
     assert "data/cohort.csv" not in names["viewer"]
+    assert "previews/scan.png.jpg" in names["owner"]
+    assert "previews/scan.png.jpg" not in names["viewer"]
+    assert "provenance/figure.png" in names["viewer"]
+    for name in ("final_report.pdf", "final_report.html", "report.pdf"):
+        assert name in names["owner"]
+        assert name not in names["viewer"]
 
 
 @pytest.mark.asyncio
@@ -306,6 +320,8 @@ async def test_view_sharee_of_public_job_still_gets_uploads(
     job_dir = tmp_path / str(job.id)
     (job_dir / "data").mkdir(parents=True)
     (job_dir / "data" / "cohort.csv").write_text("id\n1\n")
+    (job_dir / "previews").mkdir()
+    (job_dir / "previews" / "scan.png.jpg").write_bytes(b"private image")
 
     with patch("openscientist.web_app.get_job_manager", return_value=_manager(tmp_path)):
         async with AsyncClient(
@@ -316,16 +332,27 @@ async def test_view_sharee_of_public_job_still_gets_uploads(
     assert response.status_code == 200, response.text
     with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
         assert "data/cohort.csv" in zf.namelist()
+        assert "previews/scan.png.jpg" in zf.namelist()
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "input_path",
+    [
+        "data/cohort.csv",
+        "previews/scan.png.jpg",
+        "final_report.pdf",
+        "final_report.html",
+        "report.pdf",
+    ],
+)
 async def test_web_file_route_404s_uploads_for_public_viewers(
-    committed_public_job: tuple[User, User, Job, str, str], tmp_path: Path
+    committed_public_job: tuple[User, User, Job, str, str], tmp_path: Path, input_path: str
 ):
     _, _, job, owner_token, viewer_token = committed_public_job
     job_dir = tmp_path / str(job.id)
-    (job_dir / "data").mkdir(parents=True)
-    (job_dir / "data" / "cohort.csv").write_text("id\n1\n")
+    (job_dir / input_path).parent.mkdir(parents=True)
+    (job_dir / input_path).write_bytes(b"private input")
     (job_dir / "report.md").write_text("# Report")
 
     with patch("openscientist.web_app.get_job_manager", return_value=_manager(tmp_path)):
@@ -333,10 +360,10 @@ async def test_web_file_route_404s_uploads_for_public_viewers(
             transport=ASGITransport(app=_web_app()), base_url="http://test"
         ) as c:
             c.cookies.set("session_token", viewer_token)
-            denied = await c.get(f"/web/jobs/{job.id}/files/data/cohort.csv")
+            denied = await c.get(f"/web/jobs/{job.id}/files/{input_path}")
             report = await c.get(f"/web/jobs/{job.id}/files/report.md")
             c.cookies.set("session_token", owner_token)
-            owner_file = await c.get(f"/web/jobs/{job.id}/files/data/cohort.csv")
+            owner_file = await c.get(f"/web/jobs/{job.id}/files/{input_path}")
 
     assert denied.status_code == 404
     assert report.status_code == 200
@@ -352,6 +379,12 @@ async def test_web_artifacts_zip_omits_uploads_for_public_viewers(
     (job_dir / "data").mkdir(parents=True)
     (job_dir / "data" / "cohort.csv").write_text("id\n1\n")
     (job_dir / "report.md").write_text("# Report")
+    (job_dir / "previews").mkdir()
+    (job_dir / "previews" / "scan.png.jpg").write_bytes(b"private image")
+    (job_dir / "provenance").mkdir()
+    (job_dir / "provenance" / "figure.png").write_bytes(b"generated figure")
+    for name in ("final_report.pdf", "final_report.html", "report.pdf"):
+        (job_dir / name).write_bytes(b"EMBEDDED-UPLOADED-INPUT")
 
     names: dict[str, set[str]] = {}
     tokens = {"owner": owner_token, "viewer": viewer_token}
@@ -369,18 +402,29 @@ async def test_web_artifacts_zip_omits_uploads_for_public_viewers(
     assert "data/cohort.csv" in names["owner"]
     assert "report.md" in names["viewer"]
     assert "data/cohort.csv" not in names["viewer"]
+    assert "previews/scan.png.jpg" in names["owner"]
+    assert "previews/scan.png.jpg" not in names["viewer"]
+    assert "provenance/figure.png" in names["viewer"]
+    for name in ("final_report.pdf", "final_report.html", "report.pdf"):
+        assert name in names["owner"]
+        assert name not in names["viewer"]
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("input_path", ["data/cohort.csv", "previews/scan.png.jpg"])
 async def test_web_report_does_not_inline_uploads_for_public_viewers(
-    committed_public_job: tuple[User, User, Job, str, str], tmp_path: Path
+    committed_public_job: tuple[User, User, Job, str, str], tmp_path: Path, input_path: str
 ):
     secret = b"SECRET-UPLOADED-INPUT"
     _, _, job, owner_token, viewer_token = committed_public_job
     job_dir = tmp_path / str(job.id)
-    (job_dir / "data").mkdir(parents=True)
-    (job_dir / "data" / "cohort.csv").write_bytes(secret)
-    (job_dir / "final_report.md").write_text("# Report\n\n![cohort](data/cohort.csv)\n")
+    (job_dir / input_path).parent.mkdir(parents=True)
+    (job_dir / input_path).write_bytes(secret)
+    (job_dir / "provenance").mkdir()
+    (job_dir / "provenance" / "figure.png").write_bytes(b"generated figure")
+    (job_dir / "final_report.md").write_text(
+        f"# Report\n\n![input]({input_path})\n\n![figure](provenance/figure.png)\n"
+    )
     (job_dir / "final_report.html").write_text("<html><body>x</body></html>")
 
     b64 = base64.b64encode(secret).decode("ascii")
@@ -398,6 +442,184 @@ async def test_web_report_does_not_inline_uploads_for_public_viewers(
     # The owner's report inlines the uploaded input; the public viewer's does not.
     assert b64 in owner_report.text
     assert b64 not in viewer_report.text
+    assert base64.b64encode(b"generated figure").decode("ascii") in viewer_report.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["final_report.pdf", "final_report.html", "report.pdf"])
+async def test_api_report_withholds_persisted_inputs(
+    db_session: AsyncSession, test_user: User, test_user2: User, tmp_path: Path, name: str
+):
+    job = await _job(db_session, test_user, is_public=True)
+    await enable_rls(db_session)
+    job_dir = tmp_path / str(job.id)
+    job_dir.mkdir()
+    secret = b"EMBEDDED-UPLOADED-INPUT"
+    (job_dir / name).write_bytes(secret)
+    with patch("openscientist.api.endpoints.jobs._get_jobs_dir", return_value=tmp_path):
+        for user, expected_status in ((test_user, 200), (test_user2, 404)):
+            async with AsyncClient(
+                transport=ASGITransport(app=_api_app(db_session, user)), base_url="http://test"
+            ) as client:
+                response = await client.get(f"/api/v1/jobs/{job.id}/report")
+            assert response.status_code == expected_status
+            assert (secret in response.content) is (user is test_user)
+
+
+@pytest.mark.asyncio
+async def test_public_html_does_not_fall_back_to_persisted_inputs(
+    committed_public_job: tuple[User, User, Job, str, str], tmp_path: Path
+):
+    _, _, job, owner_token, viewer_token = committed_public_job
+    job_dir = tmp_path / str(job.id)
+    job_dir.mkdir()
+    secret = b"EMBEDDED-UPLOADED-INPUT"
+    (job_dir / "final_report.html").write_bytes(secret)
+    with (
+        patch("openscientist.web_app.get_job_manager", return_value=_manager(tmp_path)),
+        patch(
+            "openscientist.report.renderer.render_report_html", side_effect=ValueError("bad report")
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=_web_app()), base_url="http://test"
+        ) as client:
+            for token, expected_status in ((owner_token, 200), (viewer_token, 404)):
+                client.cookies.set("session_token", token)
+                response = await client.get(f"/web/jobs/{job.id}/report.html")
+                assert response.status_code == expected_status
+                assert (secret in response.content) is (token == owner_token)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["api", "web"])
+async def test_public_pdf_render_failure_does_not_serve_cached_report(
+    committed_public_job: tuple[User, User, Job, str, str],
+    db_session: AsyncSession,
+    tmp_path: Path,
+    surface: str,
+    caplog: pytest.LogCaptureFixture,
+):
+    owner, viewer, job, owner_token, viewer_token = committed_public_job
+    job_dir = tmp_path / str(job.id)
+    job_dir.mkdir()
+    (job_dir / "final_report.md").write_bytes(b"# Report\n\n\xff")
+    cached_report = b"EMBEDDED-UPLOADED-INPUT"
+    (job_dir / "final_report.pdf").write_bytes(cached_report)
+    (job_dir / "final_report.html").write_bytes(cached_report)
+    path = f"/api/v1/jobs/{job.id}/report" if surface == "api" else f"/web/jobs/{job.id}/report.pdf"
+    with (
+        patch("openscientist.web_app.get_job_manager", return_value=_manager(tmp_path)),
+        patch("openscientist.api.endpoints.jobs._get_jobs_dir", return_value=tmp_path),
+    ):
+        for user, token in ((owner, owner_token), (viewer, viewer_token)):
+            app = _api_app(db_session, user) if surface == "api" else _web_app()
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                client.cookies.set("session_token", token)
+                response = await client.get(path)
+            if user is owner:
+                assert response.status_code == 200
+                assert response.content == cached_report
+            else:
+                assert response.status_code == 404
+                assert response.json() == {"detail": "Report not found"}
+    assert "Public report rendering failed" in caplog.text
+    assert (job_dir / "final_report.pdf").read_bytes() == cached_report
+    assert (job_dir / "final_report.html").read_bytes() == cached_report
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["api", "web"])
+async def test_owner_report_render_failure_downloads_markdown(
+    committed_public_job: tuple[User, User, Job, str, str],
+    db_session: AsyncSession,
+    tmp_path: Path,
+    surface: str,
+    caplog: pytest.LogCaptureFixture,
+):
+    owner, _, job, owner_token, _ = committed_public_job
+    job_dir = tmp_path / str(job.id)
+    job_dir.mkdir()
+    oversized_cell = "word " * 2000
+    markdown = f"# Report\n\n| Heading |\n| --- |\n| {oversized_cell} |\n"
+    (job_dir / "final_report.md").write_text(markdown, encoding="utf-8")
+    path = f"/api/v1/jobs/{job.id}/report" if surface == "api" else f"/web/jobs/{job.id}/report.pdf"
+    with (
+        patch("openscientist.web_app.get_job_manager", return_value=_manager(tmp_path)),
+        patch("openscientist.api.endpoints.jobs._get_jobs_dir", return_value=tmp_path),
+    ):
+        app = _api_app(db_session, owner) if surface == "api" else _web_app()
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            client.cookies.set("session_token", owner_token)
+            response = await client.get(path)
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/markdown")
+    assert response.text == markdown
+    assert "Failed to generate PDF" in caplog.text
+    assert not (job_dir / "final_report.pdf").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("surface", ["api", "web"])
+async def test_public_pdf_is_rendered_without_cached_uploads(
+    committed_public_job: tuple[User, User, Job, str, str],
+    db_session: AsyncSession,
+    test_engine: AsyncEngine,
+    tmp_path: Path,
+    surface: str,
+):
+    from weasyprint import HTML  # type: ignore[import-untyped]
+
+    owner, viewer, job, owner_token, viewer_token = committed_public_job
+    job_dir = tmp_path / str(job.id)
+    (job_dir / "data").mkdir(parents=True)
+    (job_dir / "provenance").mkdir()
+    private_image = job_dir / "data" / "upload.png"
+    Image.new("RGB", (13, 17), "red").save(private_image)
+    Image.new("RGB", (19, 23), "blue").save(job_dir / "provenance" / "figure.png")
+    raw_html = f'<html><body><img src="{private_image.as_uri()}"></body></html>'
+    cached_pdf = HTML(string=raw_html).write_pdf()
+    (job_dir / "final_report.pdf").write_bytes(cached_pdf)
+    (job_dir / "final_report.html").write_text(raw_html)
+    (job_dir / "final_report.md").write_text(
+        "# Report\n\n![Input](data/upload.png)\n\n{{figure:figure.png}}\n"
+    )
+    with (
+        patch("openscientist.web_app.get_job_manager", return_value=_manager(tmp_path)),
+        patch("openscientist.api.endpoints.jobs._get_jobs_dir", return_value=tmp_path),
+    ):
+        for user, token, shared in (
+            (owner, owner_token, False),
+            (viewer, viewer_token, False),
+            (viewer, viewer_token, True),
+        ):
+            if shared:
+                async with AsyncSession(test_engine) as session:
+                    session.add(
+                        JobShare(
+                            job_id=job.id, shared_with_user_id=viewer.id, permission_level="view"
+                        )
+                    )
+                    await session.commit()
+            app = _api_app(db_session, user) if surface == "api" else _web_app()
+            path = (
+                f"/api/v1/jobs/{job.id}/report"
+                if surface == "api"
+                else f"/web/jobs/{job.id}/report.pdf"
+            )
+            async with AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                client.cookies.set("session_token", token)
+                response = await client.get(path)
+            assert response.status_code == 200, response.text
+            with pymupdf.open(stream=response.content, filetype="pdf") as document:
+                sizes = {(image[2], image[3]) for page in document for image in page.get_images()}
+            assert sizes == ({(13, 17)} if user is owner or shared else {(19, 23)})
+    assert (job_dir / "final_report.pdf").read_bytes() == cached_pdf
+    assert (job_dir / "final_report.html").read_text() == raw_html
 
 
 @pytest.mark.asyncio
@@ -654,7 +876,7 @@ def test_stats_content_shows_the_owner_label_to_viewers() -> None:
         ks_data=None,
         owner_name=owner,
         spend=0.0,
-        spend_visible=False,
+        direct_access=False,
         action_counts={},
     )
     with (
