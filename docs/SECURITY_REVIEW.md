@@ -73,7 +73,7 @@ Each web process admits one chat turn per job and at most `OPENSCIENTIST_MAX_CON
 - **Strict Content-Security-Policy on every response.** The web application emits a CSP that confines scripts and styles to the app's own origin, limits network connections to the same origin (`connect-src 'self'`), and disallows plugins, foreign `<base>` tags, and framing (`object-src 'none'`, `base-uri 'self'`, `frame-ancestors 'none'`).
 - **Clickjacking and MIME-sniffing protection.** Responses also carry `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, a `Referrer-Policy`, and a restrictive `Permissions-Policy` that disables camera, microphone, geolocation, and payment.
 - **HSTS over HTTPS.** When the configured app URL is served over HTTPS, a `Strict-Transport-Security` header is emitted.
-- **Sandboxed report and artifact frames.** The job report and artifact previews render in iframes that carry their own stricter CSP, including `sandbox` and `connect-src 'none'`, so agent-generated content cannot reach other hosts or exfiltrate data.
+- **Sandboxed report and artifact frames.** Agent-generated documents use `default-src 'none'`, same-origin or embedded images, inline styles, and no forms or nested frames. Reports also allow embedded fonts and a hash-authorized link handler. Clicking a report link opens a separate tab with its destination's permissions.
 
 ### Access Control
 
