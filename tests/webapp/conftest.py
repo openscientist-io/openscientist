@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -193,12 +193,7 @@ class WireMessage:
 
 @pytest.fixture
 def wire_recorder(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[WireMessage]]:
-    """Record every message NiceGUI would deliver to a connected browser.
-
-    The client never connects during the test, so the outbox loop holds its
-    queue until the test gives the client a ``tab_id``. From then on it
-    delivers to the recorder in place of the socket layer, the way the probe
-    of the original finding measured the wire."""
+    """Record messages delivered by clients with a simulated socket connection."""
     records: list[WireMessage] = []
 
     class _Eio:
@@ -215,6 +210,18 @@ def wire_recorder(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[WireMessage]
 
     monkeypatch.setattr(core, "sio", cast(AsyncServer, _Stub()), raising=False)
     yield records
+
+
+async def in_event_context(
+    awaitable: Awaitable[None], context: AbstractContextManager[object] | None
+) -> None:
+    """Run a captured event in its sender's context."""
+    with context or nullcontext():
+        try:
+            await awaitable
+        except Exception as exc:
+            core.app.handle_exception(exc)
+            raise
 
 
 async def drain_outbox(client: Client) -> None:
@@ -236,14 +243,20 @@ async def fire_click_twice(
     handler = listener.handler
     scheduled: list[Awaitable[None]] = []
 
-    def _capture(awaitable: Awaitable[None], *, name: str = "") -> None:
-        scheduled.append(awaitable)
+    def _capture(
+        awaitable: Awaitable[None],
+        *,
+        name: str = "",
+        context: AbstractContextManager[object] | None = None,
+    ) -> None:
+        scheduled.append(in_event_context(awaitable, context))
 
-    monkeypatch.setattr(background_tasks, "create_or_defer", _capture)
     storage.request_contextvar.set(listener.request)
-    with client:
-        with button.parent_slot or nullcontext():
-            handler(None)
-            handler(None)
+    with monkeypatch.context() as capture:
+        capture.setattr(background_tasks, "create_or_defer", _capture)
+        with client:
+            with button.parent_slot or nullcontext():
+                handler(None)
+                handler(None)
     assert len(scheduled) == 2
     await asyncio.gather(*scheduled)

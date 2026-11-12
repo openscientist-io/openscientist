@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Awaitable
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
@@ -30,7 +31,7 @@ from openscientist.job_manager import JobManager
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.webapp_components.pages.job_detail import job_detail_page
 from tests.db_outage import Forwarder
-from tests.webapp.conftest import ServedPage, fire_click_twice
+from tests.webapp.conftest import ServedPage, fire_click_twice, in_event_context
 
 FEEDBACK = "focus on the pathway"
 
@@ -69,7 +70,7 @@ async def feedback_job(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str]
 
 
 @pytest.fixture(autouse=True)
-def _job_manager(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+def _job_manager(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """The page reads the job directory and the latest job from the job manager."""
     monkeypatch.setattr(web_app._state, "job_manager", JobManager(jobs_dir=tmp_path))
 
@@ -107,14 +108,20 @@ async def _fire_once(button: ui.button, client: Client, monkeypatch: pytest.Monk
     handler = listener.handler
     scheduled: list[Awaitable[None]] = []
 
-    def _capture(awaitable: Awaitable[None], *, name: str = "") -> None:
-        scheduled.append(awaitable)
+    def _capture(
+        awaitable: Awaitable[None],
+        *,
+        name: str = "",
+        context: AbstractContextManager[object] | None = None,
+    ) -> None:
+        scheduled.append(in_event_context(awaitable, context))
 
-    monkeypatch.setattr(background_tasks, "create_or_defer", _capture)
     storage.request_contextvar.set(listener.request)
-    with client:
-        with button.parent_slot or nullcontext():
-            handler(None)
+    with monkeypatch.context() as capture:
+        capture.setattr(background_tasks, "create_or_defer", _capture)
+        with client:
+            with button.parent_slot or nullcontext():
+                handler(None)
     assert len(scheduled) == 1
     await asyncio.gather(*scheduled)
 
@@ -165,7 +172,9 @@ async def test_a_failed_save_leaves_the_feedback_buttons_usable(
     """A feedback save that fails re-enables both buttons, stores nothing,
     and leaves the job waiting for its feedback."""
 
-    async def _fail_save(self, job_id: str, session: AsyncSession | None = None) -> None:
+    async def _fail_save(
+        self: KnowledgeState, job_id: str, session: AsyncSession | None = None
+    ) -> None:
         raise RuntimeError("simulated feedback save failure")
 
     monkeypatch.setattr(KnowledgeState, "save_to_database", _fail_save)
@@ -177,7 +186,8 @@ async def test_a_failed_save_leaves_the_feedback_buttons_usable(
     with client:
         _feedback_input(client).value = FEEDBACK
 
-    await _fire_once(button, client, monkeypatch)
+    with pytest.raises(RuntimeError, match="simulated feedback save failure"):
+        await _fire_once(button, client, monkeypatch)
 
     assert button.enabled is True
     assert continue_button.enabled is True

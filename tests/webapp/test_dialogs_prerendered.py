@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import AsyncIterator, Awaitable
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -33,7 +33,7 @@ from openscientist.job_manager import JobManager
 from openscientist.webapp_components.pages.job_detail import job_detail_page
 from openscientist.webapp_components.pages.jobs_list import jobs_page
 from tests.db_outage import Forwarder
-from tests.webapp.conftest import ServedPage
+from tests.webapp.conftest import ServedPage, in_event_context
 
 
 @dataclass
@@ -90,17 +90,23 @@ async def _fire_click(button: ui.button, client: Client, monkeypatch: pytest.Mon
     coroutine and awaits it here."""
     scheduled: list[Awaitable[None]] = []
 
-    def _capture(awaitable: Awaitable[None], *, name: str = "") -> None:
-        scheduled.append(awaitable)
+    def _capture(
+        awaitable: Awaitable[None],
+        *,
+        name: str = "",
+        context: AbstractContextManager[object] | None = None,
+    ) -> None:
+        scheduled.append(in_event_context(awaitable, context))
 
-    monkeypatch.setattr(background_tasks, "create_or_defer", _capture)
     listener = next(iter(button._event_listeners.values()))
     assert listener.handler is not None
     handler = listener.handler
     storage.request_contextvar.set(listener.request)
-    with client:
-        with button.parent_slot or nullcontext():
-            handler(None)
+    with monkeypatch.context() as capture:
+        capture.setattr(background_tasks, "create_or_defer", _capture)
+        with client:
+            with button.parent_slot or nullcontext():
+                handler(None)
     if scheduled:
         await scheduled[0]
 

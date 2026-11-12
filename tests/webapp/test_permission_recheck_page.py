@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -24,7 +24,7 @@ from openscientist.database.models import Administrator, Job, Session, User
 from openscientist.webapp_components.components.dialogs import PreparedDialog, render_share_dialog
 from openscientist.webapp_components.pages import admin as admin_page
 from tests.db_outage import Forwarder
-from tests.webapp.conftest import OpenPage
+from tests.webapp.conftest import OpenPage, in_event_context
 
 
 @pytest_asyncio.fixture
@@ -142,17 +142,23 @@ async def _fire_click(button: ui.button, client: Client, monkeypatch: pytest.Mon
     coroutine and awaits it here."""
     scheduled: list[Awaitable[None]] = []
 
-    def _capture(awaitable: Awaitable[None], *, name: str = "") -> None:
-        scheduled.append(awaitable)
+    def _capture(
+        awaitable: Awaitable[None],
+        *,
+        name: str = "",
+        context: AbstractContextManager[object] | None = None,
+    ) -> None:
+        scheduled.append(in_event_context(awaitable, context))
 
-    monkeypatch.setattr(background_tasks, "create_or_defer", _capture)
     listener = next(iter(button._event_listeners.values()))
     assert listener.handler is not None
     handler = listener.handler
     storage.request_contextvar.set(listener.request)
-    with client:
-        with button.parent_slot or nullcontext():
-            handler(None)
+    with monkeypatch.context() as capture:
+        capture.setattr(background_tasks, "create_or_defer", _capture)
+        with client:
+            with button.parent_slot or nullcontext():
+                handler(None)
     assert len(scheduled) == 1
     await scheduled[0]
 

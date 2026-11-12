@@ -88,13 +88,13 @@ async def test_a_reconnected_client_keeps_its_page_timers(
     refresh timers keep firing on the reconnected client."""
     client, _ = await served_page(jobs_owner["token"], jobs_page, lambda c: _row_ids(_my_table(c)))
     table = _my_table(client)
-    client.handle_handshake("sim-socket", "doc-1", None)
+    await client.handle_handshake("sim-socket", "tab-1", None, "doc-1", None)
     await asyncio.sleep(0.5)
     new_job = await _insert_job(test_engine, jobs_owner["user_id"], "After the blip")
     client.handle_disconnect("sim-socket")
     await asyncio.sleep(1.0)
     assert not client.is_deleted
-    client.handle_handshake("sim-socket-2", "doc-1", None)
+    await client.handle_handshake("sim-socket-2", "tab-1", None, "doc-1", None)
     await asyncio.sleep(11.0)
     assert new_job in _row_ids(table)
 
@@ -111,7 +111,7 @@ async def test_a_client_that_never_returns_stops_its_page_timers(
     deleted after the window and its timers stop with it."""
     client, _ = await served_page(jobs_owner["token"], jobs_page, lambda c: _row_ids(_my_table(c)))
     table = _my_table(client)
-    client.handle_handshake("sim-socket", "doc-1", None)
+    await client.handle_handshake("sim-socket", "tab-1", None, "doc-1", None)
     await asyncio.sleep(0.5)
     client.handle_disconnect("sim-socket")
     await asyncio.sleep(4.0)
