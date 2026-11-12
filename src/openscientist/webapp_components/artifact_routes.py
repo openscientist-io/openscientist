@@ -31,15 +31,17 @@ router = APIRouter(prefix="/web/jobs", include_in_schema=False)
 CURRENT_SESSION_USER_DEP = Depends(get_current_user_from_session)
 SESSION_DEP = Depends(get_session)
 
-# The agent writes every artifact and the report, raw HTML included, so the
-# browser renders them in an opaque origin, where the session cookie never
-# reaches the app. The report keeps its script, which opens links in new tabs.
-# connect/img are closed so rendered content cannot reach other hosts; the
-# report is framed only by the app page that embeds it.
-_SANDBOX = "sandbox; connect-src 'none'; img-src 'self' data:"
+_CONTENT_CSP = (
+    "default-src 'none'; connect-src 'none'; img-src 'self' data:; "
+    "style-src 'unsafe-inline'; font-src data:; base-uri 'none'; form-action 'none'; "
+    "frame-src 'none'; frame-ancestors 'self'"
+)
+_SANDBOX = f"{_CONTENT_CSP}; sandbox"
+# Only the link handler runs, and clicked destinations need their own browser permissions.
 _REPORT_SANDBOX = (
+    f"{_CONTENT_CSP}; "
     "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; "
-    "connect-src 'none'; img-src 'self' data:; frame-ancestors 'self'"
+    "script-src 'sha256-EsRwroiN/qKSiUMwcn6OHlw7bX69hIkv5S44ih9Moks='"
 )
 
 _OPEN_LINKS_IN_NEW_TABS = """<script>
