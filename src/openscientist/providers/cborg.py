@@ -20,7 +20,7 @@ from openscientist.providers.base import (
 )
 from openscientist.settings import ProviderSettings, get_settings
 
-from ._anthropic_common import anthropic_container_env
+from ._anthropic_common import ANTHROPIC_CREDENTIAL_ENV_KEYS, anthropic_container_env
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,7 @@ class CborgProvider(ClaudeCompatible):
         return "cborg"
 
     display_name = "CBORG"
+    credential_env_keys = ANTHROPIC_CREDENTIAL_ENV_KEYS
 
     model_format_description = "an Anthropic model name on CBORG (expected to start with 'claude-')"
 

@@ -26,10 +26,11 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 import pytest_asyncio
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+from starlette.responses import StreamingResponse
 
 import openscientist.job_chat as job_chat
 from openscientist.api.auth import get_current_user_from_api_key
@@ -39,6 +40,7 @@ from openscientist.database.rls import set_current_user, use_app_role
 from openscientist.database.session import get_session
 from openscientist.job import agent_error
 from openscientist.job.types import JobInfo, JobStatus
+from openscientist.report.download import report_download_response
 from openscientist.webapp_components.artifact_routes import router as web_router
 from openscientist.webapp_components.components import banners
 from openscientist.webapp_components.pages.job_detail import iterations, report
@@ -883,20 +885,16 @@ class TestUiReportPage:
         def fake_markdown_to_pdf(source, target, run_environment=None) -> None:
             target.write_bytes(b"PDF-GEN")
 
-        with (
-            patch.object(report, "ui") as ui,
-            patch.object(report, "markdown_to_pdf", side_effect=fake_markdown_to_pdf),
-        ):
-            await report._download_pdf_report(
-                job_dir / "final_report.md", job_dir / "final_report.pdf", "job-1", None
-            )
+        with patch("openscientist.pdf_generator.markdown_to_pdf", side_effect=fake_markdown_to_pdf):
+            response = await report_download_response(job_dir, "job-1")
 
         assert secret.read_bytes() == _SECRET
         assert not (job_dir / "_final_report_stripped.md").exists()
         generated = job_dir / "final_report.pdf"
         assert generated.is_file() and not generated.is_symlink()
         assert generated.read_bytes() == b"PDF-GEN"
-        ui.download.assert_called_once_with(b"PDF-GEN", filename="job-1_report.pdf")
+        assert isinstance(response, StreamingResponse)
+        assert [chunk async for chunk in response.body_iterator] == [b"PDF-GEN"]
 
     async def test_a_symlinked_markdown_fails_without_writing_through(self, tmp_path: Path) -> None:
         job_dir = tmp_path / "jobs" / "job-1"
@@ -908,16 +906,14 @@ class TestUiReportPage:
             target.write_bytes(b"PDF-GEN")
 
         with (
-            patch.object(report, "ui") as ui,
-            patch.object(report, "markdown_to_pdf", side_effect=fake_markdown_to_pdf),
+            patch("openscientist.pdf_generator.markdown_to_pdf", side_effect=fake_markdown_to_pdf),
+            pytest.raises(HTTPException) as refused,
         ):
-            await report._download_pdf_report(
-                job_dir / "final_report.md", job_dir / "final_report.pdf", "job-1", None
-            )
+            await report_download_response(job_dir, "job-1")
 
         assert secret.read_bytes() == _SECRET
-        ui.download.assert_not_called()
-        ui.notify.assert_called()
+        assert refused.value.status_code == 404
+        assert not (job_dir / "final_report.pdf").exists()
 
     @pytest.mark.asyncio
     async def test_the_markdown_view_refuses_a_symlinked_report(self, tmp_path: Path) -> None:
@@ -951,13 +947,9 @@ class TestUiReportPage:
         sparse_file(job_dir / "final_report.pdf", MAX_ARTIFACT_FILE_SIZE_BYTES * 4)
         (job_dir / "final_report.md").write_text("# Visible\n\nBody text.\n")
 
-        with patch.object(report, "ui") as ui:
-            await report._download_pdf_report(
-                job_dir / "final_report.md", job_dir / "final_report.pdf", "job-1", None
-            )
-
-        ui.download.assert_not_called()
-        ui.notify.assert_called_once_with("The report is too large to download.", type="warning")
+        with pytest.raises(HTTPException) as refused:
+            await report_download_response(job_dir, "job-1")
+        assert refused.value.status_code == 404
 
     async def test_an_oversized_markdown_is_not_downloaded(self, tmp_path: Path) -> None:
         from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
@@ -966,13 +958,9 @@ class TestUiReportPage:
         job_dir.mkdir(parents=True)
         sparse_file(job_dir / "final_report.md", MAX_ARTIFACT_FILE_SIZE_BYTES * 4)
 
-        with patch.object(report, "ui") as ui:
-            await report._download_pdf_report(
-                job_dir / "final_report.md", job_dir / "final_report.pdf", "job-1", None
-            )
-
-        ui.download.assert_not_called()
-        ui.notify.assert_called_once_with("The report is too large to download.", type="warning")
+        with pytest.raises(HTTPException) as refused:
+            await report_download_response(job_dir, "job-1")
+        assert refused.value.status_code == 404
 
     @pytest.mark.asyncio
     async def test_the_markdown_view_shows_a_too_large_report(self, tmp_path: Path) -> None:

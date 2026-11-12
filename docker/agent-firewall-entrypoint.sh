@@ -10,7 +10,7 @@ RUN_AS=${OPENSCIENTIST_FIREWALL_RUN_AS:-agent}
 # rejected as a rule spanning several lines.
 ALLOW=$(printf '%s' "${OPENSCIENTIST_FIREWALL_ALLOW:-}" | tr ',' '\n')
 
-# Resolve hosts to IPv4 now (network still open) and pin the IPs.
+# Read IPv4 addresses, including the launcher's pinned host entries.
 resolve_ipv4() {
     getent ahostsv4 "$1" 2>/dev/null | awk '{ print $1 }' | sort -u
 }
@@ -92,14 +92,12 @@ ${gateway_rule}    }
 }
 NFT
 else
-    # No port 53 rule: the resolver on 127.0.0.11 is reached over lo, and the allowlist
-    # pins destinations by IP, so an open 53 buys no reachability while letting a job pick
-    # its own nameserver and exfiltrate in the query name. Names that resolver forwards
-    # upstream still leave, from outside this namespace where no rule here sees them.
+    # Docker forwards embedded DNS outside this namespace, including after DNAT.
     nft -f - <<NFT
 table inet airgap {
     chain output {
         type filter hook output priority 0; policy drop;
+        ip daddr 127.0.0.11 drop
         oif "lo" accept
         ct state established,related accept
 ${accept_rules}    }

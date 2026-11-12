@@ -15,6 +15,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from openscientist.auth.access import user_access_allowed
 from openscientist.database.models import APIKey, User
 from openscientist.database.session import get_admin_session
 
@@ -114,7 +115,7 @@ async def get_current_user_from_api_key(
             await session.rollback()
             logger.warning("Failed to update API key usage stats: %s", e)
 
-        user_stmt = select(User).where(User.id == api_key.user_id, User.is_active.is_(True))
+        user_stmt = select(User).where(User.id == api_key.user_id, user_access_allowed())
         user_result = await session.execute(user_stmt)
         user = user_result.scalar_one_or_none()
 
