@@ -131,29 +131,34 @@ def test_report_caps_graphviz_calls(tmp_path: Path) -> None:
 
 
 def test_report_shares_a_wall_clock_budget(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(diagrams, "REPORT_DIAGRAM_BUDGET_SECONDS", 0.2)
-    run_process = subprocess.run
+    monkeypatch.setattr(diagrams, "REPORT_DIAGRAM_BUDGET_SECONDS", 2.0)
+    now = 100.0
+    monkeypatch.setattr(diagrams, "monotonic", lambda: now)
 
-    def slow_dot(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
-        return run_process(
-            [sys.executable, "-c", "import time; time.sleep(0.15); print('<svg/>')"],
-            timeout=float(str(kwargs["timeout"])),
-            capture_output=True,
-            text=True,
-        )
+    def slow_dot(command: tuple[str, ...], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal now
+        timeout = float(str(kwargs["timeout"]))
+        now += min(1.5, timeout)
+        if timeout < 1.5:
+            raise subprocess.TimeoutExpired(command, timeout)
+        return subprocess.CompletedProcess(command, 0, stdout="<svg/>")
 
     markdown = "\n".join(f"```dot\ndigraph {{ slow{i} -> b }}\n```" for i in range(4))
     with patch.object(subprocess, "run", side_effect=slow_dot) as run:
-        started = time.monotonic()
         html = _render(tmp_path, markdown)
-        elapsed = time.monotonic() - started
-        calls = run.call_count
-        started = time.monotonic()
+        assert now == 102.0
+        assert html.count("<svg") == 1
+        assert run.call_count == 2
         second = _render(tmp_path, markdown)
-        assert time.monotonic() - started < 0.45
-        assert run.call_count > calls
-        assert second.count("<svg") > html.count("<svg")
-    assert elapsed < 0.45
+        assert now == 104.0
+        assert second.count("<svg") == 2
+        assert [call.kwargs["timeout"] for call in run.call_args_list] == [2.0, 0.5, 2.0, 0.5]
+        assert [call.kwargs["input"] for call in run.call_args_list] == [
+            "digraph { slow0 -> b }",
+            "digraph { slow1 -> b }",
+            "digraph { slow1 -> b }",
+            "digraph { slow2 -> b }",
+        ]
     assert "slow3 -&gt; b" in html
 
 
