@@ -11,7 +11,13 @@ import pytest_asyncio
 from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from openscientist.database.models import AnalysisLog, Hypothesis, Job, Literature
+from openscientist.database.models import (
+    AnalysisLog,
+    AnalysisLogOutput,
+    Hypothesis,
+    Job,
+    Literature,
+)
 from openscientist.knowledge_state import KnowledgeState
 
 LOGGED = 200
@@ -72,9 +78,17 @@ async def test_a_tool_call_on_a_long_history_reads_no_log_output_and_few_rows(
         await ks.save_to_database(long_job, db_session)
 
     selects = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
-    assert not [s for s in selects if "output_data" in s]
+    assert not [s for s in selects if "analysis_log_outputs" in s]
     assert len(statements) <= 20, statements
     assert await _stored_runs(db_session, long_job, "New run") == 1
+    assert (
+        await db_session.scalar(
+            select(AnalysisLogOutput.output)
+            .join(AnalysisLog)
+            .where(AnalysisLog.job_id == long_job, AnalysisLog.description == "New run")
+        )
+        == "new"
+    )
 
 
 @pytest.mark.asyncio

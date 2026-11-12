@@ -19,12 +19,12 @@ import pytest
 import pytest_asyncio
 from nicegui import background_tasks, ui
 from nicegui.client import Client
-from sqlalchemy import delete
+from sqlalchemy import delete, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 import openscientist.webapp_components.pages.job_detail.analysis_log as analysis_log
 from openscientist import web_app
-from openscientist.database.models import AnalysisLog, Job, Session, User
+from openscientist.database.models import AnalysisLog, AnalysisLogOutput, Job, Session, User
 from openscientist.job.types import JobStatus
 from openscientist.webapp_components.pages.job_detail import job_detail_page
 from openscientist.webapp_components.pages.job_detail.analysis_log import (
@@ -67,7 +67,7 @@ async def long_log_job(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str]
                 action_type="execute_code",
                 description=f"Run {n}",
                 input_data={"code": f"print({n})"},
-                output_data={"output": RESULT},
+                output=AnalysisLogOutput(job_id=job.id, output=RESULT),
                 created_at=start + timedelta(seconds=n),
             )
             for n in range(CODE_RUNS)
@@ -101,12 +101,17 @@ async def long_log_job(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str]
             user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
         )
         db.add(login)
+        stranger_login, stranger_token = Session.issue(
+            user_id=stranger.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
+        db.add(stranger_login)
         await db.commit()
     yield {
         "job_id": str(job.id),
         "owner_id": str(owner.id),
         "stranger_id": str(stranger.id),
         "token": login_token,
+        "stranger_token": stranger_token,
     }
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(Job).where(Job.id == job.id))
@@ -490,3 +495,34 @@ async def test_an_iterations_log_is_read_only_for_who_may_see_the_job(
     ]
     assert await strangers.actions(0) == []
     assert await strangers.searches() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("viewer", ["owner", "stranger"])
+async def test_public_action_output_is_only_shown_to_direct_readers(
+    database: Forwarder,
+    test_engine: AsyncEngine,
+    long_log_job: dict[str, str],
+    served_page: ServedPage,
+    viewer: str,
+) -> None:
+    async with AsyncSession(test_engine) as db:
+        await db.execute(update(Job).where(Job.id == long_log_job["job_id"]).values(is_public=True))
+        await db.commit()
+    token = long_log_job["token" if viewer == "owner" else "stranger_token"]
+    client, _ = await served_page(
+        token, lambda: job_detail_page(long_log_job["job_id"]), lambda c: None
+    )
+    await _open_iteration(client, 1)
+    assert "Run 0" in _action_titles(client)
+    codes = [code.content for code in _of_type(client, ui.code)]
+    assert "print(0)" in codes
+    output = RESULT[:2000] + "..."
+    withheld = "Action output is shown only to the job's owner and the people it is shared with."
+    labels = [label.text for label in _of_type(client, ui.label)]
+    if viewer == "owner":
+        assert output in codes
+        assert withheld not in labels
+    else:
+        assert not any(RESULT[:20] in code for code in codes)
+        assert withheld in labels

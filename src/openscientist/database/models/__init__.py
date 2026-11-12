@@ -3,7 +3,7 @@
 # Core authentication models
 from .admin_settings import AdminSettingChange, AdminSettings
 from .administrator import Administrator
-from .analysis_log import AnalysisLog
+from .analysis_log import AnalysisLog, AnalysisLogOutput
 from .api_key import APIKey
 
 # Cost tracking
@@ -45,6 +45,7 @@ __all__ = [
     "AdminSettingChange",
     "Administrator",
     "AnalysisLog",
+    "AnalysisLogOutput",
     "CostRecord",
     "FeedbackHistory",
     "Finding",

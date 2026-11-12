@@ -334,6 +334,8 @@ async def _render_analysis_log_actions(
     first: list[dict[str, Any]],
     log: _IterationLog,
     state: _ActionsState,
+    *,
+    direct_access: bool,
 ) -> None:
     """The iteration's ``total`` actions, ``first`` shown and the rest a
     button press away, with ``state`` tracking both so the poll can move the
@@ -342,6 +344,10 @@ async def _render_analysis_log_actions(
         return
     with box:
         with ui.expansion(f"Actions ({total})", icon="build").classes("w-full") as expansion:
+            if not direct_access:
+                ui.label(
+                    "Action output is shown only to the job's owner and the people it is shared with."
+                ).classes("text-sm text-gray-500")
             with ui.column().classes("os-actions w-full gap-0") as cards:
                 await _render_action_cards(cards, first)
     state.expansion = expansion

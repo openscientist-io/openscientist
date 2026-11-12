@@ -579,7 +579,12 @@ class _IterationCard:
         with findings_box:
             _render_iteration_findings(ks, self.iteration)
         await _render_analysis_log_actions(
-            actions_box, self.body_model.action_total, first_actions, self.log, self.actions
+            actions_box,
+            self.body_model.action_total,
+            first_actions,
+            self.log,
+            self.actions,
+            direct_access=self.context.direct_access,
         )
         if content_box.is_deleted:
             return
@@ -623,7 +628,14 @@ class _IterationCard:
             first_actions = await self.log.actions(0)
             if box.is_deleted:
                 return
-            await _render_analysis_log_actions(box, total, first_actions, self.log, actions)
+            await _render_analysis_log_actions(
+                box,
+                total,
+                first_actions,
+                self.log,
+                actions,
+                direct_access=self.context.direct_access,
+            )
             return
         if not actions.expansion.is_deleted:
             actions.expansion.text = f"Actions ({total})"
