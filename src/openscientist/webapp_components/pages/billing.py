@@ -27,8 +27,11 @@ async def render_billing_panel() -> None:
 
 
 def _iteration_label(record: CostRecord) -> str:
-    """The iteration a record covers, the phase for a report or chat record, and
-    blank for a record that covers a whole run."""
+    """Show the iteration, operation and any estimated provenance."""
+    if record.operation_type.endswith("_estimated"):
+        operation = record.operation_type.removesuffix("_estimated")
+        prefix = f"{record.iteration} " if record.iteration is not None else ""
+        return f"{prefix}{operation} estimated"
     if record.iteration is not None:
         return str(record.iteration)
     return record.operation_type if record.operation_type in ("report", "chat") else ""

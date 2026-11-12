@@ -226,6 +226,14 @@ def event_loop():
 
 
 @pytest.fixture(autouse=True)
+def isolated_model_call_reservations(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give each test its own outstanding reservations and settlement debt."""
+    from openscientist import llm_reservations
+
+    monkeypatch.setattr(llm_reservations, "_outstanding", {})
+
+
+@pytest.fixture(autouse=True)
 def discovery_budget_allows(monkeypatch: pytest.MonkeyPatch) -> None:
     """The loop's budget check allows by default. The budget tests override it."""
 

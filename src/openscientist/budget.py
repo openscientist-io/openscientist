@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -58,18 +59,20 @@ class ProjectSpend:
     ledger_total: float
     ledger_24h: float
     billed: CostInfo | None
+    reserved_total: float = 0.0
+    reserved_24h: float = 0.0
 
     @property
     def total(self) -> float:
         if self.billed is None or self.billed.total_spend_usd is None:
-            return self.ledger_total
-        return max(self.ledger_total, self.billed.total_spend_usd)
+            return self.ledger_total + self.reserved_total
+        return max(self.ledger_total, self.billed.total_spend_usd) + self.reserved_total
 
     @property
     def last_24h(self) -> float:
         if self.billed is None or self.billed.recent_spend_usd is None:
-            return self.ledger_24h
-        return max(self.ledger_24h, self.billed.recent_spend_usd)
+            return self.ledger_24h + self.reserved_24h
+        return max(self.ledger_24h, self.billed.recent_spend_usd) + self.reserved_24h
 
 
 async def _provider_billing() -> CostInfo | None:
@@ -93,26 +96,22 @@ async def _provider_billing() -> CostInfo | None:
     return info
 
 
-async def _ledger_totals(job_id: UUID | None = None) -> tuple[float, float, float]:
-    """The ledger totals the limits read: the job's own, the deployment-wide
-    total, and the part of the deployment written in the last 24 hours."""
+async def _ledger_totals(
+    job_id: UUID | None = None, *, exclude_ids: tuple[UUID, ...] = ()
+) -> tuple[float, float, float]:
+    """Read all budget totals from one ledger snapshot."""
     cutoff = datetime.now(UTC) - timedelta(hours=24)
     async with get_admin_session() as session:
-        job_total = (
-            await session.scalar(
-                select(func.coalesce(func.sum(CostRecord.cost_usd), 0.0)).where(
-                    CostRecord.job_id == job_id
-                )
-            )
-            if job_id is not None
-            else 0.0
+        statement = select(
+            func.coalesce(func.sum(CostRecord.cost_usd).filter(CostRecord.job_id == job_id), 0.0),
+            func.coalesce(func.sum(CostRecord.cost_usd), 0.0),
+            func.coalesce(
+                func.sum(CostRecord.cost_usd).filter(CostRecord.created_at > cutoff), 0.0
+            ),
         )
-        total = await session.scalar(select(func.coalesce(func.sum(CostRecord.cost_usd), 0.0)))
-        recent = await session.scalar(
-            select(func.coalesce(func.sum(CostRecord.cost_usd), 0.0)).where(
-                CostRecord.created_at > cutoff
-            )
-        )
+        if exclude_ids:
+            statement = statement.where(CostRecord.id.not_in(exclude_ids))
+        job_total, total, recent = (await session.execute(statement)).one()
     return (
         0.0 if job_total is None else float(job_total),
         0.0 if total is None else float(total),
@@ -146,8 +145,23 @@ async def job_spends(session: AsyncSession, job_ids: Sequence[UUID]) -> dict[UUI
 
 async def project_spend() -> ProjectSpend:
     """The project spend the project limits compare against."""
-    _, total, recent = await _ledger_totals()
-    return ProjectSpend(ledger_total=total, ledger_24h=recent, billed=await _provider_billing())
+    from openscientist.llm_reservations import (
+        _budget_guard,
+        _flush_debt_locked,
+        _pending_totals_locked,
+    )
+
+    async with _budget_guard():
+        await _flush_debt_locked()
+        _, pending_total, pending_recent, excluded = _pending_totals_locked(None)
+        _, total, recent = await _ledger_totals(exclude_ids=excluded)
+        return ProjectSpend(
+            ledger_total=total,
+            ledger_24h=recent,
+            billed=await _provider_billing(),
+            reserved_total=pending_total,
+            reserved_24h=pending_recent,
+        )
 
 
 def warning_limit_reached(spend_24h: float, warn: float | None, hard: float | None) -> bool:
@@ -190,12 +204,36 @@ async def check_budget(
     model: str | None = None,
     include_unpriced: bool = False,
 ) -> BudgetVerdict:
-    """Whether a new unit of work is allowed, the limit it refuses on, and a
-    message naming it.
+    """Check limits against durable spend, outstanding reservations and debt."""
+    from openscientist.llm_reservations import _budget_guard
 
-    Checks in order: an unpriced cloud model while any limit is set, the
-    job's own cap, the project's total spend, then its 24-hour spend.
-    """
+    async with _budget_guard():
+        return await _check_budget_locked(
+            job_id=job_id,
+            provider_id=provider_id,
+            model=model,
+            include_unpriced=include_unpriced,
+        )
+
+
+def _exceeds_limit(current: float, prospective: float, limit: float) -> bool:
+    amount = current + prospective
+    return current >= limit or (
+        amount > limit and not math.isclose(amount, limit, rel_tol=1e-12, abs_tol=0.0)
+    )
+
+
+async def _check_budget_locked(
+    *,
+    job_id: UUID | None = None,
+    provider_id: str,
+    model: str | None = None,
+    include_unpriced: bool = False,
+    prospective_usd: float = 0.0,
+) -> BudgetVerdict:
+    from openscientist.llm_reservations import _flush_debt_locked, _pending_totals_locked
+
+    await _flush_debt_locked()
     if include_unpriced:
         violation = await unpriced_model_violation(provider_id=provider_id, model=model)
         if violation is not None:
@@ -203,12 +241,14 @@ async def check_budget(
 
     admin = await current_admin_settings()
 
-    job_total, total, recent = await _ledger_totals(job_id)
+    pending_job, pending_total, pending_recent, excluded = _pending_totals_locked(job_id)
+    job_total, total, recent = await _ledger_totals(job_id, exclude_ids=excluded)
+    job_total += pending_job
 
     if (
         job_id is not None
         and admin.max_job_cost_usd is not None
-        and job_total >= admin.max_job_cost_usd
+        and _exceeds_limit(job_total, prospective_usd, admin.max_job_cost_usd)
     ):
         return BudgetVerdict(
             False,
@@ -220,10 +260,15 @@ async def check_budget(
     if admin.max_project_spend_total_usd is None and admin.max_project_spend_24h_usd is None:
         return BudgetVerdict(True, None, None)
 
-    spend = ProjectSpend(ledger_total=total, ledger_24h=recent, billed=await _provider_billing())
-    if (
-        admin.max_project_spend_total_usd is not None
-        and spend.total >= admin.max_project_spend_total_usd
+    spend = ProjectSpend(
+        ledger_total=total,
+        ledger_24h=recent,
+        billed=await _provider_billing(),
+        reserved_total=pending_total,
+        reserved_24h=pending_recent,
+    )
+    if admin.max_project_spend_total_usd is not None and _exceeds_limit(
+        spend.total, prospective_usd, admin.max_project_spend_total_usd
     ):
         return BudgetVerdict(
             False,
@@ -231,9 +276,8 @@ async def check_budget(
             f"Project spend total limit of ${admin.max_project_spend_total_usd:.2f} reached: "
             f"the project has spent ${spend.total:.2f}.",
         )
-    if (
-        admin.max_project_spend_24h_usd is not None
-        and spend.last_24h >= admin.max_project_spend_24h_usd
+    if admin.max_project_spend_24h_usd is not None and _exceeds_limit(
+        spend.last_24h, prospective_usd, admin.max_project_spend_24h_usd
     ):
         return BudgetVerdict(
             False,
