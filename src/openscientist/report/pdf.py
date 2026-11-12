@@ -1,14 +1,11 @@
-"""WeasyPrint PDF generation.
-
-Converts HTML report to PDF with embedded images.
-Runs in a thread pool executor to avoid blocking the async event loop.
-"""
+"""WeasyPrint PDF generation."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 from pathlib import Path
+from typing import cast
 
 logger = logging.getLogger(__name__)
 
@@ -38,3 +35,26 @@ def _render_pdf_sync(html_path: Path, pdf_path: Path, job_dir: Path) -> Path:
     HTML(filename=str(html_path), base_url=str(job_dir)).write_pdf(str(pdf_path))
     logger.info("PDF generated: %s (%d bytes)", pdf_path, pdf_path.stat().st_size)
     return pdf_path
+
+
+def render_public_report_pdf(
+    job_dir: Path,
+    excluded_top_level_dirs: tuple[str, ...],
+    run_environment: str | None = None,
+) -> bytes:
+    """Render a public PDF without reading persisted reports or fetching external resources."""
+    from weasyprint import HTML
+    from weasyprint.urls import URLFetcher  # type: ignore[import-untyped]
+
+    from openscientist.report.renderer import render_report_html
+
+    html = render_report_html(
+        job_dir / "final_report.md",
+        job_dir,
+        embed_images=True,
+        run_environment=run_environment,
+        excluded_top_level_dirs=excluded_top_level_dirs,
+    )
+    return cast(
+        bytes, HTML(string=html, url_fetcher=URLFetcher(allowed_protocols={"data"})).write_pdf()
+    )
