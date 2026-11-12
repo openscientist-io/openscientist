@@ -51,6 +51,7 @@ from openscientist.job_container.launcher_client import (
     LauncherError,
     LauncherImageMissingError,
     LauncherNotFoundError,
+    LauncherStorageError,
 )
 from openscientist.job_container.run_home import (
     RUN_HOME_LABEL,
@@ -340,8 +341,8 @@ class JobContainerRunner:
         """Run one chat turn in an ephemeral hardened container and wait for it.
 
         Inherits the job launch posture. Prompt and reply cross through the
-        turn's files in job_dir, not the database. Raises on timeout or non-zero
-        exit, and the container is always removed."""
+        turn's files in job_dir, not the database. Raises on storage errors,
+        timeout or non-zero exit, and the container is always removed."""
         handle, labels = self._start_agent_container(
             job_id=job_id,
             job_dir=job_dir,
@@ -353,6 +354,8 @@ class JobContainerRunner:
         try:
             try:
                 outcome = self.client.wait(ref, timeout_seconds=timeout)
+            except LauncherStorageError:
+                raise
             except LauncherError as error:
                 raise RuntimeError(f"Chat turn did not finish within {timeout}s") from error
             if outcome["timeout"]:
@@ -524,6 +527,8 @@ class JobContainerRunner:
             result = self.client.inspect(entry["id"])
         except LauncherNotFoundError:
             return None
+        except LauncherStorageError:
+            raise
         except LauncherError as error:
             logger.warning("Failed to get exit code for job %s: %s", job_id, error)
             return None

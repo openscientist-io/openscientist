@@ -90,7 +90,7 @@ async def test_health_and_list_answer_while_an_executor_run_is_in_progress(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     jobs = tmp_path / "jobs"
-    (jobs / JOB_ID).mkdir(parents=True)
+    (jobs / JOB_ID / "data").mkdir(parents=True)
     container = _BlockingContainer()
     monkeypatch.setattr(api.docker, "from_env", lambda **_kwargs: _FakeDocker(container))
     app = create_app(_config(jobs))
