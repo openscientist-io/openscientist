@@ -350,7 +350,7 @@ class TestAgentCreate:
             client.post(f"/v1/containers/{response.json()['name']}/remove")
 
     @pytest.mark.parametrize(
-        "field", ["privileged", "cap_add", "volumes", "network", "user", "image"]
+        "field", ["privileged", "cap_add", "volumes", "network", "user", "image", "extra_hosts"]
     )
     def test_injection_fields_refused(self, launcher: Launcher, field: str) -> None:
         with launcher.client() as client:

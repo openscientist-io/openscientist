@@ -860,6 +860,15 @@ class TestGetSettings:
         """Clear settings cache after each test."""
         clear_settings_cache()
 
+    @pytest.mark.parametrize("configured, expected", [(None, 4), ("2", 2)])
+    def test_concurrent_chat_limit(self, monkeypatch, tmp_path, configured, expected):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("PHENIX_PATH", raising=False)
+        monkeypatch.delenv("OPENSCIENTIST_MAX_CONCURRENT_CHATS", raising=False)
+        if configured is not None:
+            monkeypatch.setenv("OPENSCIENTIST_MAX_CONCURRENT_CHATS", configured)
+        assert get_settings().max_concurrent_chats == expected
+
     def test_get_settings_returns_singleton(self, monkeypatch, tmp_path):
         """get_settings returns the same instance on multiple calls."""
         # Change to temp directory without .env file to avoid picking up project .env

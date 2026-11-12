@@ -64,10 +64,24 @@ The launcher checks `statvfs` before each launch and once per second while servi
 
 This sampled guard cannot prevent writes from consuming the reserve between samples or while a Docker operation is delayed. Put the jobs root on a dedicated filesystem, separate from the PostgreSQL volume and Docker data root. Per-job hard quotas require a quota-capable backing store. Docker [bind mounts](https://docs.docker.com/engine/storage/bind-mounts/) have no size limit, and [`--storage-opt size`](https://docs.docker.com/reference/cli/docker/container/run/#storage-opt) constrains supported container storage drivers rather than bind-mounted job directories.
 
+### Chat Admission
+
+Each web process admits one chat turn per job and at most `OPENSCIENTIST_MAX_CONCURRENT_CHATS` turns across jobs. The global limit defaults to four. Each chat container uses the `OPENSCIENTIST_AGENT_MEMORY` limit, so operators must size concurrency to their host's available memory. Admission covers request preparation and container execution. A disconnected caller retains its slot until the container worker finishes.
+
+| Event | No admitted turn | Preparing request | Running container | Caller cancelled during execution |
+|---|---|---|---|---|
+| Send for this job | Admit if global capacity permits | Refuse duplicate | Refuse duplicate | Refuse duplicate |
+| Send for another job | Admit if global capacity permits | Admit if global capacity permits | Admit if global capacity permits | Admit if global capacity permits |
+| Request prepared | Not applicable | Start container worker | Not applicable | Not applicable |
+| Preparation fails or caller cancels preparation | Not applicable | Remove request files and release slot | Not applicable | Not applicable |
+| Caller cancels execution | Not applicable | Not applicable | Keep worker and slot | Keep worker and slot |
+| Launch fails, container errors, times out, or returns a reply | Not applicable | Not applicable | Remove turn files and release slot | Remove turn files and release slot |
+
 ### Input Validation
 
 - **Pydantic models for API input.** All API request bodies are validated through Pydantic V2 schemas with type checking and length constraints (e.g., job titles: 1--255 characters, max iterations: 1--20).
 - **File upload safety checks.** API uploads stream to temporary files in 1 MiB chunks and are refused with HTTP 413 when a file exceeds the `MAX_FILE_SIZE_MB` admin limit, when the request total does, or when a request holds more than 100 files. The multipart parser spools each part to disk past 1 MiB, so a part is never held in process memory whole. Accepted uploads are then validated by extension and magic-number detection of their leading bytes (using `python-magic`), and executable files (ELF, Mach-O, DOS) are blocked. Web uploads honour the same per-file limit and stream to disk in 1 MiB chunks. Filenames are sanitized to prevent path traversal.
+- **Bounded image previews.** Images over 20 million pixels and images that trigger Pillow's oversized-image warning receive no preview. The pixel check runs before decoding, and job creation keeps the uploaded original.
 - **Parameterized SQL queries.** All database access uses SQLAlchemy ORM, which generates parameterized queries. No raw SQL string interpolation was found.
 - **Job page renders no agent-written HTML.** The research question shows as the scientist wrote it, and the page's only HTML built from job data is the attachment links, whose URLs and names the page escapes itself. A reader who sees the job only because it is public gets no attachment URLs, so the page cannot show the owner's uploads to them.
 - **Vulnerability scanner blocking.** A middleware layer blocks common scanner paths (`.git/`, `wp-admin/`, etc.) to reduce noise and exposure.
@@ -77,7 +91,7 @@ This sampled guard cannot prevent writes from consuming the reserve between samp
 - **Strict Content-Security-Policy on every response.** The web application emits a CSP that confines scripts and styles to the app's own origin, limits network connections to the same origin (`connect-src 'self'`), and disallows plugins, foreign `<base>` tags, and framing (`object-src 'none'`, `base-uri 'self'`, `frame-ancestors 'none'`).
 - **Clickjacking and MIME-sniffing protection.** Responses also carry `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, a `Referrer-Policy`, and a restrictive `Permissions-Policy` that disables camera, microphone, geolocation, and payment.
 - **HSTS over HTTPS.** When the configured app URL is served over HTTPS, a `Strict-Transport-Security` header is emitted.
-- **Sandboxed report and artifact frames.** The job report and artifact previews render in iframes that carry their own stricter CSP, including `sandbox` and `connect-src 'none'`, so agent-generated content cannot reach other hosts or exfiltrate data.
+- **Sandboxed report and artifact frames.** Agent-generated documents use `default-src 'none'`, same-origin or embedded images, inline styles, and no forms or nested frames. Reports also allow embedded fonts and a hash-authorized link handler. Clicking a report link opens a separate tab with its destination's permissions.
 
 ### Access Control
 
@@ -94,7 +108,7 @@ This sampled guard cannot prevent writes from consuming the reserve between samp
 - **Redemption behind a confirmation page.** The review link only renders a sign-in page. Signing in is a same-origin JSON POST from that page, so a cross-site link can show the page but never signs the visitor in.
 - **Race-condition safe sign-in.** The sign-in lookup uses `SELECT ... FOR UPDATE` to prevent double-redemption, and a redeemed token whose reviewer account no longer exists is refused instead of minting a new one.
 - **Referrer leakage prevention.** Sign-in responses set `Referrer-Policy: no-referrer` so the token doesn't leak in HTTP headers.
-- **Revocation support.** Tokens can be revoked by admins at any time, redeemed or not. Revocation ends the reviewer's open sessions and blocks further use, and deleting the reviewer user revokes the token they redeemed.
+- **Review access lifetime.** Cookie and API key authentication check the redeemed review token on every request, so expiry blocks credentials and actions from open pages without a cleanup job. Revocation disables the reviewer account and deletes its sessions. Deleting a token creator disables the accounts their tokens redeemed, and deleting a reviewer revokes their token.
 
 ### Secrets Management
 

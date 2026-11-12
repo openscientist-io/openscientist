@@ -1016,6 +1016,12 @@ class Settings(BaseSettings):
         alias="OPENSCIENTIST_MAX_CONCURRENT_JOBS",
         description="Max jobs running at the same time.",
     )
+    max_concurrent_chats: int = Field(
+        default=4,
+        ge=1,
+        alias="OPENSCIENTIST_MAX_CONCURRENT_CHATS",
+        description="Max chat replies running at the same time.",
+    )
     scheduler_window_hours: float = Field(
         default=24,
         gt=0,
