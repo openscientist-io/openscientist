@@ -399,7 +399,7 @@ class TestContainerStatusNotifications:
         runner.get_exit_code.return_value = None
         notify = AsyncMock(return_value=True)
         with (
-            patch("openscientist.job_container.JobContainerRunner", return_value=runner),
+            patch("openscientist.job_container.runner.JobContainerRunner", return_value=runner),
             patch("openscientist.job_manager.time.sleep"),
             patch.object(manager, "_load_job_info", side_effect=polls),
             patch.object(manager, "_start_next_queued_job"),

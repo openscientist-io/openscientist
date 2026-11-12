@@ -359,7 +359,7 @@ async def test_startup_recovery_runs_once_the_database_returns(
     manager = JobManager(jobs_dir=tmp_path)
     database.down()
     with (
-        patch("openscientist.job_container.JobContainerRunner", return_value=MagicMock()),
+        patch("openscientist.job_container.runner.JobContainerRunner", return_value=MagicMock()),
         patch.object(manager, "_run_job"),
     ):
         recovery = asyncio.create_task(asyncio.to_thread(manager.recover_after_restart))
@@ -452,7 +452,7 @@ async def test_a_lost_container_is_cancelled_when_cleanup_fails(
     try:
         with (
             patch.object(manager, "_run_job"),
-            patch("openscientist.job_container.JobContainerRunner", return_value=runner),
+            patch("openscientist.job_container.runner.JobContainerRunner", return_value=runner),
         ):
             await asyncio.to_thread(manager.recover_after_restart)
         assert await _status(test_engine, running.id) == "cancelled"
@@ -478,7 +478,9 @@ async def test_startup_does_not_wait_for_a_down_database(
     try:
         with (
             patch.object(manager, "_run_job"),
-            patch("openscientist.job_container.JobContainerRunner", return_value=MagicMock()),
+            patch(
+                "openscientist.job_container.runner.JobContainerRunner", return_value=MagicMock()
+            ),
             patch("openscientist.web_app._new_job_manager", return_value=manager),
         ):
             try:
@@ -613,7 +615,7 @@ async def test_a_crashed_container_hands_its_error_to_the_job(
     manager = JobManager(jobs_dir=tmp_path)
     # A failed job starts the next queued one, which would be another test's.
     with (
-        patch("openscientist.job_container.JobContainerRunner", return_value=runner),
+        patch("openscientist.job_container.runner.JobContainerRunner", return_value=runner),
         patch("openscientist.job_manager.time.sleep"),
         patch.object(manager, "_start_next_queued_job"),
     ):
@@ -635,7 +637,9 @@ async def test_a_poll_error_other_than_an_outage_fails_the_job(
     manager = JobManager(jobs_dir=tmp_path)
     try:
         with (
-            patch("openscientist.job_container.JobContainerRunner", return_value=MagicMock()),
+            patch(
+                "openscientist.job_container.runner.JobContainerRunner", return_value=MagicMock()
+            ),
             patch.object(manager, "_load_job_info", side_effect=ValueError("poll blew up")),
             patch("openscientist.job_manager.time.sleep"),
             patch.object(manager, "_start_next_queued_job"),
