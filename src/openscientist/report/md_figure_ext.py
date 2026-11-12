@@ -135,6 +135,9 @@ class ImageSrcTreeProcessor(Treeprocessor):
                     job_dir, src, excluded_top_level_dirs=self.excluded_top_level_dirs
                 )
                 if image is None:
+                    placeholder = etree.Element("span")
+                    placeholder.text = child.get("alt", "")
+                    replacements.append((i, child, placeholder))
                     continue
 
                 resolved = _resolve_image_src(image, self.use_base64)

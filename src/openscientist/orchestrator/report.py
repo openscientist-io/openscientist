@@ -25,6 +25,7 @@ from openscientist.orchestrator.iteration import (
 from openscientist.orchestrator.provenance import _STAMP_DEADLINE_SECONDS
 from openscientist.providers.base import Provider
 from openscientist.run_environment import run_environment_text
+from openscientist.share_service import PUBLIC_VIEWER_EXCLUDED_DIRS
 from openscientist.transcript import TranscriptEntry
 
 logger = logging.getLogger(__name__)
@@ -125,7 +126,12 @@ async def _try_generate_report_pdf(report_path: Path) -> None:
         from openscientist.report.renderer import render_report_html
 
         # Render HTML with file:// image paths (for WeasyPrint)
-        html_content = render_report_html(report_path, job_dir, run_environment=run_environment)
+        html_content = render_report_html(
+            report_path,
+            job_dir,
+            run_environment=run_environment,
+            excluded_top_level_dirs=PUBLIC_VIEWER_EXCLUDED_DIRS,
+        )
         html_path.write_text(html_content, encoding="utf-8")
         logger.info("HTML report written: %s", html_path)
 

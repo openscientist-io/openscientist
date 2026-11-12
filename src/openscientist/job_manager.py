@@ -193,7 +193,7 @@ class JobManager:
             retry=True,
         )
         try:
-            from openscientist.job_container import JobContainerRunner
+            from openscientist.job_container.runner import JobContainerRunner
 
             JobContainerRunner().cleanup(job_id)
         except Exception as e:
@@ -420,7 +420,7 @@ class JobManager:
         ``run_mode`` is "discovery" for the full loop or "report_only" to
         re-run just the report-generation phase against the persisted findings.
         """
-        from openscientist.job_container import JobContainerRunner
+        from openscientist.job_container.runner import JobContainerRunner
 
         poll_interval = 5
         terminal_statuses = {"completed", "failed", "cancelled"}
@@ -660,7 +660,7 @@ class JobManager:
     @staticmethod
     def _stop_container(job_id: str) -> None:
         try:
-            from openscientist.job_container import JobContainerRunner
+            from openscientist.job_container.runner import JobContainerRunner
 
             JobContainerRunner().stop(job_id)
         except Exception as e:

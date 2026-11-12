@@ -536,6 +536,7 @@ async def record_model_call(
             statement = insert(CostRecord).values(
                 id=record_id,
                 job_id=uid,
+                user_id=job.owner_id,
                 iteration=iteration,
                 operation_type=f"{operation}_estimated" if estimated else operation,
                 provider=provider_id,

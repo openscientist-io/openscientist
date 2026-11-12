@@ -18,12 +18,20 @@ class CostRecord(UUIDv7Mixin, Base):
 
     __tablename__ = "cost_records"
 
-    job_id: Mapped[UUID] = mapped_column(
+    job_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
-        ForeignKey("jobs.id", ondelete="CASCADE"),
-        nullable=False,
+        ForeignKey("jobs.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
         comment="Job this cost belongs to",
+    )
+
+    user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Job owner when the cost was recorded",
     )
 
     iteration: Mapped[int | None] = mapped_column(
@@ -90,7 +98,7 @@ class CostRecord(UUIDv7Mixin, Base):
     )
 
     # Relationships
-    job: Mapped["Job"] = relationship(back_populates="cost_records")
+    job: Mapped["Job | None"] = relationship(back_populates="cost_records")
 
     def __repr__(self) -> str:
         return (

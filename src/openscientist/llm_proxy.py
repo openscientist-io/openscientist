@@ -319,7 +319,7 @@ class _MeteredStreamResponse(Response):
         upstream: httpx.Response,
         decoder,
         meter: Callable[[str], Awaitable[None]],
-        admission: _Admission | None = None,
+        admission: _Admission,
         status_code: int,
         headers: dict[str, str],
     ) -> None:
@@ -357,10 +357,7 @@ class _MeteredStreamResponse(Response):
             await send({"type": "http.response.body", "body": b"", "more_body": False})
             outcome = "end"
         finally:
-            if self._admission is None:
-                await finish()
-            else:
-                await self._admission.owner.settle(self._admission, finish())
+            await self._admission.owner.settle(self._admission, finish())
 
 
 def create_llm_proxy_app(

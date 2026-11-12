@@ -396,6 +396,15 @@ async def delete_user(user_id: UUID) -> tuple[bool, str]:
             return False, "User not found"
 
         await session.execute(
+            update(User)
+            .where(
+                User.id.in_(
+                    select(ReviewToken.redeemed_by_id).where(ReviewToken.created_by_id == user_id)
+                )
+            )
+            .values(is_active=False)
+        )
+        await session.execute(
             update(ReviewToken).where(ReviewToken.redeemed_by_id == user_id).values(is_active=False)
         )
         await session.delete(user)
@@ -405,7 +414,7 @@ async def delete_user(user_id: UUID) -> tuple[bool, str]:
 
 
 async def revoke_review_token(token_id: UUID) -> tuple[bool, str]:
-    """Revoke a review token and end the sessions of the reviewer it redeemed."""
+    """Revoke a review token and disable the reviewer it redeemed."""
     async with get_admin_session() as session:
         result = await session.execute(select(ReviewToken).where(ReviewToken.id == token_id))
         review_token = result.scalar_one_or_none()
@@ -413,6 +422,9 @@ async def revoke_review_token(token_id: UUID) -> tuple[bool, str]:
             return False, "Token not found"
         review_token.is_active = False
         if review_token.redeemed_by_id is not None:
+            await session.execute(
+                update(User).where(User.id == review_token.redeemed_by_id).values(is_active=False)
+            )
             await session.execute(
                 delete(Session).where(Session.user_id == review_token.redeemed_by_id)
             )
