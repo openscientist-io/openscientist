@@ -525,7 +525,9 @@ async def test_public_pdf_render_failure_does_not_serve_cached_report(
             else:
                 assert response.status_code == 404
                 assert response.json() == {"detail": "Report not found"}
+                assert cached_report not in response.content
     assert "Public report rendering failed" in caplog.text
+    assert "report source is missing or unreadable" in caplog.text
     assert (job_dir / "final_report.pdf").read_bytes() == cached_report
     assert (job_dir / "final_report.html").read_bytes() == cached_report
 

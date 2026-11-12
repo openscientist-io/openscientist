@@ -62,6 +62,10 @@ async def report_download_response(
                 detail="The public report exceeds the rendering limits.",
             ) from exc
         except FileNotFoundError as exc:
+            logger.warning(
+                "Public report rendering failed for %s because the report source is missing or unreadable",
+                job_dir.name,
+            )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Report not found"
             ) from exc
