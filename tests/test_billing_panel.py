@@ -250,6 +250,7 @@ async def _delete_job(engine: AsyncEngine, job_id: UUID) -> None:
     from openscientist.database.models import Job
 
     async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+        await session.execute(delete(CostRecord).where(CostRecord.job_id == job_id))
         await session.execute(delete(Job).where(Job.id == job_id))
         await session.commit()
 
@@ -262,7 +263,7 @@ async def _render_panel_labels(
 
     mock_ui = _panel_ui_mock()
     with (
-        patch.object(billing, "get_admin_session", lambda: _admin_session([])),
+        patch.object(billing, "render_stat_badges", MagicMock()),
         patch.object(billing, "render_empty_state", MagicMock()),
         patch.object(billing, "get_provider", return_value=provider),
         patch.object(budget, "get_provider", return_value=provider),

@@ -76,6 +76,7 @@ class OllamaProvider(OpenAiWireCompatible):
         return "ollama"
 
     display_name = "Ollama (local)"
+    credential_env_keys = ("OPENAI_API_KEY",)
 
     @classmethod
     def setup_questions(cls) -> tuple[SetupQuestion, ...]:

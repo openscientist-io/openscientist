@@ -9,6 +9,7 @@ links, images or stylesheets that could reach outside the diagram.
 
 from __future__ import annotations
 
+import hashlib
 import html
 import logging
 import os
@@ -16,6 +17,9 @@ import re
 import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
+from collections import OrderedDict
+from threading import Lock
+from time import monotonic
 
 from markdown import Markdown  # type: ignore[import-untyped]
 from markdown.extensions import Extension  # type: ignore[import-untyped]
@@ -26,6 +30,13 @@ logger = logging.getLogger(__name__)
 MAX_DOT_CHARS = 20_000
 MAX_SVG_CHARS = 2_000_000
 DOT_TIMEOUT_SECONDS = 10
+MAX_REPORT_DIAGRAMS = 8
+REPORT_DIAGRAM_BUDGET_SECONDS = 2.0
+MAX_CACHED_DIAGRAMS = 16
+
+_cache: OrderedDict[bytes, str | None] = OrderedDict()
+_cache_lock = Lock()
+_render_lock = Lock()
 
 _SVG_NS = "http://www.w3.org/2000/svg"
 _XLINK_NS = "http://www.w3.org/1999/xlink"
@@ -102,28 +113,64 @@ def _clean(element: ET.Element) -> None:
             del element.attrib[name]
 
 
-def render_dot(source: str) -> str | None:
+def render_dot(source: str, *, deadline: float | None = None) -> str | None:
     """The diagram as a cleaned SVG fragment, or None when it cannot be drawn."""
     if len(source) > MAX_DOT_CHARS:
         logger.warning("Diagram of %d characters is over the %d cap", len(source), MAX_DOT_CHARS)
         return None
+    key = hashlib.sha256(source.encode("utf-8")).digest()
+    with _cache_lock:
+        if key in _cache:
+            _cache.move_to_end(key)
+            return _cache[key]
+    # Uncached diagrams fall back to source instead of queuing behind Graphviz.
+    if not _render_lock.acquire(blocking=False):
+        return None
+    try:
+        with _cache_lock:
+            if key in _cache:
+                _cache.move_to_end(key)
+                return _cache[key]
+        remaining = (
+            DOT_TIMEOUT_SECONDS
+            if deadline is None
+            else min(DOT_TIMEOUT_SECONDS, deadline - monotonic())
+        )
+        if remaining <= 0:
+            return None
+        try:
+            svg = _render_dot(source, remaining)
+        except subprocess.TimeoutExpired as exc:
+            logger.warning("Graphviz did not draw a diagram: %s", exc)
+            if remaining < DOT_TIMEOUT_SECONDS:
+                return None
+            svg = None
+        except OSError as exc:
+            logger.warning("Graphviz did not draw a diagram: %s", exc)
+            return None
+        with _cache_lock:
+            _cache[key] = svg
+            if len(_cache) > MAX_CACHED_DIAGRAMS:
+                _cache.popitem(last=False)
+        return svg
+    finally:
+        _render_lock.release()
+
+
+def _render_dot(source: str, timeout: float) -> str | None:
     # SERVER_NAME makes Graphviz refuse to load any file, so an image attribute
     # cannot pull a local file in. Graphviz 14 exits when GV_FILE_PATH is set.
     env = {"PATH": os.environ.get("PATH", ""), "SERVER_NAME": "openscientist"}
-    try:
-        with tempfile.TemporaryDirectory() as scratch:
-            result = subprocess.run(
-                ("dot", "-Tsvg", *_DEFAULT_STYLE),
-                input=source,
-                capture_output=True,
-                text=True,
-                timeout=DOT_TIMEOUT_SECONDS,
-                env=env,
-                cwd=scratch,
-            )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        logger.warning("Graphviz did not draw a diagram: %s", exc)
-        return None
+    with tempfile.TemporaryDirectory() as scratch:
+        result = subprocess.run(
+            ("dot", "-Tsvg", *_DEFAULT_STYLE),
+            input=source,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+            cwd=scratch,
+        )
     if result.returncode != 0 or not result.stdout or len(result.stdout) > MAX_SVG_CHARS:
         logger.warning("Graphviz refused a diagram: %s", result.stderr.strip()[:300])
         return None
@@ -138,8 +185,8 @@ def render_dot(source: str) -> str | None:
     return ET.tostring(root, encoding="unicode")
 
 
-def _diagram_html(source: str) -> str:
-    svg = render_dot(source)
+def _diagram_html(source: str, *, deadline: float, allowed: bool) -> str:
+    svg = render_dot(source, deadline=deadline) if allowed else None
     if svg is not None:
         return f'<figure class="diagram">{svg}</figure>'
     return (
@@ -155,6 +202,8 @@ class _DiagramPreprocessor(Preprocessor):  # type: ignore[misc]
     def run(self, lines: list[str]) -> list[str]:
         out: list[str] = []
         index = 0
+        deadline = monotonic() + REPORT_DIAGRAM_BUDGET_SECONDS
+        diagram_count = 0
         while index < len(lines):
             match = _FENCE_OPEN.match(lines[index])
             if match is None:
@@ -168,7 +217,13 @@ class _DiagramPreprocessor(Preprocessor):  # type: ignore[misc]
             )
             block = lines[index : end + 1]
             if match["info"].lower() in ("dot", "graphviz") and end < len(lines):
-                placeholder = self.md.htmlStash.store(_diagram_html("\n".join(block[1:-1])))
+                rendered = _diagram_html(
+                    "\n".join(block[1:-1]),
+                    deadline=deadline,
+                    allowed=diagram_count < MAX_REPORT_DIAGRAMS,
+                )
+                diagram_count += 1
+                placeholder = self.md.htmlStash.store(rendered)
                 out.extend(["", placeholder, ""])
             else:
                 out.extend(block)

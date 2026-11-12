@@ -99,6 +99,7 @@ class VertexProvider(ClaudeCompatible):
         return "vertex"
 
     display_name = "Vertex AI"
+    credential_env_keys = ("ANTHROPIC_AUTH_TOKEN",)
 
     mode_flag = "CLAUDE_CODE_USE_VERTEX"
 

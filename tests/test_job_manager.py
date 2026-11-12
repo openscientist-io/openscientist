@@ -399,7 +399,7 @@ class TestContainerStatusNotifications:
         runner.get_exit_code.return_value = None
         notify = AsyncMock(return_value=True)
         with (
-            patch("openscientist.job_container.JobContainerRunner", return_value=runner),
+            patch("openscientist.job_container.runner.JobContainerRunner", return_value=runner),
             patch("openscientist.job_manager.time.sleep"),
             patch.object(manager, "_load_job_info", side_effect=polls),
             patch.object(manager, "_start_next_queued_job"),
@@ -1009,6 +1009,7 @@ class TestQueuedJobBudgetHold:
 
     async def _cleanup(self, test_engine: AsyncEngine, owner: User, job: Job) -> None:
         async with self._committed(test_engine) as session:
+            await session.execute(delete(CostRecord).where(CostRecord.job_id == job.id))
             await session.execute(delete(Job).where(Job.id == job.id))
             await session.execute(delete(User).where(User.id == owner.id))
             await session.commit()
