@@ -238,3 +238,29 @@ async def test_downstream_error_propagates_without_upload_rejection(
         with pytest.raises(RuntimeError, match="Upload handler failed") as raised:
             await client.post("/api/v1/jobs", content=b"data")
     assert raised.value is error
+
+
+async def test_upload_id_beyond_integer_conversion_limit(test_engine: AsyncEngine) -> None:
+    await set_admin_settings_row(test_engine, max_file_size_mb=1)
+    uploads: list[ui.upload] = []
+
+    def root() -> None:
+        uploads.append(ui.upload())
+
+    async with user_simulation(root=root) as browser:
+        host = FastAPI()
+        host.add_middleware(UploadLimitsMiddleware)
+
+        @host.post("/_nicegui/client/{client_id}/upload/{upload_id}")
+        async def receive_upload(request: Request) -> dict[str, bool]:
+            assert await request.body()
+            return {"accepted": True}
+
+        await browser.open("/")
+        path = uploads[0].props["url"].rsplit("/", 1)[0] + "/" + "9" * 5000
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(host), base_url="http://test"
+        ) as client:
+            response = await client.post(path, files={"file": ("data.csv", b"a,b\n1,2\n")})
+        assert response.status_code == 200
+        assert response.json() == {"accepted": True}

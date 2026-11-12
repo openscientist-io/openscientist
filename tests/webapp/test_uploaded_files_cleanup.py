@@ -700,6 +700,8 @@ async def test_removed_event_only_selects_matching_session_files(
     ):
         await _post_upload(browser, upload, "kept.csv", b"keep\n")
         staged_path = _uploaded_files[session_id][0]["path"]
+        browser.find(ui.upload).trigger("removed", {"__key": "kept.csv"})
+        assert staged_path.read_bytes() == b"keep\n"
         outside = tmp_path / "outside.csv"
         outside.write_bytes(b"other\n")
         browser.find(ui.upload).trigger(
@@ -917,3 +919,31 @@ async def test_page_byte_quota_uses_the_current_limit(
         )
         assert response.status_code == 413
         assert [entry["name"] for entry in _uploaded_files[session_id]] == ["large.csv"]
+
+
+async def test_upload_removal_reports_filesystem_failure_and_allows_retry(
+    database: Forwarder,
+    new_page_user: tuple[User, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user, token = new_page_user
+    async with _upload_removal_page(user, token, tmp_path, monkeypatch) as (
+        browser,
+        upload,
+        session_id,
+    ):
+        await _post_upload(browser, upload, "data.csv", b"measurement\n")
+        stored = _uploaded_files[session_id][0]["path"]
+        stored.unlink()
+        stored.mkdir()
+        browser.find(ui.upload).trigger("removed", [{"__key": "data.csv"}])
+        await browser.should_see("Could not remove an uploaded file. Please try again.")
+        assert _uploaded_files[session_id][0]["path"] == stored
+        assert stored.is_dir()
+
+        stored.rmdir()
+        stored.write_bytes(b"measurement\n")
+        browser.find(ui.upload).trigger("removed", [{"__key": "data.csv"}])
+        assert not stored.exists()
+        assert not _uploaded_files[session_id]
