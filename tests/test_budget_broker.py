@@ -193,6 +193,7 @@ class TestBudgetRoute:
             assert resp.json()["limit"] == "job_cap"
         finally:
             async with committed(test_engine) as session:
+                await session.execute(delete(CostRecord).where(CostRecord.job_id == job.id))
                 await session.execute(delete(Job).where(Job.id == job.id))
                 await session.commit()
 
