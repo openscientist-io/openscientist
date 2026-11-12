@@ -16,6 +16,7 @@ from sqlalchemy.orm import selectinload
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
 
+from openscientist.auth.access import user_access_allowed
 from openscientist.database.models import Session, User
 from openscientist.database.models.session import hash_session_token
 from openscientist.database.retry import is_connection_error
@@ -43,6 +44,7 @@ async def get_current_user(db: AsyncSession, session_token: str) -> User | None:
         .where(
             Session.token_hash == hash_session_token(session_token),
             Session.expires_at > datetime.now(UTC),
+            user_access_allowed(),
         )
         .options(selectinload(User.administrator))
     )

@@ -28,14 +28,14 @@ from openscientist.database.models import Session, User
 
 @pytest.fixture(autouse=True)
 def _nicegui_storage_dir(tmp_path: Path) -> Iterator[None]:
-    """Provide a temporary directory for NiceGUI storage during tests.
-
-    NiceGUI persists user storage to .nicegui/ on disk. Without this,
-    teardown fails with FileNotFoundError when async_backup runs.
-    """
+    """Keep NiceGUI persistence inside the test's directory."""
     storage_dir = tmp_path / ".nicegui"
     storage_dir.mkdir()
-    with patch.dict(os.environ, {"NICEGUI_STORAGE_PATH": str(storage_dir)}):
+    with (
+        patch.dict(os.environ, {"NICEGUI_STORAGE_PATH": str(storage_dir)}),
+        patch.object(storage.Storage, "path", storage_dir),
+        patch.object(app, "storage", storage.Storage()),
+    ):
         yield
 
 

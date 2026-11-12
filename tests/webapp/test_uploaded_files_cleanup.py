@@ -21,10 +21,11 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from nicegui import background_tasks, storage, ui
+from nicegui import app, background_tasks, storage, ui
 from nicegui.client import Client
 from nicegui.elements.upload_files import FileUpload, create_file_upload
 from nicegui.events import UploadEventArguments, handle_event
+from nicegui.persistence.file_persistent_dict import FilePersistentDict
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from starlette.datastructures import Headers
@@ -241,3 +242,19 @@ async def test_a_submit_still_sees_the_uploaded_files_and_leaves_no_entry(
     assert not temp_path.exists()
     opened = [data for _target, kind, data in client.outbox.messages if kind == "open"]
     assert opened == [{"path": f"/job/{call['job_id']}", "new_tab": False}]
+
+
+def test_nicegui_storage_uses_the_test_directory(tmp_path: Path) -> None:
+    root = tmp_path / ".nicegui"
+    assert storage.Storage.path == root
+    assert isinstance(app.storage._general, FilePersistentDict)
+    assert app.storage._general.filepath == root / "storage-general.json"
+    sibling = tmp_path / "keep.txt"
+    sibling.write_text("keep")
+
+    app.storage.general["probe"] = True
+    assert (root / "storage-general.json").is_file()
+    app.storage.clear()
+
+    assert not root.exists()
+    assert sibling.read_text() == "keep"
