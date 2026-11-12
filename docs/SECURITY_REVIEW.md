@@ -68,6 +68,7 @@ Each web process admits one chat turn per job and at most `OPENSCIENTIST_MAX_CON
 - **Bounded image previews.** Images over 20 million pixels and images that trigger Pillow's oversized-image warning receive no preview. The pixel check runs before decoding, and job creation keeps the uploaded original.
 - **Parameterized SQL queries.** All database access uses SQLAlchemy ORM, which generates parameterized queries. No raw SQL string interpolation was found.
 - **Job page renders no agent-written HTML.** The research question shows as the scientist wrote it, and the page's only HTML built from job data is the attachment links, whose URLs and names the page escapes itself. A reader who sees the job only because it is public gets no attachment URLs, so the page cannot show the owner's uploads to them.
+- **Report diagrams have bounded work.** Each report renders at most eight `DOT` blocks within a shared two-second Graphviz budget. Remaining blocks display escaped source. A process-local cache retains the 16 most recently used source hashes and their sanitized `SVG` or permanent failure results. Shortened timeouts and exhausted budgets remain retryable. Graphviz output is limited to two million characters per diagram. Cached diagrams remain available while Graphviz is busy, and uncached diagrams fall back to source without waiting.
 - **Vulnerability scanner blocking.** A middleware layer blocks common scanner paths (`.git/`, `wp-admin/`, etc.) to reduce noise and exposure.
 
 ### Security Headers
