@@ -1370,3 +1370,38 @@ class _ResponsesWebsocketStub:
             if not self.replies:
                 await connection.close()
                 break
+
+
+class TestUnreservedMetering:
+    async def test_complete_usage_without_reservation_writes_cost(self, test_engine, job):
+        from openscientist.llm_metering import _usage_decoder
+        from openscientist.llm_proxy import _meter
+
+        decoder = _usage_decoder("/v1/messages", "application/json", _PRICED_MODEL)
+        assert decoder is not None
+        decoder.feed(json.dumps({"id": "m1", "usage": _anthropic_usage()}).encode())
+        await _meter(
+            job_id=str(job),
+            kind="discovery",
+            decoder=decoder,
+            provider_id="anthropic",
+            status_code=200,
+        )("end")
+        assert await _rows(test_engine, job) == [
+            ("discovery", 3, "anthropic", _PRICED_MODEL, 100, 25, 0, 0, 0, _cost(100, 25))
+        ]
+
+    async def test_invalid_job_id_returns_unsaved(self, test_engine, job, caplog):
+        from openscientist.agent.base import TokenUsage
+        from openscientist.llm_metering import record_model_call
+
+        saved = await record_model_call(
+            job_id="invalid",
+            kind="discovery",
+            model=_PRICED_MODEL,
+            provider_id="anthropic",
+            buckets=TokenUsage(input_tokens=100, output_tokens=25),
+        )
+        assert saved is False
+        assert "job id is not a UUID" in caplog.text
+        assert await _rows(test_engine, job) == []

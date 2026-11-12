@@ -158,6 +158,52 @@ class TestWebsocketBudget:
                     assert await connection.recv() == stub_upstream.reply
             assert len(stub_upstream.frames) == 6
 
+    @pytest.mark.parametrize(
+        ("model", "limit", "duplicate", "status", "detail"),
+        [
+            (1, 10, False, 400, "Invalid response model"),
+            ("gpt-5.2", -1, False, 400, "output token limit"),
+            ("gpt-5.2", 10, True, 429, "Response stream already active"),
+        ],
+    )
+    async def test_invalid_or_active_request_is_refused(
+        self,
+        model,
+        limit,
+        duplicate,
+        status,
+        detail,
+        test_engine,
+        placeholder_for,
+        live_proxy,
+        stub_upstream,
+    ):
+        async with job_with_costs(test_engine, []) as job:
+            async with (
+                asyncio.timeout(5),
+                connect(
+                    f"ws://127.0.0.1:{live_proxy}/responses",
+                    additional_headers={"authorization": f"Bearer {placeholder_for(str(job.id))}"},
+                    proxy=None,
+                ) as connection,
+            ):
+                frame = json.dumps(
+                    {
+                        "type": "response.create",
+                        "model": model,
+                        "stream_id": "same",
+                        "max_output_tokens": limit,
+                    }
+                )
+                if duplicate:
+                    await connection.send(frame)
+                    assert await connection.recv() == "stub-reply"
+                await connection.send(frame)
+                error = json.loads(await connection.recv())
+                assert error["status"] == status
+                assert detail in error["error"]["message"]
+            assert stub_upstream.frames == ([frame] if duplicate else [])
+
 
 @pytest.mark.parametrize("aborted", [False, True])
 async def test_http_parallel_admission_holds_until_metered(test_engine, placeholder_for, aborted):
@@ -737,3 +783,30 @@ async def test_error_response_with_usage_retains_estimate(
             assert len(recorded) == 1
             assert recorded[0].cost_usd == pytest.approx(3.0)
             assert recorded[0].operation_type.endswith("_estimated")
+
+
+@pytest.mark.parametrize("limit", [-1, True, "10"])
+async def test_http_invalid_output_limit_never_reaches_upstream(
+    limit, test_engine, placeholder_for
+):
+    from tests.test_llm_reservations import rows
+
+    async with job_with_costs(test_engine, []) as job:
+        recorded = []
+        app = create_llm_proxy_app(
+            upstream=lambda: LlmUpstream("https://upstream.test", StaticHeadersSigning({})),
+            client=_recording_upstream(recorded),
+            provider_id=lambda: "anthropic",
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://proxy"
+        ) as client:
+            response = await client.post(
+                "/v1/messages",
+                headers={"x-api-key": placeholder_for(str(job.id))},
+                json={"model": "claude-sonnet-4-6", "max_tokens": limit, "messages": []},
+            )
+        assert response.status_code == 400
+        assert "output token limit" in response.text
+        assert recorded == []
+        assert await rows(test_engine, job.id) == []

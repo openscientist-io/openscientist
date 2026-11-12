@@ -13,6 +13,7 @@ import os
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
+from dataclasses import dataclass
 from urllib.parse import parse_qs, unquote_to_bytes
 from uuid import UUID
 
@@ -38,7 +39,11 @@ from openscientist.llm_metering import (
     _usage_decoder,
     record_model_call,
 )
-from openscientist.llm_reservations import ModelCallReservation, reserve_model_call
+from openscientist.llm_reservations import (
+    ModelCallRefused,
+    ModelCallReservation,
+    reserve_model_call,
+)
 from openscientist.providers import get_provider
 from openscientist.providers.base import LlmUpstream, UpstreamCredentialError
 from openscientist.providers.pricing import estimate_request_usage, has_price
@@ -101,6 +106,12 @@ class _Admission:
             self.owner.active[self.job_id] = remaining
         else:
             del self.owner.active[self.job_id]
+
+
+@dataclass(frozen=True)
+class _ReservedCall:
+    admission: _Admission
+    reservation: ModelCallReservation
 
 
 # Dropped when forwarding: connection-scoped headers and the auth header we replace.
@@ -429,21 +440,22 @@ def create_llm_proxy_app(
                     )
                 except ValueError as exc:
                     return Response(str(exc), status_code=400)
-                verdict, admission.reservation = await reserve_model_call(
+                result = await reserve_model_call(
                     job_id=run.job_id,
                     kind=run.kind,
                     provider_id=provider(),
                     model=model,
                     buckets=buckets,
                 )
-                if not verdict.ok:
+                if isinstance(result, ModelCallRefused):
                     logger.warning(
                         "LLM proxy refused run %s at %s with %s",
                         run.job_id,
                         request.url.path,
-                        verdict.message,
+                        result.message,
                     )
-                    return Response(verdict.message, status_code=403)
+                    return Response(result.message, status_code=403)
+                admission.reservation = result
             headers = {
                 k: v
                 for k, v in request.headers.items()
@@ -658,7 +670,7 @@ class _ResponsesWebsocketTerminator:
             logger.warning("LLM proxy: upstream websocket unreachable (%s)", exc)
             await send({"type": "websocket.close", "code": 1011})
             return
-        active: dict[str, _Admission] = {}
+        active: dict[str, _ReservedCall] = {}
         tasks: list[asyncio.Task[None]] = []
         decoder = _ResponsesDecoder("unknown")
         try:
@@ -687,16 +699,13 @@ class _ResponsesWebsocketTerminator:
                     await connection.close()
             finally:
                 settlements = []
-                for admission in active.values():
+                for call in active.values():
                     logger.warning("LLM proxy stream ended without usage for run %s", run.job_id)
-                    if admission.reservation is None:
-                        admission.release()
-                    else:
-                        settlements.append(
-                            self._admissions.settle(
-                                admission, admission.reservation.settle([], complete=False)
-                            )
+                    settlements.append(
+                        self._admissions.settle(
+                            call.admission, call.reservation.settle([], complete=False)
                         )
+                    )
                 if settlements:
                     await asyncio.gather(*settlements)
 
@@ -708,7 +717,7 @@ class _ResponsesWebsocketTerminator:
         job_id: str,
         kind: RunKind,
         default_model: str,
-        active: dict[str, _Admission],
+        active: dict[str, _ReservedCall],
     ) -> None:
         while True:
             message = await receive()
@@ -763,7 +772,7 @@ class _ResponsesWebsocketTerminator:
         job_id: str,
         kind: RunKind,
         default_model: str,
-        active: dict[str, _Admission],
+        active: dict[str, _ReservedCall],
     ) -> tuple[int, str] | None:
         """Reserve admission before checking each response creation frame."""
         try:
@@ -798,18 +807,19 @@ class _ResponsesWebsocketTerminator:
                 )
             except ValueError as exc:
                 return 400, str(exc)
-            verdict, admission.reservation = await reserve_model_call(
+            result = await reserve_model_call(
                 job_id=job_id,
                 kind=kind,
                 provider_id=self._provider_id(),
                 model=model,
                 buckets=buckets,
             )
-            if not verdict.ok:
-                return 403, verdict.message or "Budget exhausted"
+            if isinstance(result, ModelCallRefused):
+                return 403, result.message or "Budget exhausted"
+            admission.reservation = result
             if stream in active:
                 return 429, "Response stream already active"
-            active[stream] = admission
+            active[stream] = _ReservedCall(admission, result)
             retained = True
             return None
         finally:
@@ -826,7 +836,7 @@ class _ResponsesWebsocketTerminator:
         decoder: _ResponsesDecoder,
         job_id: str,
         kind: RunKind,
-        active: dict[str, _Admission],
+        active: dict[str, _ReservedCall],
     ) -> None:
         while True:
             try:
@@ -859,7 +869,7 @@ class _ResponsesWebsocketTerminator:
                 "error",
             }
             stream = frame.get("stream_id", "") if isinstance(frame, dict) else ""
-            admission = active.pop(stream, None) if terminal and isinstance(stream, str) else None
+            call = active.pop(stream, None) if terminal and isinstance(stream, str) else None
             complete = isinstance(frame, dict) and frame.get("type") == "response.completed"
             if isinstance(frame, dict) and frame.get("type") in {
                 "response.failed",
@@ -872,16 +882,12 @@ class _ResponsesWebsocketTerminator:
             decoder.feed_frame(data)
             calls = decoder.take_completed()
 
-            if admission is not None and admission.reservation is not None:
+            if call is not None:
                 await self._admissions.settle(
-                    admission, admission.reservation.settle(calls, complete=complete)
+                    call.admission, call.reservation.settle(calls, complete=complete)
                 )
             else:
-                meter = self._record_calls(calls, terminal=terminal, job_id=job_id, kind=kind)
-                if admission is None:
-                    await meter
-                else:
-                    await self._admissions.settle(admission, meter)
+                await self._record_calls(calls, terminal=terminal, job_id=job_id, kind=kind)
             await send({"type": "websocket.send", key: message})
 
     async def _record_calls(

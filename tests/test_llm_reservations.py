@@ -19,7 +19,11 @@ from openscientist import budget, llm_metering, llm_reservations
 from openscientist.agent.base import TokenUsage
 from openscientist.database.models import CostRecord, Job
 from openscientist.llm_metering import _ObservedCall
-from openscientist.llm_reservations import reserve_model_call
+from openscientist.llm_reservations import (
+    ModelCallRefused,
+    ModelCallReservation,
+    reserve_model_call,
+)
 from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 
 MODEL = "reservation-model"
@@ -70,8 +74,8 @@ async def rows(engine: AsyncEngine, job_id: UUID) -> list[CostRecord]:
 
 async def test_aborted_calls_exhaust_job_limit(test_engine: AsyncEngine, jobs):
     await set_admin_settings_row(test_engine, max_job_cost_usd=0.3)
-    verdict, reservation = await reserve(jobs[0])
-    assert verdict.ok and reservation is not None
+    reservation = await reserve(jobs[0])
+    assert isinstance(reservation, ModelCallReservation)
     await reservation.settle([], complete=False)
     verdict = await budget.check_budget(job_id=jobs[0], provider_id="anthropic")
     assert verdict.limit == "job_cap"
@@ -82,8 +86,8 @@ async def test_aborted_calls_exhaust_job_limit(test_engine: AsyncEngine, jobs):
 
 
 async def test_missing_usage_retains_estimate(test_engine: AsyncEngine, jobs):
-    _, reservation = await reserve(jobs[0])
-    assert reservation is not None
+    reservation = await reserve(jobs[0])
+    assert isinstance(reservation, ModelCallReservation)
     await reservation.settle(
         [_ObservedCall(MODEL, TokenUsage(), usage_reported=False)], complete=True
     )
@@ -93,8 +97,8 @@ async def test_missing_usage_retains_estimate(test_engine: AsyncEngine, jobs):
 
 
 async def test_reported_zero_usage_replaces_estimate(test_engine: AsyncEngine, jobs):
-    _, reservation = await reserve(jobs[0])
-    assert reservation is not None
+    reservation = await reserve(jobs[0])
+    assert isinstance(reservation, ModelCallReservation)
     await reservation.settle([_ObservedCall(MODEL, TokenUsage())], complete=True)
     recorded = await rows(test_engine, jobs[0])
     assert recorded[0].cost_usd == 0
@@ -126,12 +130,12 @@ async def test_actual_cost_replaces_reservation_without_double_count(
     test_engine: AsyncEngine, jobs
 ):
     await set_admin_settings_row(test_engine, max_job_cost_usd=0.4)
-    _, reservation = await reserve(jobs[0])
-    assert reservation is not None
+    reservation = await reserve(jobs[0])
+    assert isinstance(reservation, ModelCallReservation)
     await reservation.settle([_ObservedCall(MODEL, TokenUsage(input_tokens=50))], complete=True)
     await reservation.settle([], complete=False)
-    verdict, next_reservation = await reserve(jobs[0])
-    assert verdict.ok and next_reservation is not None
+    next_reservation = await reserve(jobs[0])
+    assert isinstance(next_reservation, ModelCallReservation)
     await next_reservation.cancel()
     recorded = await rows(test_engine, jobs[0])
     assert len(recorded) == 1
@@ -141,8 +145,8 @@ async def test_actual_cost_replaces_reservation_without_double_count(
 
 @pytest.mark.parametrize("observed,expected", [(10, 0.3), (400, 0.4)])
 async def test_partial_usage_is_conservative(test_engine: AsyncEngine, jobs, observed, expected):
-    _, reservation = await reserve(jobs[0])
-    assert reservation is not None
+    reservation = await reserve(jobs[0])
+    assert isinstance(reservation, ModelCallReservation)
     await reservation.settle(
         [_ObservedCall(MODEL, TokenUsage(input_tokens=observed))], complete=False
     )
@@ -153,8 +157,8 @@ async def test_partial_usage_is_conservative(test_engine: AsyncEngine, jobs, obs
 
 async def test_failed_write_counts_and_retries_once(test_engine: AsyncEngine, jobs, monkeypatch):
     await set_admin_settings_row(test_engine, max_job_cost_usd=0.3)
-    _, reservation = await reserve(jobs[0])
-    assert reservation is not None
+    reservation = await reserve(jobs[0])
+    assert isinstance(reservation, ModelCallReservation)
     writer = llm_reservations.record_model_call
     failed = AsyncMock(return_value=False)
     monkeypatch.setattr(llm_reservations, "record_model_call", failed)
@@ -175,8 +179,8 @@ async def test_ambiguous_commit_never_counts_ledger_and_debt_twice(
     test_engine: AsyncEngine, jobs, monkeypatch
 ):
     await set_admin_settings_row(test_engine, max_job_cost_usd=0.5)
-    _, reservation = await reserve(jobs[0])
-    assert reservation is not None
+    reservation = await reserve(jobs[0])
+    assert isinstance(reservation, ModelCallReservation)
     writer = llm_reservations.record_model_call
 
     async def ambiguous(**kwargs):
@@ -202,10 +206,11 @@ async def test_project_limits_include_other_job_reservations(
     test_engine: AsyncEngine, jobs, limit, field
 ):
     await set_admin_settings_row(test_engine, **{field: 0.5})
-    _, reservation = await reserve(jobs[0])
-    assert reservation is not None
-    verdict, refused = await reserve(jobs[1])
-    assert verdict.limit == limit and refused is None
+    reservation = await reserve(jobs[0])
+    assert isinstance(reservation, ModelCallReservation)
+    refused = await reserve(jobs[1])
+    assert isinstance(refused, ModelCallRefused)
+    assert refused.limit == limit
     await reservation.cancel()
 
 
@@ -214,16 +219,16 @@ async def test_concurrent_admissions_include_prospective_amount(test_engine: Asy
     results = await asyncio.wait_for(
         asyncio.gather(*(reserve(jobs[0]) for _ in range(5))), timeout=10
     )
-    assert sum(verdict.ok for verdict, _ in results) == 1
-    for _, reservation in results:
-        if reservation is not None:
+    assert sum(isinstance(result, ModelCallReservation) for result in results) == 1
+    for reservation in results:
+        if isinstance(reservation, ModelCallReservation):
             await reservation.cancel()
 
 
 async def test_cancel_releases_unattempted_reservation(test_engine: AsyncEngine, jobs):
     await set_admin_settings_row(test_engine, max_job_cost_usd=0.3)
-    _, reservation = await reserve(jobs[0])
-    assert reservation is not None
+    reservation = await reserve(jobs[0])
+    assert isinstance(reservation, ModelCallReservation)
     await reservation.cancel()
     await reservation.cancel()
     assert (await budget.check_budget(job_id=jobs[0], provider_id="anthropic")).ok
@@ -233,16 +238,16 @@ async def test_cancel_releases_unattempted_reservation(test_engine: AsyncEngine,
 @pytest.mark.parametrize("field", ["max_project_spend_total_usd", "max_project_spend_24h_usd"])
 async def test_deleted_job_closes_reservation(test_engine: AsyncEngine, jobs, field):
     await set_admin_settings_row(test_engine, **{field: 0.5})
-    _, reservation = await reserve(jobs[0])
-    assert reservation is not None
+    reservation = await reserve(jobs[0])
+    assert isinstance(reservation, ModelCallReservation)
     async with test_engine.begin() as conn:
         await conn.execute(delete(Job).where(Job.id == jobs[0]))
     await reservation.settle([], complete=False)
     assert reservation._closed
     assert reservation._id not in llm_reservations._outstanding
     assert await rows(test_engine, jobs[0]) == []
-    verdict, next_call = await reserve(jobs[1])
-    assert verdict.ok and next_call is not None
+    next_call = await reserve(jobs[1])
+    assert isinstance(next_call, ModelCallReservation)
     await next_call.cancel()
 
 
@@ -276,8 +281,8 @@ async def test_recent_limit_ignores_old_durable_cost(test_engine: AsyncEngine, j
             )
         )
         await session.commit()
-    verdict, reservation = await reserve(jobs[0])
-    assert verdict.ok and reservation is not None
+    reservation = await reserve(jobs[0])
+    assert isinstance(reservation, ModelCallReservation)
     await reservation.cancel()
 
 
@@ -289,8 +294,8 @@ async def test_cancelled_admission_leaves_no_reservation(
         patcher.setattr(budget, "_ledger_totals", AsyncMock(side_effect=asyncio.CancelledError))
         with pytest.raises(asyncio.CancelledError):
             await reserve(jobs[0])
-    verdict, reservation = await reserve(jobs[0])
-    assert verdict.ok and reservation is not None
+    reservation = await reserve(jobs[0])
+    assert isinstance(reservation, ModelCallReservation)
     await reservation.cancel()
 
 
@@ -312,8 +317,9 @@ async def test_pending_cost_adds_to_provider_billed_baseline(
             )
         ),
     )
-    verdict, reservation = await reserve(jobs[0])
-    assert verdict.limit == "project_total" and reservation is None
+    refused = await reserve(jobs[0])
+    assert isinstance(refused, ModelCallRefused)
+    assert refused.limit == "project_total"
 
 
 @pytest.mark.parametrize("unrelated_spend", [0.0, 0.2])
@@ -335,8 +341,8 @@ async def test_budget_check_includes_other_job_debt(
         await session.commit()
     baseline = (await budget.project_spend()).last_24h
     await set_admin_settings_row(test_engine, max_project_spend_24h_usd=baseline + 0.3)
-    verdict, reservation = await reserve(jobs[0])
-    assert reservation is not None, verdict
+    reservation = await reserve(jobs[0])
+    assert isinstance(reservation, ModelCallReservation)
     with monkeypatch.context() as patcher:
         patcher.setattr(llm_reservations, "record_model_call", AsyncMock(return_value=False))
         await reservation.settle([], complete=False)
@@ -348,8 +354,8 @@ async def test_budget_check_includes_other_job_debt(
 
 async def test_uuid_allocation_failure_retains_debt(test_engine: AsyncEngine, jobs, monkeypatch):
     await set_admin_settings_row(test_engine, max_job_cost_usd=0.3)
-    _, reservation = await reserve(jobs[0])
-    assert reservation is not None
+    reservation = await reserve(jobs[0])
+    assert isinstance(reservation, ModelCallReservation)
     with monkeypatch.context() as patcher:
 
         def unavailable():
@@ -365,8 +371,8 @@ async def test_uuid_allocation_failure_retains_debt(test_engine: AsyncEngine, jo
 
 
 async def test_actual_rows_preserve_uuid7_order(test_engine: AsyncEngine, jobs):
-    _, reservation = await reserve(jobs[0])
-    assert reservation is not None
+    reservation = await reserve(jobs[0])
+    assert isinstance(reservation, ModelCallReservation)
     await reservation.settle(
         [
             _ObservedCall(MODEL, TokenUsage(input_tokens=10)),
@@ -380,8 +386,8 @@ async def test_actual_rows_preserve_uuid7_order(test_engine: AsyncEngine, jobs):
 
 
 async def test_cancelled_settlement_is_retried_by_budget_check(test_engine, jobs, monkeypatch):
-    _, reservation = await reserve(jobs[0])
-    assert reservation is not None
+    reservation = await reserve(jobs[0])
+    assert isinstance(reservation, ModelCallReservation)
     entered = asyncio.Event()
     release = asyncio.Event()
 

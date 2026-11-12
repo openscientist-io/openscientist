@@ -166,6 +166,12 @@ def _pending_totals_locked(
     return job_total, total, recent, tuple(excluded)
 
 
+@dataclass(frozen=True)
+class ModelCallRefused:
+    limit: str | None
+    message: str | None
+
+
 async def reserve_model_call(
     *,
     job_id: str,
@@ -173,8 +179,8 @@ async def reserve_model_call(
     model: str,
     provider_id: str,
     buckets: TokenUsage,
-) -> tuple[budget.BudgetVerdict, ModelCallReservation | None]:
-    """Atomically admit a call against durable spend, reservations and debt."""
+) -> ModelCallRefused | ModelCallReservation:
+    """Return a refusal or a reservation against durable spend, reservations and debt."""
     uid = UUID(job_id)
     amount = _cost(model, buckets)
     async with _budget_guard():
@@ -186,7 +192,7 @@ async def reserve_model_call(
             prospective_usd=amount,
         )
         if not verdict.ok:
-            return verdict, None
+            return ModelCallRefused(verdict.limit, verdict.message)
         reservation = ModelCallReservation(uid, kind, model, provider_id, buckets, amount)
         _outstanding[reservation._id] = reservation
-        return verdict, reservation
+        return reservation
