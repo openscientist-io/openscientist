@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.database.models import Job, JobChatMessage, User
 from openscientist.report.icons import REPORT_ICONS
-from openscientist.webapp_components.components.agent_markdown import _CLEANER
+from openscientist.webapp_components.components.agent_markdown import _CLEANER, _filter_url
 from openscientist.webapp_components.components.badges import transform_pmid_references
 from openscientist.webapp_components.pages.job_detail.chat import _ChatTabController
 from openscientist.webapp_components.pages.job_detail.common import _JobDetailContext
@@ -223,3 +223,8 @@ def test_svg_removes_active_content_and_external_references() -> None:
 def test_unrecognized_formatting_classes_are_removed() -> None:
     html = '<div class="overlay"><span class="overlay">Text</span><i class="fa-unknown"></i></div>'
     assert all(not attrs.get("class") for _, attrs in _Fragment(_CLEANER.clean(html)).elements)
+
+
+@pytest.mark.parametrize("href", ["https://[::1", "https://[invalid]/"])
+def test_malformed_link_urls_are_removed(href: str) -> None:
+    assert _filter_url("a", "href", href) is None
