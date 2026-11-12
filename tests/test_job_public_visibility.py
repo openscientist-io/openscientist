@@ -27,7 +27,11 @@ from PIL import Image
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from openscientist.artifact_packager import artifact_file, create_artifacts_zip_file
+from openscientist.artifact_packager import (
+    ITERATION_LOG_FILE,
+    artifact_file,
+    create_artifacts_zip_file,
+)
 from openscientist.database.models import Job, JobShare, Session, User
 from openscientist.database.rls import set_current_user
 from openscientist.job.types import JobInfo, JobStatus
@@ -244,6 +248,31 @@ def test_artifact_file_withholds_uploads(tmp_path: Path):
     # A public reader gets no file under the withheld top-level directory.
     assert artifact_file(job_dir, "data/cohort.csv", public_reader=True) is None
     assert artifact_file(job_dir, "report.md", public_reader=True) is not None
+
+
+def test_every_transcript_and_log_the_orchestrator_writes_is_withheld(tmp_path: Path):
+    from openscientist.agent.base import IterationResult, TurnOutcome
+    from openscientist.orchestrator import discovery, report
+
+    job_dir = tmp_path / "job"
+    provenance = job_dir / "provenance"
+    provenance.mkdir(parents=True)
+    discovery._append_iteration_artifacts(
+        provenance_dir=provenance,
+        log_file=job_dir / ITERATION_LOG_FILE,
+        iteration=1,
+        prompt="Analyse data/cohort.csv",
+        result=IterationResult(
+            outcome=TurnOutcome.COMPLETED, output="id,age", tool_calls=1, transcript=[]
+        ),
+    )
+    report._save_report_transcript(job_dir, [])
+
+    written = sorted(p.relative_to(job_dir).as_posix() for p in job_dir.rglob("*") if p.is_file())
+    assert len(written) == 3
+    for name in written:
+        assert artifact_file(job_dir, name) is not None
+        assert artifact_file(job_dir, name, public_reader=True) is None
 
 
 @pytest.mark.asyncio
