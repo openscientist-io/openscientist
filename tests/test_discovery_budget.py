@@ -137,6 +137,9 @@ async def run(
                 text("DELETE FROM agent_job_roles WHERE role_name = :role"), {"role": role}
             )
             await conn.execute(text(f"DROP ROLE {role}"))
+            await conn.execute(
+                text("DELETE FROM cost_records WHERE job_id = :job"), {"job": job_id}
+            )
             await conn.execute(text("DELETE FROM jobs WHERE id = :job"), {"job": job_id})
             await conn.execute(text("DELETE FROM users WHERE id = :user"), {"user": owner_id})
 

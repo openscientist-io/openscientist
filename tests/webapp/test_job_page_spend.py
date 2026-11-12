@@ -90,6 +90,7 @@ async def spend_job(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str]]:
         "reader_token": reader_login_token,
     }
     async with AsyncSession(test_engine) as db:
+        await db.execute(delete(CostRecord).where(CostRecord.job_id == job.id))
         await db.execute(delete(Job).where(Job.id == job.id))
         await db.execute(delete(User).where(User.id.in_([owner.id, reader.id])))
         await db.commit()
@@ -118,6 +119,7 @@ async def no_cost_job(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str]]
         await db.commit()
     yield {"job_id": str(job.id), "owner_token": owner_login_token}
     async with AsyncSession(test_engine) as db:
+        await db.execute(delete(CostRecord).where(CostRecord.job_id == job.id))
         await db.execute(delete(Job).where(Job.id == job.id))
         await db.execute(delete(User).where(User.id == owner.id))
         await db.commit()
@@ -152,6 +154,7 @@ async def shared_spend_job(test_engine: AsyncEngine) -> AsyncIterator[dict[str, 
         await db.commit()
     yield {"job_id": str(job.id), "recipient_token": recipient_login_token}
     async with AsyncSession(test_engine) as db:
+        await db.execute(delete(CostRecord).where(CostRecord.job_id == job.id))
         await db.execute(delete(Job).where(Job.id == job.id))
         await db.execute(delete(User).where(User.id.in_([owner.id, recipient.id])))
         await db.commit()
@@ -188,6 +191,7 @@ async def public_spend_job(test_engine: AsyncEngine) -> AsyncIterator[dict[str, 
         "reader_token": reader_login_token,
     }
     async with AsyncSession(test_engine) as db:
+        await db.execute(delete(CostRecord).where(CostRecord.job_id == job.id))
         await db.execute(delete(Job).where(Job.id == job.id))
         await db.execute(delete(User).where(User.id.in_([owner.id, reader.id])))
         await db.commit()

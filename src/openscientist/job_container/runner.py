@@ -67,6 +67,7 @@ from openscientist.job_container.secrets import (
     issue_run_credentials,
 )
 from openscientist.job_container.utils import HostPathSettings, to_container_path, to_host_path
+from openscientist.job_files import write_job_file
 from openscientist.llm_proxy import container_proxy_base_url
 from openscientist.providers import get_provider
 from openscientist.settings import Settings, get_settings
@@ -473,10 +474,9 @@ class JobContainerRunner:
             except LauncherError as error:
                 logger.warning("Failed to stop container for job %s: %s", job_id, error)
             if log_dir is not None:
-                log_path = log_dir / "agent-container.log"
                 try:
                     logs = self.client.logs(entry["id"])
-                    log_path.write_text(logs)
+                    write_job_file(log_dir, "agent-container.log", logs)
                 except (LauncherError, OSError) as error:
                     if not isinstance(error, LauncherNotFoundError):
                         logger.warning(

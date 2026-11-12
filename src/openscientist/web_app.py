@@ -477,6 +477,10 @@ async def _verify_db_connection_and_rls(engine: AsyncEngine) -> None:
     )
 
 
+# The default K-Dense source's repository name before its upstream rename.
+_RENAMED_SKILLS_URL = "https://github.com/K-Dense-AI/claude-scientific-skills"
+
+
 async def _ensure_default_skill_sources() -> None:
     """Ensure default skill sources exist in the database."""
     from sqlalchemy import select
@@ -490,7 +494,7 @@ async def _ensure_default_skill_sources() -> None:
             "name": "Claude Scientific Skills",
             "url": "https://github.com/K-Dense-AI/scientific-agent-skills",
             "branch": "main",
-            "skills_path": "scientific-skills",
+            "skills_path": "skills",
             "is_enabled": True,
         },
         {
@@ -516,6 +520,15 @@ async def _ensure_default_skill_sources() -> None:
                     new_path = source_data.get("path")
                     if isinstance(new_path, str) and existing.path != new_path:
                         existing.path = new_path
+                    if (
+                        existing.source_type == "github"
+                        and existing.url in (source_data.get("url"), _RENAMED_SKILLS_URL)
+                        and existing.branch == source_data.get("branch")
+                        and existing.skills_path == "scientific-skills"
+                    ):
+                        existing.url = str(source_data["url"])
+                        existing.skills_path = str(source_data["skills_path"])
+                        existing.last_commit_sha = None
 
             await session.commit()
     except Exception as e:

@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import tempfile
 from pathlib import Path
 
 from nicegui import ui
@@ -14,14 +13,10 @@ from openscientist.artifact_packager import MAX_ARTIFACT_FILE_SIZE_BYTES
 from openscientist.auth import is_current_user_admin
 from openscientist.job.types import JobStatus
 from openscientist.job_files import (
-    install_file,
     job_file_exists,
-    read_job_file_bytes,
     read_job_file_text,
     try_open_job_file,
 )
-from openscientist.pdf_generator import markdown_to_pdf
-from openscientist.run_environment import run_environment_text
 from openscientist.webapp_components.components.badges import transform_pmid_references
 from openscientist.webapp_components.pages.job_detail.common import _JobDetailContext
 from openscientist.webapp_components.utils.permissions import revalidate_admin_session
@@ -33,52 +28,8 @@ def _download_artifacts_zip(job_id: str) -> None:
     ui.download(f"/web/jobs/{job_id}/artifacts.zip")
 
 
-async def _download_pdf_report(
-    report_path: Path, pdf_path: Path, job_id: str, run_environment: str | None
-) -> None:
-    job_dir = report_path.parent
-    # The job directory is agent-writable, so the report files are read and
-    # installed through the symlink-safe walk, and the PDF renders outside
-    # the job directory before it is moved into place.
-    existing = read_job_file_bytes(job_dir, pdf_path.name, max_size=MAX_ARTIFACT_FILE_SIZE_BYTES)
-    if existing is not None:
-        # Serve existing PDF if available (avoids overwriting WeasyPrint PDF
-        # with fpdf2)
-        ui.download(existing, filename=f"{job_id}_report.pdf")
-        return
-    if job_file_exists(job_dir, pdf_path.name):
-        ui.notify("The report is too large to download.", type="warning")
-        return
-    # Fallback: generate via fpdf2
-    raw_md = read_job_file_text(job_dir, report_path.name, max_size=MAX_ARTIFACT_FILE_SIZE_BYTES)
-    if raw_md is None:
-        if job_file_exists(job_dir, report_path.name):
-            ui.notify("The report is too large to download.", type="warning")
-            return
-        logger.error("PDF generation failed: %s", "no readable final_report.md")
-        ui.notify("Failed to generate PDF. Please try again.", type="negative")
-        return
-    try:
-        from openscientist.report.processor import strip_figure_tags
-
-        with tempfile.TemporaryDirectory(prefix=f"openscientist_{job_id}_") as tmp_dir:
-            stripped_path = Path(tmp_dir) / "_final_report_stripped.md"
-            stripped_path.write_text(strip_figure_tags(raw_md), encoding="utf-8")
-            generated_pdf = Path(tmp_dir) / pdf_path.name
-            # Rendering a long report takes seconds of CPU.
-            await asyncio.to_thread(
-                markdown_to_pdf, stripped_path, generated_pdf, run_environment=run_environment
-            )
-            install_file(job_dir, pdf_path.name, generated_pdf)
-        generated = read_job_file_bytes(
-            job_dir, pdf_path.name, max_size=MAX_ARTIFACT_FILE_SIZE_BYTES
-        )
-        if generated is None:
-            raise OSError("final_report.pdf is not a readable regular file")
-        ui.download(generated, filename=f"{job_id}_report.pdf")
-    except Exception as exc:
-        logger.error("PDF generation failed: %s", exc, exc_info=True)
-        ui.notify("Failed to generate PDF. Please try again.", type="negative")
+def _download_pdf_report(job_id: str) -> None:
+    ui.download(f"/web/jobs/{job_id}/report.pdf")
 
 
 def _can_regenerate_report(context: _JobDetailContext) -> bool:
@@ -139,17 +90,12 @@ def _confirm_regenerate_report(context: _JobDetailContext) -> None:
 
 def _render_report_actions(context: _JobDetailContext, report_path: Path, pdf_path: Path) -> None:
     with ui.row().classes("w-full justify-end mb-4 gap-2"):
-        if job_file_exists(context.job_dir, pdf_path.name) or job_file_exists(
-            context.job_dir, report_path.name
+        if job_file_exists(context.job_dir, report_path.name) or (
+            context.direct_access and job_file_exists(context.job_dir, pdf_path.name)
         ):
             ui.button(
                 "Download PDF",
-                on_click=lambda: _download_pdf_report(
-                    report_path,
-                    pdf_path,
-                    context.job_id,
-                    run_environment_text(context.job_info.version_info),
-                ),
+                on_click=lambda: _download_pdf_report(context.job_id),
                 icon="picture_as_pdf",
             ).props("color=primary")
         else:
