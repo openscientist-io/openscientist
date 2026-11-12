@@ -102,7 +102,7 @@ async def test_agent_markdown_removes_active_html_and_preserves_markdown(
         action_counts={},
         ks_load_error=None,
         spend=0,
-        spend_visible=False,
+        direct_access=False,
         state={},
         share_dialog=None,
         delete_dialog=None,

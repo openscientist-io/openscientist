@@ -22,18 +22,22 @@ from openscientist.database.models import Job, JobChatMessage
 from openscientist.job_container.identity import apply_job_ownership
 from openscientist.job_files import job_file_exists, read_job_file_text, write_job_file
 from openscientist.knowledge_state import KnowledgeState
+from openscientist.prompts.common import WRITING_STYLE
+from openscientist.settings import get_settings
 
 logger = logging.getLogger(__name__)
+_active_chat_turns: dict[UUID, asyncio.Task[str] | None] = {}
+
+
+class ChatAdmissionError(RuntimeError):
+    """No chat slot is available for this job."""
 
 
 class ChatResponseTooLargeError(RuntimeError):
     """The chat container's response file exceeds the size the web will read."""
 
 
-# The web side and the chat-turn container exchange one turn through a request
-# and a response file in the mounted job_dir, so the container needs no database
-# access of its own. Each turn names its files after a fresh id, which the
-# container receives in this variable, because turns on one job can overlap.
+# Each container receives the id of its request and response files.
 CHAT_TURN_ENV = "OPENSCIENTIST_CHAT_TURN"
 
 
@@ -58,8 +62,16 @@ async def _load_research_question_from_db(job_id: str, session: AsyncSession) ->
     return None
 
 
+def _context_excerpt(value: object, budget: int = 300) -> str:
+    text = str(value)
+    encoded = text.encode("utf-8")
+    if len(encoded) <= budget:
+        return text
+    return encoded[: budget - 4].decode("utf-8", errors="ignore").rstrip() + " ..."
+
+
 def _append_research_question(parts: list[str], question: str) -> None:
-    parts.append(f"# Research Question\n{question}\n")
+    parts.append(f"# Research Question\n{_context_excerpt(question, 2000)}\n")
 
 
 def _extract_research_question_from_ks(ks: dict[str, Any]) -> str | None:
@@ -75,64 +87,67 @@ def _extract_research_question_from_ks(ks: dict[str, Any]) -> str | None:
 def _append_findings(parts: list[str], findings: list[Any]) -> None:
     if not findings:
         return
-    parts.append("# Findings")
-    for i, finding in enumerate(findings, 1):
+    parts.append(f"# Findings ({len(findings)} total)")
+    for i, finding in enumerate(findings[:8], 1):
         if not isinstance(finding, dict):
             continue
-        importance = finding.get("importance", "unknown")
-        confidence = finding.get("confidence", "unknown")
+        importance = _context_excerpt(finding.get("importance", "unknown"), 40)
+        confidence = _context_excerpt(finding.get("confidence", "unknown"), 40)
         parts.append(f"\n## Finding {i} (Importance: {importance}, Confidence: {confidence})")
         finding_text = finding.get("content", finding.get("title", ""))
-        parts.append(finding_text if isinstance(finding_text, str) else str(finding_text))
+        parts.append(_context_excerpt(finding_text))
 
         evidence = finding.get("evidence", [])
         if evidence:
             parts.append("\nEvidence:")
-            parts.extend(f"- {ev}" for ev in evidence)
+            if isinstance(evidence, str):
+                parts.append(_context_excerpt(evidence))
+            elif isinstance(evidence, list):
+                parts.extend(f"- {_context_excerpt(ev, 100)}" for ev in evidence[:3])
     parts.append("")
 
 
 def _append_hypotheses(parts: list[str], hypotheses: list[Any]) -> None:
     if not hypotheses:
         return
-    parts.append("# Hypotheses")
-    for i, hyp in enumerate(hypotheses, 1):
+    parts.append(f"# Hypotheses ({len(hypotheses)} total)")
+    for i, hyp in enumerate(hypotheses[:8], 1):
         if not isinstance(hyp, dict):
             continue
-        status = hyp.get("status", "unknown")
+        status = _context_excerpt(hyp.get("status", "unknown"), 40)
         parts.append(f"\n## Hypothesis {i} (Status: {status})")
         hypothesis_text = hyp.get("hypothesis", hyp.get("statement", ""))
-        parts.append(hypothesis_text if isinstance(hypothesis_text, str) else str(hypothesis_text))
+        parts.append(_context_excerpt(hypothesis_text))
 
         rationale = hyp.get("rationale")
         if rationale:
-            parts.append(f"\nRationale: {rationale}")
+            parts.append(f"\nRationale: {_context_excerpt(rationale)}")
     parts.append("")
 
 
 def _append_literature(parts: list[str], literature: list[Any]) -> None:
     if not literature:
         return
-    parts.append("# Literature Reviewed")
-    for i, lit in enumerate(literature, 1):
+    parts.append(f"# Literature Reviewed ({len(literature)} total)")
+    for i, lit in enumerate(literature[:8], 1):
         if not isinstance(lit, dict):
             continue
         title = lit.get("title", "Unknown")
         parts.append(f"\n## Paper {i}")
-        parts.append(f"Title: {title}")
+        parts.append(f"Title: {_context_excerpt(title)}")
     parts.append("")
 
 
 def _append_iteration_summaries(parts: list[str], summaries: list[Any]) -> None:
     if not summaries:
         return
-    parts.append("# Analysis Progress")
-    for summary in summaries:
+    parts.append(f"# Analysis Progress ({len(summaries)} iterations)")
+    for summary in summaries[-8:]:
         if not isinstance(summary, dict):
             continue
-        iteration = summary.get("iteration", 0)
-        strapline = summary.get("strapline", "")
-        summary_text = summary.get("summary", "")
+        iteration = _context_excerpt(summary.get("iteration", 0), 40)
+        strapline = _context_excerpt(summary.get("strapline", ""), 100)
+        summary_text = _context_excerpt(summary.get("summary", ""))
         parts.append(f"\n## Iteration {iteration}: {strapline}")
         parts.append(summary_text)
     parts.append("")
@@ -147,21 +162,8 @@ async def _load_knowledge_state(job_id: str, session: AsyncSession) -> dict[str,
     return payload if isinstance(payload, dict) else None
 
 
-async def load_job_context(job_id: str, session: AsyncSession) -> str:
-    """
-    Load comprehensive job context for LLM chat.
-
-    Includes research question, findings, hypotheses, literature, and
-    current analysis state.
-
-    Args:
-        job_id: Job ID
-        session: The chatting user's session, so the context holds only what
-            that user may see
-
-    Returns:
-        Formatted context string for LLM
-    """
+async def _load_chat_context(job_id: str, session: AsyncSession) -> tuple[str, str | None]:
+    """Load a bounded preview and a complete, user-authorized knowledge snapshot."""
     context_parts: list[str] = []
     research_question = await _load_research_question_from_db(job_id, session)
     if research_question:
@@ -169,7 +171,7 @@ async def load_job_context(job_id: str, session: AsyncSession) -> str:
 
     ks = await _load_knowledge_state(job_id, session)
     if not ks:
-        return "\n".join(context_parts)
+        return "\n".join(context_parts), None
 
     if not context_parts:
         fallback_question = _extract_research_question_from_ks(ks)
@@ -180,7 +182,7 @@ async def load_job_context(job_id: str, session: AsyncSession) -> str:
     _append_hypotheses(context_parts, ks.get("hypotheses", []))
     _append_literature(context_parts, ks.get("literature", []))
     _append_iteration_summaries(context_parts, ks.get("iteration_summaries", []))
-    return "\n".join(context_parts)
+    return _context_excerpt("\n".join(context_parts), 12000), json.dumps(ks, indent=2)
 
 
 def _older_than(message: JobChatMessage) -> ColumnElement[bool]:
@@ -350,9 +352,7 @@ async def _build_chat_request(
     job_id: UUID,
     message: str,
 ) -> dict[str, str | None]:
-    """Build one chat turn's request on the web side, where the DB and RLS
-    context are available. The prompt bundles the job context and recent history
-    so the container needs no database access to run the turn."""
+    """Build the web-side chat request with writing rules after the history."""
     from openscientist.agent.factory import agent_class_for_provider
     from openscientist.providers import get_provider
 
@@ -377,7 +377,7 @@ Be concise, accurate, and cite specific papers or findings when relevant. Focus 
     # few-shotting a report dump, and the live user message comes last.
     prompt_parts: list[str] = []
 
-    job_context = await load_job_context(str(job_id), session)
+    job_context, knowledge_state = await _load_chat_context(str(job_id), session)
     if job_context.strip():
         prompt_parts.append(
             "## Background reference for this job\n"
@@ -395,6 +395,8 @@ Be concise, accurate, and cite specific papers or findings when relevant. Focus 
             prompt_parts.append(f"{role_label}: {_truncate_history(msg.content)}")
         prompt_parts.append("---")
 
+    prompt_parts.append(f"Apply these writing rules to this reply.\n\n{WRITING_STYLE}")
+    prompt_parts.append("---")
     prompt_parts.append("## The user's new message (answer THIS, nothing else)")
     prompt_parts.append(
         "Respond directly to the message below. If it is not a clear question or "
@@ -411,6 +413,7 @@ Be concise, accurate, and cite specific papers or findings when relevant. Focus 
         "system_prompt": agent_cls.chat_system_prompt(system_prompt),
         "model_override": agent_cls.chat_model_override(),
         "prompt": prompt,
+        "knowledge_state": knowledge_state,
     }
 
 
@@ -420,24 +423,42 @@ async def _send_message_via_container(
     message: str,
     job_dir: Path,
 ) -> str:
-    """Run one chat turn in a hardened, ephemeral container.
+    """Admit one chat turn and retain its slot until the container worker exits."""
+    if job_id in _active_chat_turns:
+        raise ChatAdmissionError("A reply is already running for this job.")
+    if len(_active_chat_turns) >= get_settings().max_concurrent_chats:
+        raise ChatAdmissionError("All chat slots are busy. Please try again later.")
 
-    The web side builds the request and (in send_chat_message) persists the chat
-    rows, since it holds the RLS context. The container reads a request file and
-    writes a reply file in the mounted job_dir, and its own database login,
-    pinned to this job, records the turn's cost. It holds no master key,
-    provider credential, or Docker socket."""
-    from openscientist.job_container.runner import JobContainerRunner
-
-    request = await _build_chat_request(session, job_id, message)
+    _active_chat_turns[job_id] = None
     chat_turn = uuid4().hex
     request_path, response_path = _chat_turn_files(job_dir, chat_turn)
-    # The job directory is agent-writable, so the request is written and the
-    # reply is read through the symlink-safe walk.
-    write_job_file(job_dir, request_path.name, json.dumps(request))
-    # The container's agent user reads this turn's request, so hand it over.
-    apply_job_ownership(request_path)
+    task: asyncio.Task[str] | None = None
 
+    def finished(completed: asyncio.Task[str]) -> None:
+        _active_chat_turns.pop(job_id)
+        if not completed.cancelled():
+            completed.exception()
+
+    try:
+        request = await _build_chat_request(session, job_id, message)
+        write_job_file(job_dir, request_path.name, json.dumps(request))
+        apply_job_ownership(request_path)
+        task = asyncio.create_task(_run_chat_container(job_id, job_dir, chat_turn))
+        _active_chat_turns[job_id] = task
+        task.add_done_callback(finished)
+        return await asyncio.shield(task)
+    finally:
+        if task is None:
+            _active_chat_turns.pop(job_id)
+            request_path.unlink(missing_ok=True)
+            response_path.unlink(missing_ok=True)
+
+
+async def _run_chat_container(job_id: UUID, job_dir: Path, chat_turn: str) -> str:
+    """Run the blocking container and clean up its files after it exits."""
+    from openscientist.job_container.runner import JobContainerRunner
+
+    request_path, response_path = _chat_turn_files(job_dir, chat_turn)
     logger.info("Running chat turn for job %s in a hardened container", job_id)
     try:
         # run_chat_turn blocks on the container, so run it off the event loop.
@@ -457,16 +478,11 @@ async def _send_message_via_container(
     finally:
         request_path.unlink(missing_ok=True)
         response_path.unlink(missing_ok=True)
+        (job_dir / f".chat_context_{chat_turn}.json").unlink(missing_ok=True)
 
 
 async def run_chat_turn_async(job_dir: Path, chat_turn: str, job_id: str) -> dict[str, str]:
-    """Container entry point for one chat turn.
-
-    Reads the turn's request the web side wrote into job_dir, runs one agent turn
-    with the full toolset (the container holds no secrets to protect), and writes
-    the reply to the turn's response file. The turn's cost goes to the rows the
-    LLM proxy writes, one per model call. Returns a status dict for the entrypoint.
-    """
+    """Run one chat turn with a bounded preview and on-demand job context."""
     from openscientist.agent.base import AgentConfig
     from openscientist.agent.factory import build_agent
     from openscientist.orchestrator.discovery import _finalize_executor
@@ -479,14 +495,23 @@ async def run_chat_turn_async(job_dir: Path, chat_turn: str, job_id: str) -> dic
         job_dir=job_dir,
         system_prompt=request["system_prompt"],
         model_override=request.get("model_override"),
+        chat=True,
     )
     executor = build_agent(config, get_provider())
     executor.apply_runtime_environment()
-    executor.write_chat_context()
 
     response: dict[str, str] = {}
+    context_path = job_dir / f".chat_context_{chat_turn}.json"
     try:
-        result = await executor.run_iteration(request["prompt"], reset_session=True)
+        prompt = request["prompt"]
+        if snapshot := request.get("knowledge_state"):
+            write_job_file(job_dir, context_path.name, snapshot)
+            prompt = (
+                f"Full job knowledge is in `{context_path.name}`. "
+                "Read relevant sections on demand, including evidence and literature abstracts.\n\n"
+                + prompt
+            )
+        result = await executor.run_iteration(prompt, reset_session=True)
         if result.success:
             response = {"output": result.output}
         else:
@@ -496,6 +521,7 @@ async def run_chat_turn_async(job_dir: Path, chat_turn: str, job_id: str) -> dic
         response = {"error": str(e)}
     finally:
         await _finalize_executor(executor)
+        context_path.unlink(missing_ok=True)
 
     response_path.write_text(json.dumps(response))
     return {"status": "completed" if "output" in response else "failed"}

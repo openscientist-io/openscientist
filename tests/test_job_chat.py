@@ -25,12 +25,13 @@ from openscientist.database.models import CostRecord, Job, JobChatMessage, User
 from openscientist.database.rls import set_current_user
 from openscientist.exceptions import BudgetExceededError
 from openscientist.job_chat import (
+    ChatAdmissionError,
     _build_chat_request,
     _chat_turn_files,
+    _load_chat_context,
     _send_message_via_container,
     get_chat_history,
     has_older_chat_message,
-    load_job_context,
     run_chat_turn_async,
     send_chat_message,
 )
@@ -43,12 +44,7 @@ from tests.helpers import enable_rls
 def _build_agent_recorder(
     captured: dict[str, AgentConfig], result: IterationResult
 ) -> Callable[[AgentConfig, Provider], AbstractAgent[Provider]]:
-    """A `factory.build_agent` replacement for chat tests.
-
-    Builds the real agent (so the backend's chat prep -- chat_system_prompt /
-    write_chat_context -- runs for real) but mocks `run_iteration`, and records
-    the `AgentConfig` the executor was built with.
-    """
+    """Build the real chat agent, record its configuration, and mock `run_iteration`."""
     from openscientist.agent import factory
 
     real_build_agent = factory.build_agent
@@ -108,6 +104,167 @@ def _chat_runner_writing_sparse(apparent: int):
         patch("openscientist.providers.get_provider", return_value=_ChatProvider()),
     ):
         yield
+
+
+@contextmanager
+def _chat_launcher():
+    from openscientist.job_container.runner import JobContainerRunner
+
+    runner = JobContainerRunner()
+    client = MagicMock()
+    runner._client = client
+    started = threading.Event()
+    release = threading.Event()
+
+    def launch(**request):
+        handle = client.create_agent(request)
+        _chat_turn_files(request["job_dir"], request["chat_turn"])[1].write_text(
+            json.dumps({"output": "ok"})
+        )
+        return handle, {}
+
+    def wait(ref, *, timeout_seconds):
+        started.set()
+        if client.create_agent.call_count == 1:
+            assert release.wait(10), f"Chat container {ref} was not released"
+        return {"exit_code": 0, "timeout": False}
+
+    client.create_agent.return_value = {"id": "chat-test", "name": "chat-test"}
+    client.wait.side_effect = wait
+    with (
+        patch.object(runner, "_start_agent_container", side_effect=launch),
+        patch("openscientist.job_container.runner.JobContainerRunner", return_value=runner),
+        patch("openscientist.providers.get_provider", return_value=_ChatProvider()),
+    ):
+        try:
+            yield client, started, release
+        finally:
+            release.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("same_job", [True, False], ids=["same-job", "global-cap"])
+async def test_chat_admission_refuses_concurrent_launch(
+    db_session: AsyncSession,
+    test_job: Job,
+    temp_jobs_dir: Path,
+    same_job: bool,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from openscientist.settings import get_settings
+
+    monkeypatch.setattr(get_settings(), "max_concurrent_chats", 2 if same_job else 1)
+    job_dir = temp_jobs_dir / str(test_job.id)
+    job_dir.mkdir()
+    second_job = test_job
+    if not same_job:
+        second_job = Job(owner_id=test_job.owner_id, research_question="Another job")
+        db_session.add(second_job)
+        await db_session.commit()
+        await db_session.refresh(second_job)
+    assert db_session.bind is not None
+    sessions = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    with _chat_launcher() as (client, started, release):
+        first = asyncio.create_task(send_chat_message(db_session, test_job.id, "first", job_dir))
+        try:
+            assert await asyncio.to_thread(started.wait, 10)
+            async with sessions() as other:
+                message = "already running" if same_job else "All chat slots are busy"
+                with pytest.raises(ChatAdmissionError, match=message):
+                    await send_chat_message(other, second_job.id, "second", job_dir)
+            assert client.create_agent.call_count == 1
+        finally:
+            release.set()
+            await asyncio.wait_for(first, 10)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["success", "launch-error", "container-error", "timeout"])
+async def test_chat_admission_releases_after_completion(
+    db_session: AsyncSession,
+    test_job: Job,
+    temp_jobs_dir: Path,
+    outcome: str,
+):
+    job_dir = temp_jobs_dir / str(test_job.id)
+    job_dir.mkdir()
+    with _chat_launcher() as (client, _started, release):
+        release.set()
+        if outcome == "launch-error":
+            client.create_agent.side_effect = RuntimeError("launch failed")
+        elif outcome != "success":
+            client.wait.side_effect = None
+            client.wait.return_value = {"exit_code": 1, "timeout": outcome == "timeout"}
+        if outcome == "success":
+            assert await send_chat_message(db_session, test_job.id, "first", job_dir) == "ok"
+        else:
+            match = {
+                "launch-error": "launch failed",
+                "container-error": "exited with code 1",
+                "timeout": "did not finish",
+            }[outcome]
+            with pytest.raises(RuntimeError, match=match):
+                await send_chat_message(db_session, test_job.id, "first", job_dir)
+        client.create_agent.side_effect = None
+        client.wait.side_effect = None
+        client.wait.return_value = {"exit_code": 0, "timeout": False}
+        assert await send_chat_message(db_session, test_job.id, "retry", job_dir) == "ok"
+        assert client.create_agent.call_count == 2
+        assert list(job_dir.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_chat_admission_holds_cancelled_worker_until_container_exits(
+    db_session: AsyncSession,
+    test_job: Job,
+    temp_jobs_dir: Path,
+):
+    job_dir = temp_jobs_dir / str(test_job.id)
+    job_dir.mkdir()
+    with _chat_launcher() as (client, started, release):
+        first = asyncio.create_task(send_chat_message(db_session, test_job.id, "first", job_dir))
+        assert await asyncio.to_thread(started.wait, 10)
+        chat_turn = client.create_agent.call_args.args[0]["chat_turn"]
+        context_path = job_dir / f".chat_context_{chat_turn}.json"
+        context = json.dumps({"findings": [{"title": "The effect persists"}]})
+        context_path.write_text(context)
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        try:
+            with pytest.raises(ChatAdmissionError, match="already running"):
+                await send_chat_message(db_session, test_job.id, "second", job_dir)
+            assert client.create_agent.call_count == 1
+            assert list(job_dir.glob(".chat_request_*"))
+            assert context_path.read_text() == context
+        finally:
+            release.set()
+            async with asyncio.timeout(10):
+                while list(job_dir.glob(".chat_request_*")):
+                    await asyncio.sleep(0.01)
+        assert not context_path.exists()
+        assert await send_chat_message(db_session, test_job.id, "retry", job_dir) == "ok"
+        assert client.create_agent.call_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [RuntimeError("preparation failed"), asyncio.CancelledError()])
+async def test_chat_admission_releases_after_preparation_failure(
+    db_session: AsyncSession,
+    test_job: Job,
+    temp_jobs_dir: Path,
+    error: BaseException,
+):
+    job_dir = temp_jobs_dir / str(test_job.id)
+    job_dir.mkdir()
+    with _chat_launcher() as (client, _started, release):
+        release.set()
+        with patch("openscientist.job_chat._build_chat_request", side_effect=error):
+            with pytest.raises(type(error)):
+                await send_chat_message(db_session, test_job.id, "first", job_dir)
+        client.create_agent.assert_not_called()
+        assert await send_chat_message(db_session, test_job.id, "retry", job_dir) == "ok"
+        client.create_agent.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -428,7 +585,7 @@ async def test_load_job_context_empty_dir():
     """Test loading context when no knowledge state exists in the DB."""
     job_id = "not-a-valid-uuid"
 
-    context = await load_job_context(job_id, AsyncMock())
+    context = (await _load_chat_context(job_id, AsyncMock()))[0]
 
     # Should return empty or minimal context
     assert isinstance(context, str)
@@ -448,7 +605,7 @@ async def test_load_job_context_with_knowledge_state_config():
         "openscientist.job_chat.KnowledgeState.load_from_database",
         AsyncMock(return_value=ks),
     ):
-        context = await load_job_context(job_id, AsyncMock())
+        context = (await _load_chat_context(job_id, AsyncMock()))[0]
 
     assert "What is the crystal structure?" in context
     assert "Research Question" in context
@@ -500,7 +657,7 @@ async def test_load_job_context_with_knowledge_state():
         "openscientist.job_chat.KnowledgeState.load_from_database",
         AsyncMock(return_value=ks),
     ):
-        context = await load_job_context(job_id, AsyncMock())
+        context = (await _load_chat_context(job_id, AsyncMock()))[0]
 
     # Check findings are included
     assert "The protein shows high binding affinity" in context
@@ -544,7 +701,7 @@ async def test_load_job_context_supports_modern_knowledge_state_keys():
         "openscientist.job_chat.KnowledgeState.load_from_database",
         AsyncMock(return_value=ks),
     ):
-        context = await load_job_context(job_id, AsyncMock())
+        context = (await _load_chat_context(job_id, AsyncMock()))[0]
     assert "Modern finding title" in context
     assert "Modern hypothesis statement" in context
 
@@ -771,9 +928,10 @@ async def test_build_chat_request_keeps_system_prompt_small(
     prompt = request["prompt"]
     assert system_prompt is not None
     assert prompt is not None
-    assert len(system_prompt) < 2000
+    assert len(system_prompt) < 10000
     assert "x" * 1000 not in system_prompt
-    assert "x" * 1000 in prompt
+    assert "x" * 1000 not in prompt
+    assert "x" * 50000 in (request["knowledge_state"] or "")
 
 
 @pytest.mark.asyncio
@@ -821,7 +979,101 @@ async def test_run_chat_turn_async_writes_reply(temp_jobs_dir: Path):
     response = json.loads(response_path.read_text())
     assert response["output"] == "reply"
     assert captured["config"].system_prompt == "You are helpful."
-    assert (job_dir / ".claude" / "CLAUDE.md").exists()
+    assert captured["config"].chat
+    assert not (job_dir / ".claude" / "CLAUDE.md").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("harness", ["claude_code", "codex", "omp"])
+async def test_chat_harness_receives_writing_style(
+    db_session: AsyncSession,
+    test_job: Job,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    harness: str,
+) -> None:
+    from openscientist.prompts.common import WRITING_STYLE
+    from tests.agent.fake_anthropic_api import Say, serving
+    from tests.agent.test_codex_agent import _patch_codex, _turn
+    from tests.agent.test_omp_agent import _STREAM, _write_stub
+    from tests.helpers import StubCodexProvider
+
+    prior_reply = "The analysis was nuanced \u2014 it shed light on the findings."
+    db_session.add(JobChatMessage(job_id=test_job.id, role="assistant", content=prior_reply))
+    await db_session.commit()
+
+    job_dir = tmp_path / str(test_job.id)
+    job_dir.mkdir()
+    provider = StubCodexProvider() if harness == "codex" else _ChatProvider()
+    with (
+        patch("openscientist.providers.get_provider", return_value=provider),
+        patch("openscientist.agent.factory._resolve_harness", return_value=harness),
+    ):
+        request = await _build_chat_request(db_session, test_job.id, "What did the analysis find?")
+        prompt = request["prompt"]
+        assert prompt is not None
+        assert WRITING_STYLE in prompt
+        assert prompt.index(prior_reply) < prompt.index(WRITING_STYLE)
+        assert prompt.index(WRITING_STYLE) < prompt.index("## The user's new message")
+        request_path, response_path = _chat_turn_files(job_dir, "style")
+        request_path.write_text(json.dumps(request))
+
+        if harness == "claude_code":
+            home = tmp_path / "home"
+            home.mkdir()
+            monkeypatch.setenv("HOME", str(home))
+            monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")
+            monkeypatch.setenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
+            monkeypatch.setenv("DISABLE_TELEMETRY", "1")
+            monkeypatch.setenv("DISABLE_AUTOUPDATER", "1")
+            for name in (
+                "CLAUDE_CODE_OAUTH_TOKEN",
+                "ANTHROPIC_AUTH_TOKEN",
+                "CLAUDE_CODE_USE_BEDROCK",
+            ):
+                monkeypatch.delenv(name, raising=False)
+            with serving(lambda _body: Say("The analysis found an association.")) as (url, api):
+                monkeypatch.setenv("ANTHROPIC_BASE_URL", url)
+                status = await asyncio.wait_for(
+                    run_chat_turn_async(job_dir, "style", str(test_job.id)), timeout=90
+                )
+            assert not (job_dir / ".claude" / "CLAUDE.md").exists()
+            delivered = "\n".join(json.dumps(body, ensure_ascii=False) for body in api.requests)
+            assert json.dumps(prompt, ensure_ascii=False)[1:-1] in delivered
+            assert "Never use the em dash character (U+2014)" in delivered
+            assert all(
+                json.dumps(rule, ensure_ascii=False)[1:-1] in delivered
+                for rule in WRITING_STYLE.splitlines()
+                if rule.startswith("-")
+            )
+        elif harness == "codex":
+            codex, thread = _patch_codex(_turn(final="The analysis found an association."))
+            with patch("openscientist.agent.codex_agent.AsyncCodex", codex):
+                status = await run_chat_turn_async(job_dir, "style", str(test_job.id))
+            assert codex.call_args.args[0].cwd == str(job_dir)
+            assert thread.turn.call_args.args[0].endswith(request["prompt"])
+            delivered = (job_dir / "AGENTS.md").read_text()
+            assert WRITING_STYLE in delivered
+        else:
+            binary = tmp_path / "fake_omp"
+            argv_path = tmp_path / "argv.txt"
+            _write_stub(binary, _STREAM)
+            monkeypatch.setenv("OPENSCIENTIST_OMP_BIN", str(binary))
+            monkeypatch.setenv("OMP_STUB_ARGV_OUT", str(argv_path))
+            status = await run_chat_turn_async(job_dir, "style", str(test_job.id))
+            args = argv_path.read_text().splitlines()
+            turn_path = next(arg[1:] for arg in args if arg.startswith("@"))
+            assert Path(turn_path).read_text().endswith(prompt)
+            prompt_path = next(
+                arg.removeprefix("--system-prompt=")
+                for arg in args
+                if arg.startswith("--system-prompt=")
+            )
+            delivered = Path(prompt_path).read_text()
+            assert WRITING_STYLE in delivered
+
+    assert status["status"] == "completed", response_path.read_text()
+    assert "Never use the em dash character (U+2014)" in delivered
 
 
 @pytest.mark.asyncio
@@ -850,9 +1102,13 @@ async def test_run_chat_turn_async_records_error(temp_jobs_dir: Path):
 
 
 @pytest.mark.asyncio
-async def test_overlapping_chat_turns_each_get_their_own_reply(temp_jobs_dir: Path):
-    """Two turns on one job at once, as from two tabs, each answer their own
-    question, and the turn that ends first leaves the other's files alone."""
+async def test_overlapping_jobs_each_get_their_own_reply(
+    temp_jobs_dir: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Concurrent jobs receive their own replies."""
+    from openscientist.settings import get_settings
+
+    monkeypatch.setattr(get_settings(), "max_concurrent_chats", 2)
     job_dir = temp_jobs_dir / "overlap"
     job_dir.mkdir()
     both_requested = threading.Barrier(2, timeout=10)
@@ -895,7 +1151,7 @@ async def test_overlapping_chat_turns_each_get_their_own_reply(temp_jobs_dir: Pa
         session = MagicMock(spec=AsyncSession)
         replies = await asyncio.gather(
             _send_message_via_container(session, UUID(int=1), "question A", job_dir),
-            _send_message_via_container(session, UUID(int=1), "question B", job_dir),
+            _send_message_via_container(session, UUID(int=2), "question B", job_dir),
         )
 
     assert replies == ["answer to question A", "answer to question B"]

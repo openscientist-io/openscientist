@@ -64,7 +64,7 @@ dependencies = [
     "markdown>=3.5.0",
 
     # PDF generation (WeasyPrint — primary, requires system libs)
-    "weasyprint>=62.0,<69",
+    "weasyprint>=68.1,<69",
 
     # Berkeley Lab Data Lakehouse
     "linkml-store[dremio]>=0.2.0",

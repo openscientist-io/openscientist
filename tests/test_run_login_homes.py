@@ -123,6 +123,7 @@ def _settings(*, omp: Path | None = None, codex: Path | None = None, provider_id
             agent_network=None,
             agent_memory="8g",
             agent_cpu=2.0,
+            agent_pids_limit=512,
             agent_platform=None,
             agent_image="openscientist-agent:latest",
             agent_timeout=14400,

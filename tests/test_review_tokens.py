@@ -564,3 +564,55 @@ async def test_deleting_the_reviewer_refuses_the_next_use(
     result = await db_session.execute(select(User).where(User.id == reviewer_id))
     assert result.scalar_one_or_none() is None
     assert await _reviewer_user_count(db_session) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cutoff", ["revoked", "expired", "creator_deleted"])
+async def test_review_cutoff_refuses_existing_credentials(
+    db_session: AsyncSession, test_admin_user: User, cutoff: str
+) -> None:
+    from fastapi import HTTPException
+    from fastapi.security import HTTPAuthorizationCredentials
+    from sqlalchemy import delete
+
+    from openscientist.api.auth import get_current_user_from_api_key, hash_secret
+    from openscientist.auth.middleware import validate_session
+    from openscientist.database.models import Administrator, APIKey
+    from openscientist.webapp_components.pages.admin import delete_user, revoke_review_token
+
+    plaintext, token = await _create_review_token(db_session, test_admin_user)
+    session_context = _mock_admin_session(db_session)
+    with (
+        patch("openscientist.auth.fastapi_routes.get_admin_session", session_context),
+        patch("openscientist.auth.middleware.get_admin_session", session_context),
+        patch("openscientist.api.auth.get_admin_session", session_context),
+        patch("openscientist.webapp_components.pages.admin.get_admin_session", session_context),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=_make_app()), base_url="http://test"
+        ) as client:
+            response = await client.post(f"/review/{plaintext}", json={})
+        cookie = response.cookies["session_token"]
+        await db_session.refresh(token)
+        db_session.add(
+            APIKey(user_id=token.redeemed_by_id, name="review", key_hash=hash_secret("secret"))
+        )
+        await db_session.commit()
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="review:secret")
+        assert (await get_current_user_from_api_key(credentials)).id == token.redeemed_by_id
+        assert await validate_session(cookie) is not None
+        if cutoff == "revoked":
+            assert (await revoke_review_token(token.id))[0]
+        elif cutoff == "creator_deleted":
+            await db_session.execute(
+                delete(Administrator).where(Administrator.user_id == test_admin_user.id)
+            )
+            await db_session.commit()
+            assert (await delete_user(test_admin_user.id))[0]
+        else:
+            token.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+            await db_session.commit()
+        with pytest.raises(HTTPException) as refused:
+            await get_current_user_from_api_key(credentials)
+        assert refused.value.status_code == 401
+        assert await validate_session(cookie) is None

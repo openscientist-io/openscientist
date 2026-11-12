@@ -101,6 +101,10 @@ async def jobs(test_engine: AsyncEngine) -> AsyncGenerator[_Jobs, None]:
     yield ids
     async with test_engine.begin() as conn:
         await conn.execute(
+            text("DELETE FROM cost_records WHERE job_id = ANY(:ids)"),
+            {"ids": [ids.own, ids.other, ids.orphan]},
+        )
+        await conn.execute(
             text("DELETE FROM jobs WHERE id = ANY(:ids)"),
             {"ids": [ids.own, ids.other, ids.orphan]},
         )

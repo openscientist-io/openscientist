@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mappin
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, Protocol, cast
 from unittest.mock import patch
 from uuid import uuid4
@@ -26,15 +27,15 @@ from openscientist.database.models import Session, User
 
 
 @pytest.fixture(autouse=True)
-def _nicegui_storage_dir(tmp_path):
-    """Provide a temporary directory for NiceGUI storage during tests.
-
-    NiceGUI persists user storage to .nicegui/ on disk. Without this,
-    teardown fails with FileNotFoundError when async_backup runs.
-    """
+def _nicegui_storage_dir(tmp_path: Path) -> Iterator[None]:
+    """Keep NiceGUI persistence inside the test's directory."""
     storage_dir = tmp_path / ".nicegui"
     storage_dir.mkdir()
-    with patch.dict(os.environ, {"NICEGUI_STORAGE_PATH": str(storage_dir)}):
+    with (
+        patch.dict(os.environ, {"NICEGUI_STORAGE_PATH": str(storage_dir)}),
+        patch.object(storage.Storage, "path", storage_dir),
+        patch.object(app, "storage", storage.Storage()),
+    ):
         yield
 
 
@@ -54,7 +55,7 @@ async def webapp_user(db_session: AsyncSession) -> User:
 @pytest_asyncio.fixture
 async def webapp_session(db_session: AsyncSession, webapp_user: User) -> Session:
     """Create a valid session for the webapp test user."""
-    session = Session(
+    session, session_token = Session.issue(
         user_id=webapp_user.id,
         expires_at=datetime.now(UTC) + timedelta(hours=24),
     )

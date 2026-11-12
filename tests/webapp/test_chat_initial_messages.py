@@ -45,14 +45,18 @@ async def chat_job(test_engine: AsyncEngine) -> AsyncIterator[dict[str, str]]:
         db.add(JobChatMessage(job_id=job.id, role="user", content=USER_MESSAGE))
         db.add(JobChatMessage(job_id=job.id, role="assistant", content=ASSISTANT_MESSAGE))
         db.add(JobShare(job_id=job.id, shared_with_user_id=viewer.id, permission_level="view"))
-        owner_login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
-        viewer_login = Session(user_id=viewer.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        owner_login, owner_login_token = Session.issue(
+            user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
+        viewer_login, viewer_login_token = Session.issue(
+            user_id=viewer.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add_all([owner_login, viewer_login])
         await db.commit()
     yield {
         "job_id": str(job.id),
-        "owner_token": str(owner_login.id),
-        "viewer_token": str(viewer_login.id),
+        "owner_token": owner_login_token,
+        "viewer_token": viewer_login_token,
     }
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(JobChatMessage).where(JobChatMessage.job_id == job.id))

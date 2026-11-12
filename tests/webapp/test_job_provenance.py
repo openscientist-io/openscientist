@@ -87,7 +87,7 @@ def test_the_job_page_shows_the_run_environment() -> None:
         ks_data=None,
         owner_name=None,
         spend=0.0,
-        spend_visible=False,
+        direct_access=False,
         action_counts={},
     )
     with (

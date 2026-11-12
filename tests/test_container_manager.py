@@ -131,6 +131,7 @@ class TestContainerManagerUnit:
         assert result["success"] is True
         assert result["output"] == "Hello, World!"
         assert result["error"] is None
+        assert client.run_exec.call_args.args[0]["pids_limit"] == 4096
 
     def test_execute_code_failure(self, manager: tuple[Any, MagicMock], jobs_root: Path) -> None:
         """A failed run passes the executor's error through."""
@@ -272,7 +273,7 @@ class TestToHostPath:
     """Unit tests for the shared to_host_path function."""
 
     def test_path_under_container_app_dir_is_translated(self) -> None:
-        from openscientist.job_container import to_host_path
+        from openscientist.job_container.utils import to_host_path
 
         cs = MagicMock()
         cs.host_project_dir = "/host/project"
@@ -282,7 +283,7 @@ class TestToHostPath:
         assert result == Path("/host/project/jobs/123/data")
 
     def test_path_not_under_container_app_dir_unchanged(self) -> None:
-        from openscientist.job_container import to_host_path
+        from openscientist.job_container.utils import to_host_path
 
         cs = MagicMock()
         cs.host_project_dir = "/host/project"
@@ -292,7 +293,7 @@ class TestToHostPath:
         assert result == Path("/tmp/something")
 
     def test_no_host_project_dir_returns_unchanged(self) -> None:
-        from openscientist.job_container import to_host_path
+        from openscientist.job_container.utils import to_host_path
 
         cs = MagicMock()
         cs.host_project_dir = None

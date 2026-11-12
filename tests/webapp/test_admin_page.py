@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta, tzinfo
 from typing import ClassVar, Self
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -24,6 +24,7 @@ from openscientist.database.models import (
     Session,
     User,
 )
+from openscientist.database.models.session import hash_session_token
 from openscientist.job_container.launcher_client import ContainerEntry
 from openscientist.webapp_components.pages.admin import admin_page, render_containers_panel
 from openscientist.webapp_components.utils import container_dashboard
@@ -45,10 +46,12 @@ async def admin_with_a_pending_user(test_engine: AsyncEngine) -> AsyncIterator[d
         db.add_all([admin, pending])
         await db.flush()
         db.add(Administrator(user_id=admin.id))
-        login = Session(user_id=admin.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=admin.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         await db.commit()
-    yield {"token": str(login.id), "pending_id": str(pending.id), "admin_id": str(admin.id)}
+    yield {"token": login_token, "pending_id": str(pending.id), "admin_id": str(admin.id)}
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(User).where(User.id.in_([admin.id, pending.id])))
         await db.commit()
@@ -66,10 +69,12 @@ async def signed_in_admin(test_engine: AsyncEngine) -> AsyncIterator[tuple[User,
         db.add(admin)
         await db.flush()
         db.add(Administrator(user_id=admin.id))
-        login = Session(user_id=admin.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=admin.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         await db.commit()
-    yield admin, str(login.id)
+    yield admin, login_token
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(User).where(User.id == admin.id))
         await db.commit()
@@ -395,7 +400,7 @@ async def test_a_signout_before_the_deferred_containers_render_renders_then_logi
     # session row before the deferred render fires.
     app.storage.user.clear()
     async with AsyncSession(test_engine) as db:
-        await db.execute(delete(Session).where(Session.id == UUID(token)))
+        await db.execute(delete(Session).where(Session.token_hash == hash_session_token(token)))
         await db.commit()
 
     containers_timer = _deferred_containers_timer(client)
@@ -560,5 +565,6 @@ async def test_the_container_card_reads_the_spend_from_the_cost_ledger(
         assert "$0.42" in _spend_badges(client)
     finally:
         async with AsyncSession(test_engine) as db:
+            await db.execute(delete(CostRecord).where(CostRecord.job_id == job.id))
             await db.execute(delete(Job).where(Job.id == job.id))
             await db.commit()

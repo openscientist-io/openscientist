@@ -5,11 +5,13 @@ from __future__ import annotations
 import base64
 import dataclasses
 import json
+import socket
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
+from openscientist_launcher.api import _airgap_hosts
 from openscientist_launcher.config import LauncherConfig
 from openscientist_launcher.host_paths import jobs_root_problem
 from openscientist_launcher.templates import agent_run_kwargs, executor_run_kwargs
@@ -92,6 +94,7 @@ class TestAgentRequestValidation:
             "labels",
             "security_opt",
             "entrypoint",
+            "extra_hosts",
             "stop_signal",
         ],
     )
@@ -436,6 +439,32 @@ def _binds(kwargs: dict[str, Any]) -> dict[str, tuple[str, bool]]:
     return {mount["Source"]: (mount["Target"], mount["ReadOnly"]) for mount in kwargs["mounts"]}
 
 
+def test_airgap_hosts_pin_each_ipv4_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
+    def resolve(host: str, port: None, family: int, kind: int):
+        calls.append(host)
+        assert (port, family, kind) == (None, socket.AF_INET, socket.SOCK_STREAM)
+        if host == "gone.invalid":
+            raise socket.gaierror(socket.EAI_NONAME, "No address")
+        return [
+            (family, kind, 6, "", ("172.26.0.3", 0)),
+            (family, kind, 6, "", ("172.26.0.2", 0)),
+            (family, kind, 6, "", ("172.26.0.3", 0)),
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", resolve)
+    assert _airgap_hosts(
+        ("web:8081", "web:8082", "gone.invalid:443", "host.docker.internal:11434"),
+        {"host.docker.internal": "host-gateway"},
+    ) == [
+        "host.docker.internal:host-gateway",
+        "web:172.26.0.2",
+        "web:172.26.0.3",
+    ]
+    assert calls == ["web", "gone.invalid"]
+
+
 class TestAgentTemplate:
     def test_non_airgap_template(self, tmp_path: Path) -> None:
         cfg = _config(_jobs(tmp_path))
@@ -608,6 +637,27 @@ def _executor_body(jobs: Path) -> dict[str, object]:
 
 
 class TestExecutorTemplate:
+    @pytest.mark.parametrize("limit", [1, 128, 512])
+    def test_executor_process_limit(self, tmp_path: Path, limit: int) -> None:
+        jobs = _jobs(tmp_path)
+        cfg = _config(jobs, executor_max_pids=512)
+        body = _executor_body(jobs)
+        body["pids_limit"] = limit
+        req = validate_exec_request(body, cfg)
+        kwargs = executor_run_kwargs(cfg, req, network="bridge")
+        assert kwargs["pids_limit"] == limit
+
+    @pytest.mark.parametrize("agent", [True, False])
+    def test_process_limit_respects_operator_bound(self, tmp_path: Path, agent: bool) -> None:
+        jobs = _jobs(tmp_path)
+        cfg = _config(jobs, agent_max_pids=32, executor_max_pids=32)
+        body = _agent_request() if agent else _executor_body(jobs)
+        validate = validate_agent_request if agent else validate_exec_request
+        assert validate(body, cfg).pids_limit == 32
+        body["pids_limit"] = 33
+        with pytest.raises(ValidationError, match="pids_limit exceeds"):
+            validate(body, cfg)
+
     def test_template_remaps_paths_and_builds_command(self, tmp_path: Path) -> None:
         jobs = _jobs(tmp_path)
         cfg = _config(jobs)

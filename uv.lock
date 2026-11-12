@@ -2949,7 +2949,7 @@ requires-dist = [
     { name = "tqdm", specifier = ">=4.67.0" },
     { name = "typer", specifier = ">=0.21.1,<0.22" },
     { name = "umap-learn", marker = "extra == 'executor'", specifier = ">=0.5.0" },
-    { name = "weasyprint", specifier = ">=62.0,<69" },
+    { name = "weasyprint", specifier = ">=68.1,<69" },
     { name = "websockets", specifier = ">=14.0" },
 ]
 provides-extras = ["executor"]
