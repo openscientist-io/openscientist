@@ -23,7 +23,7 @@ from openscientist.database.session import get_session
 from openscientist.job_files import job_file_exists, read_job_file_text, serve_job_file
 from openscientist.report.download import report_download_response
 from openscientist.run_environment import run_environment_text
-from openscientist.share_service import withheld_artifact_dirs
+from openscientist.share_service import viewer_has_direct_access
 from openscientist.webapp_components.share_routes import get_current_user_from_session
 
 logger = logging.getLogger(__name__)
@@ -92,8 +92,9 @@ async def download_job_artifacts(
 ) -> FileResponse:
     job, job_dir = await _visible_job(job_id, user, session)
 
-    # A job readable only because it is public comes without the owner's uploads.
-    excluded_dirs = await withheld_artifact_dirs(session, job, user.id)
+    # A job readable only because it is public comes without the owner's uploads
+    # and the agent's raw tool output.
+    public_reader = not await viewer_has_direct_access(session, job, user.id)
 
     with tempfile.NamedTemporaryFile(
         suffix="_artifacts.zip",
@@ -109,7 +110,7 @@ async def download_job_artifacts(
             archive_path=archive_path,
             job_id=job_dir.name,
             version_info=job.version_info,
-            excluded_top_level_dirs=excluded_dirs,
+            public_reader=public_reader,
         )
     except Exception:
         archive_path.unlink(missing_ok=True)
@@ -133,8 +134,8 @@ async def job_artifact(
     """One of the job's artifacts, as the artifacts ZIP would include it."""
     job, job_dir = await _visible_job(job_id, user, session)
     # A public-only reader gets no file the ZIP would withhold, so data/ 404s.
-    excluded_dirs = await withheld_artifact_dirs(session, job, user.id)
-    job_file = await run_in_threadpool(artifact_file, job_dir, path, excluded_dirs)
+    public_reader = not await viewer_has_direct_access(session, job, user.id)
+    job_file = await run_in_threadpool(artifact_file, job_dir, path, public_reader)
     if job_file is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
     return serve_job_file(job_file, headers=_sandboxed(_SANDBOX))
@@ -147,11 +148,11 @@ async def job_report_pdf(
     session: AsyncSession = SESSION_DEP,
 ) -> Response:
     job, job_dir = await _visible_job(job_id, user, session)
-    excluded_dirs = await withheld_artifact_dirs(session, job, user.id)
+    public_reader = not await viewer_has_direct_access(session, job, user.id)
     return await report_download_response(
         job_dir,
         str(job.id),
-        excluded_top_level_dirs=excluded_dirs,
+        public_reader=public_reader,
         run_environment=run_environment_text(job.version_info),
     )
 
@@ -159,12 +160,12 @@ async def job_report_pdf(
 def _report_html(
     job_dir: Path,
     version_info: dict[str, str] | None,
-    excluded_top_level_dirs: tuple[str, ...] = (),
+    public_reader: bool = False,
 ) -> str | None:
     """The job's report for the browser, with its figures embedded, or None.
 
-    ``excluded_top_level_dirs`` keeps a public reader's report from inlining
-    the owner's uploaded input files. Both the on-disk HTML and the markdown
+    ``public_reader`` keeps a public reader's report from inlining files the
+    artifacts ZIP withholds from them. Both the on-disk HTML and the markdown
     are read through the symlink-safe walk, so a link the agent plants at
     either name is a missing report."""
     if not job_file_exists(job_dir, "final_report.html"):
@@ -177,10 +178,10 @@ def _report_html(
             job_dir,
             embed_images=True,
             run_environment=run_environment_text(version_info),
-            excluded_top_level_dirs=excluded_top_level_dirs,
+            public_reader=public_reader,
         )
     except Exception:
-        if excluded_top_level_dirs:
+        if public_reader:
             return None
         logger.warning("Failed to re-render HTML with base64 images, using on-disk version")
         saved = read_job_file_text(
@@ -200,8 +201,8 @@ async def job_report(
 ) -> HTMLResponse:
     """The job's report, rendered from its current files."""
     job, job_dir = await _visible_job(job_id, user, session)
-    excluded_dirs = await withheld_artifact_dirs(session, job, user.id)
-    html = await run_in_threadpool(_report_html, job_dir, job.version_info, excluded_dirs)
+    public_reader = not await viewer_has_direct_access(session, job, user.id)
+    html = await run_in_threadpool(_report_html, job_dir, job.version_info, public_reader)
     if html is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
     return HTMLResponse(html, headers=_sandboxed(_REPORT_SANDBOX))

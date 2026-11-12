@@ -37,7 +37,7 @@ from openscientist.file_loader import FileTooBigError, validate_uploaded_file
 from openscientist.job.types import JobStatus
 from openscientist.job_manager import JobManager
 from openscientist.report.download import report_download_response
-from openscientist.share_service import set_job_public, withheld_artifact_dirs
+from openscientist.share_service import set_job_public, viewer_has_direct_access
 from openscientist.upload_limits import MAX_UPLOAD_FILES_PER_REQUEST
 
 logger = logging.getLogger(__name__)
@@ -657,7 +657,8 @@ async def update_job_visibility(
 
     A public job is reachable by ID or link but stays off other users' job
     pages. A reader who is neither the owner nor a share recipient does not
-    receive the job's uploaded input files.
+    receive the job's uploaded input files, the agent's transcripts or its
+    iteration log.
     """
     await set_current_user(session, user.id)
     job = await set_job_public(
@@ -695,10 +696,8 @@ async def download_report(
     job_dir = _get_jobs_dir() / str(job.id)
     download_label = (job.short_title or job.research_question[:50]).replace(" ", "_")
 
-    excluded_dirs = await withheld_artifact_dirs(session, job, user.id)
-    return await report_download_response(
-        job_dir, download_label, excluded_top_level_dirs=excluded_dirs
-    )
+    public_reader = not await viewer_has_direct_access(session, job, user.id)
+    return await report_download_response(job_dir, download_label, public_reader=public_reader)
 
 
 @router.get("/{job_id}/artifacts")
@@ -725,8 +724,9 @@ async def download_artifacts(
             detail="Job directory not found",
         )
 
-    # A job readable only because it is public comes without the owner's uploads.
-    excluded_dirs = await withheld_artifact_dirs(session, job, user.id)
+    # A job readable only because it is public comes without the owner's uploads
+    # and the agent's raw tool output.
+    public_reader = not await viewer_has_direct_access(session, job, user.id)
 
     # Build ZIP archive on disk to avoid holding large archives in memory.
     with tempfile.NamedTemporaryFile(
@@ -743,7 +743,7 @@ async def download_artifacts(
             archive_path=archive_path,
             job_id=str(job.id),
             version_info=job.version_info,
-            excluded_top_level_dirs=excluded_dirs,
+            public_reader=public_reader,
         )
     except Exception:
         archive_path.unlink(missing_ok=True)

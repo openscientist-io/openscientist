@@ -46,7 +46,7 @@ def render_report_html(
     *,
     embed_images: bool = False,
     run_environment: str | None = None,
-    excluded_top_level_dirs: tuple[str, ...] = (),
+    public_reader: bool = False,
 ) -> str:
     """Convert markdown report to styled HTML with embedded figures.
 
@@ -56,8 +56,8 @@ def render_report_html(
         embed_images: If False, use file:// paths (for WeasyPrint PDF).
             If True, use base64 data URIs (for web UI display).
         run_environment: The run's recorded environment, shown in the footer.
-        excluded_top_level_dirs: Job-directory top-level entries whose files are
-            not embedded, so a public reader's report never inlines uploaded inputs.
+        public_reader: Embed only the files the artifacts ZIP gives a reader who
+            has the job only because it is public.
 
     Returns:
         Complete HTML document as a string.
@@ -93,7 +93,7 @@ def render_report_html(
             FigureExtension(
                 provenance_dir=str(provenance_dir),
                 use_base64=embed_images,
-                excluded_top_level_dirs=excluded_top_level_dirs,
+                public_reader=public_reader,
             ),
             DiagramExtension(),
         ],

@@ -26,6 +26,13 @@ PERSISTED_REPORT_FILES = frozenset(
 # shipped in its place.
 PROVENANCE_FILE = "provenance.json"
 
+# A reader who has the job only because it is public never receives the owner's
+# uploads, their viewing copies, saved reports that may inline them, or the
+# agent's raw tool output, which carries uploaded files verbatim.
+PUBLIC_WITHHELD_DIRS = frozenset({"data", "previews"})
+ITERATION_LOG_FILE = "claude_iterations.log"
+TRANSCRIPT_SUFFIX = "_transcript.json"
+
 # Agent working directories are never artifacts, and they hold credentials: the
 # per-job MCP config, session transcripts, and the copied omp credential vault.
 _EXCLUDE_DIRS = {
@@ -67,7 +74,7 @@ def _shown_file(file_path: Path) -> bool:
 def _iter_artifact_files(
     job_dir: Path,
     excluded_paths: set[Path] | None = None,
-    excluded_top_level_dirs: tuple[str, ...] = (),
+    public_reader: bool = False,
 ) -> Iterator[tuple[Path, Path]]:
     """Yield (absolute_path, archive_relative_path) pairs for artifact files."""
     excluded_paths = excluded_paths or set()
@@ -78,7 +85,7 @@ def _iter_artifact_files(
             for dirname in dirnames
             if _shown_dir(root / dirname)
             and (root / dirname).resolve() not in excluded_paths
-            and not (root == job_dir and dirname in excluded_top_level_dirs)
+            and not (public_reader and root == job_dir and dirname in PUBLIC_WITHHELD_DIRS)
         ]
         for filename in filenames:
             file_path = root / filename
@@ -88,16 +95,24 @@ def _iter_artifact_files(
                 yield file_path, file_path.relative_to(job_dir)
 
 
-def _artifact_allowed(parts: tuple[str, ...], excluded_top_level_dirs: tuple[str, ...]) -> bool:
+def _withheld_from_public(parts: tuple[str, ...]) -> bool:
+    """Whether the file is one a reader who has the job only because it is
+    public never receives."""
+    if parts[0] in PUBLIC_WITHHELD_DIRS:
+        return True
+    if len(parts) == 1:
+        return parts[0] in PERSISTED_REPORT_FILES or parts[0] == ITERATION_LOG_FILE
+    return len(parts) == 2 and parts[0] == "provenance" and parts[1].endswith(TRANSCRIPT_SUFFIX)
+
+
+def _artifact_allowed(parts: tuple[str, ...], public_reader: bool) -> bool:
     """Whether the parts name a file the artifacts ZIP may ship, before any
     file is opened."""
     if not parts or any(part in ("", ".", "..", "/") or "\\" in part for part in parts):
         return False
     if parts == (PROVENANCE_FILE,):
         return False
-    if parts[0] in excluded_top_level_dirs:
-        return False
-    if excluded_top_level_dirs and len(parts) == 1 and parts[0] in PERSISTED_REPORT_FILES:
+    if public_reader and _withheld_from_public(parts):
         return False
     if (
         any(part in _EXCLUDE_DIRS for part in parts[:-1])
@@ -111,7 +126,7 @@ def _artifact_allowed(parts: tuple[str, ...], excluded_top_level_dirs: tuple[str
 def artifact_file(
     job_dir: Path,
     relative: str,
-    excluded_top_level_dirs: tuple[str, ...] = (),
+    public_reader: bool = False,
 ) -> JobFile | None:
     """The opened file at ``relative`` in ``job_dir`` when the artifacts ZIP
     would include it, or None. Every component is opened with O_NOFOLLOW, so
@@ -119,7 +134,7 @@ def artifact_file(
     regular file it reads. Files over the size cap are refused here, since
     the single-file route would not ship them."""
     parts = PurePosixPath(relative).parts
-    if not _artifact_allowed(parts, excluded_top_level_dirs):
+    if not _artifact_allowed(parts, public_reader):
         return None
     return try_open_job_file(job_dir, relative, max_size=MAX_ARTIFACT_FILE_SIZE_BYTES)
 
@@ -127,7 +142,7 @@ def artifact_file(
 def _open_artifact_files(
     job_dir: Path,
     files: Iterator[tuple[Path, Path]],
-    excluded_top_level_dirs: tuple[str, ...],
+    public_reader: bool,
 ) -> Iterator[tuple[JobFile, Path]]:
     """The walk's candidates, opened through the symlink-safe walk. A file
     that a link replaced between the walk and the open is skipped. The size
@@ -135,7 +150,7 @@ def _open_artifact_files(
     exclusion manifest."""
     for _, arcname in files:
         parts = PurePosixPath(arcname.as_posix()).parts
-        if not _artifact_allowed(parts, excluded_top_level_dirs):
+        if not _artifact_allowed(parts, public_reader):
             continue
         try:
             job_file = open_job_file(job_dir, arcname)
@@ -175,7 +190,7 @@ def _write_artifacts_zip(
     zip_file: zipfile.ZipFile,
     job_dir: Path,
     excluded_paths: set[Path] | None = None,
-    excluded_top_level_dirs: tuple[str, ...] = (),
+    public_reader: bool = False,
 ) -> int:
     """Write job artifacts into an open zip file and return number of files
     written. Each file is read from the fd the walk opened, so a file the
@@ -187,9 +202,9 @@ def _write_artifacts_zip(
             _iter_artifact_files(
                 job_dir,
                 excluded_paths=excluded_paths,
-                excluded_top_level_dirs=excluded_top_level_dirs,
+                public_reader=public_reader,
             ),
-            excluded_top_level_dirs,
+            public_reader,
         )
     )
 
@@ -225,7 +240,7 @@ def create_artifacts_zip_file(
     archive_path: Path,
     job_id: str,
     version_info: dict[str, str] | None = None,
-    excluded_top_level_dirs: tuple[str, ...] = (),
+    public_reader: bool = False,
 ) -> int:
     """Create an artifacts ZIP archive on disk and return number of files written.
 
@@ -241,7 +256,7 @@ def create_artifacts_zip_file(
             zip_file,
             job_dir,
             excluded_paths=excluded_paths,
-            excluded_top_level_dirs=excluded_top_level_dirs,
+            public_reader=public_reader,
         )
         if version_info:
             zip_file.writestr(

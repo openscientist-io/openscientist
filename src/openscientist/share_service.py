@@ -225,10 +225,6 @@ async def find_share_target_by_email(
         return result.scalars().first()
 
 
-# Uploaded inputs and their viewing copies stay owner/share-only.
-PUBLIC_VIEWER_EXCLUDED_DIRS: tuple[str, ...] = ("data", "previews")
-
-
 async def set_job_public(
     session: AsyncSession,
     owner_id: UUID,
@@ -270,11 +266,3 @@ async def viewer_has_direct_access(session: AsyncSession, job: Job, user_id: UUI
         )
     )
     return result.first() is not None
-
-
-async def withheld_artifact_dirs(session: AsyncSession, job: Job, user_id: UUID) -> tuple[str, ...]:
-    """Job-directory entries to leave out for a viewer who reads the job only
-    because it is public; the owner and share recipients get everything."""
-    if await viewer_has_direct_access(session, job, user_id):
-        return ()
-    return PUBLIC_VIEWER_EXCLUDED_DIRS

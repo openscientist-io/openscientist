@@ -53,9 +53,7 @@ async def reader(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
 
     @app.get("/report")
     async def report() -> Response:
-        return await report_download_response(
-            tmp_path, "report", excluded_top_level_dirs=("data", "previews")
-        )
+        return await report_download_response(tmp_path, "report", public_reader=True)
 
     @app.get("/health")
     async def health() -> dict[str, bool]:

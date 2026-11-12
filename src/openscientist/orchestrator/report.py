@@ -11,6 +11,7 @@ from uuid import UUID
 from sqlalchemy import select
 
 from openscientist.agent.base import AbstractAgent, IterationResult
+from openscientist.artifact_packager import TRANSCRIPT_SUFFIX
 from openscientist.database.models.job import Job as JobModel
 from openscientist.database.session import async_session_local
 from openscientist.exceptions import OpenScientistError
@@ -25,7 +26,6 @@ from openscientist.orchestrator.iteration import (
 from openscientist.orchestrator.provenance import _STAMP_DEADLINE_SECONDS
 from openscientist.providers.base import Provider
 from openscientist.run_environment import run_environment_text
-from openscientist.share_service import PUBLIC_VIEWER_EXCLUDED_DIRS
 from openscientist.transcript import TranscriptEntry
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ def _save_report_transcript(job_dir: Path, transcript: list[TranscriptEntry]) ->
 
     provenance_dir = job_dir / "provenance"
     provenance_dir.mkdir(parents=True, exist_ok=True)
-    _save_transcript(provenance_dir / "report_transcript.json", transcript)
+    _save_transcript(provenance_dir / f"report{TRANSCRIPT_SUFFIX}", transcript)
 
 
 def _ensure_report_written(
@@ -130,7 +130,7 @@ async def _try_generate_report_pdf(report_path: Path) -> None:
             report_path,
             job_dir,
             run_environment=run_environment,
-            excluded_top_level_dirs=PUBLIC_VIEWER_EXCLUDED_DIRS,
+            public_reader=True,
         )
         html_path.write_text(html_content, encoding="utf-8")
         logger.info("HTML report written: %s", html_path)

@@ -48,7 +48,6 @@ def _public_render_slot(limit: int) -> Iterator[None]:
 
 async def render_public_report_pdf_isolated(
     job_dir: Path,
-    excluded_top_level_dirs: tuple[str, ...],
     run_environment: str | None = None,
 ) -> bytes:
     """Render a public report in a resource-limited child without caching it."""
@@ -69,7 +68,6 @@ async def render_public_report_pdf_isolated(
                 json.dumps(
                     {
                         "job_dir": str(job_dir),
-                        "excluded_top_level_dirs": excluded_top_level_dirs,
                         "run_environment": run_environment,
                     }
                 ),
@@ -132,7 +130,6 @@ def _render_pdf_sync(html_path: Path, pdf_path: Path, job_dir: Path) -> Path:
 
 def render_public_report_pdf(
     job_dir: Path,
-    excluded_top_level_dirs: tuple[str, ...],
     run_environment: str | None = None,
 ) -> bytes:
     """Render a public PDF without reading persisted reports or fetching external resources."""
@@ -146,7 +143,7 @@ def render_public_report_pdf(
         job_dir,
         embed_images=True,
         run_environment=run_environment,
-        excluded_top_level_dirs=excluded_top_level_dirs,
+        public_reader=True,
     )
     return cast(
         bytes, HTML(string=html, url_fetcher=URLFetcher(allowed_protocols={"data"})).write_pdf()
