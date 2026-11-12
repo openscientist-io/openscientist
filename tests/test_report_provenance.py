@@ -124,7 +124,7 @@ def test_public_pdf_fetches_only_embedded_data(
         return real_open(opener, request, data, timeout)
 
     monkeypatch.setattr(OpenerDirector, "open", recording_open)
-    rendered = pdf.render_public_report_pdf(tmp_path, ("data", "previews"))
+    rendered = pdf.render_public_report_pdf(tmp_path)
 
     assert fetched
     assert all(url.startswith("data:") for url in fetched)

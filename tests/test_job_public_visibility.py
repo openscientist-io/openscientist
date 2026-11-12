@@ -27,19 +27,29 @@ from PIL import Image
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from openscientist.artifact_packager import artifact_file, create_artifacts_zip_file
+from openscientist.artifact_packager import (
+    ITERATION_LOG_FILE,
+    artifact_file,
+    create_artifacts_zip_file,
+)
 from openscientist.database.models import Job, JobShare, Session, User
 from openscientist.database.rls import set_current_user
 from openscientist.job.types import JobInfo, JobStatus
-from openscientist.share_service import (
-    PUBLIC_VIEWER_EXCLUDED_DIRS,
-    set_job_public,
-    viewer_has_direct_access,
-    withheld_artifact_dirs,
-)
+from openscientist.share_service import set_job_public, viewer_has_direct_access
 from openscientist.webapp_components.components import dialogs as dialog_module
 from openscientist.webapp_components.pages.job_detail import _owner_name, timeline
 from tests.helpers import enable_rls, fake_admin_session
+
+# Saved reports that may inline uploads and the agent's raw tool output, which
+# only the owner and share recipients receive.
+_DIRECT_ONLY_FILES = (
+    "final_report.pdf",
+    "final_report.html",
+    "report.pdf",
+    "provenance/iter1_transcript.json",
+    "provenance/report_transcript.json",
+    "claude_iterations.log",
+)
 
 
 async def _job(db_session: AsyncSession, owner: User, *, is_public: bool) -> Job:
@@ -195,37 +205,36 @@ async def test_viewer_has_direct_access_only_for_owner_and_sharees(
 
 
 @pytest.mark.asyncio
-async def test_withheld_dirs_hide_uploads_only_from_public_viewers(
+async def test_a_public_reader_has_no_direct_access(
     db_session: AsyncSession, test_user: User, test_user2: User
 ):
     job = await _job(db_session, test_user, is_public=True)
     await enable_rls(db_session)
 
-    await set_current_user(db_session, test_user.id)
-    assert await withheld_artifact_dirs(db_session, job, test_user.id) == ()
     await set_current_user(db_session, test_user2.id)
-    assert (
-        await withheld_artifact_dirs(db_session, job, test_user2.id) == PUBLIC_VIEWER_EXCLUDED_DIRS
-    )
+    assert await viewer_has_direct_access(db_session, job, test_user2.id) is False
 
 
-def test_packager_leaves_out_uploads(tmp_path: Path):
+def test_packager_leaves_out_uploads_and_tool_output(tmp_path: Path):
     job_dir = tmp_path / "job"
     (job_dir / "data").mkdir(parents=True)
     (job_dir / "data" / "cohort.csv").write_text("id\n1\n")
     (job_dir / "provenance").mkdir()
     (job_dir / "provenance" / "data").mkdir(parents=True)
     (job_dir / "provenance" / "data" / "derived.csv").write_text("x\n")
+    (job_dir / "provenance" / "plot_1.png").write_bytes(b"generated figure")
     (job_dir / "report.md").write_text("# Report")
+    for name in _DIRECT_ONLY_FILES:
+        (job_dir / name).write_bytes(b"id\n1\n")
     archive = tmp_path / "out.zip"
 
-    create_artifacts_zip_file(job_dir, archive, "job", excluded_top_level_dirs=("data",))
+    create_artifacts_zip_file(job_dir, archive, "job", public_reader=True)
 
     with zipfile.ZipFile(archive) as zf:
         names = set(zf.namelist())
-    assert "report.md" in names
-    assert "provenance/data/derived.csv" in names
+    assert {"report.md", "provenance/data/derived.csv", "provenance/plot_1.png"} <= names
     assert not any(name.startswith("data/") for name in names)
+    assert not names & set(_DIRECT_ONLY_FILES)
 
 
 def test_artifact_file_withholds_uploads(tmp_path: Path):
@@ -237,8 +246,33 @@ def test_artifact_file_withholds_uploads(tmp_path: Path):
     assert artifact_file(job_dir, "report.md") is not None
     assert artifact_file(job_dir, "data/cohort.csv") is not None
     # A public reader gets no file under the withheld top-level directory.
-    assert artifact_file(job_dir, "data/cohort.csv", excluded_top_level_dirs=("data",)) is None
-    assert artifact_file(job_dir, "report.md", excluded_top_level_dirs=("data",)) is not None
+    assert artifact_file(job_dir, "data/cohort.csv", public_reader=True) is None
+    assert artifact_file(job_dir, "report.md", public_reader=True) is not None
+
+
+def test_every_transcript_and_log_the_orchestrator_writes_is_withheld(tmp_path: Path):
+    from openscientist.agent.base import IterationResult, TurnOutcome
+    from openscientist.orchestrator import discovery, report
+
+    job_dir = tmp_path / "job"
+    provenance = job_dir / "provenance"
+    provenance.mkdir(parents=True)
+    discovery._append_iteration_artifacts(
+        provenance_dir=provenance,
+        log_file=job_dir / ITERATION_LOG_FILE,
+        iteration=1,
+        prompt="Analyse data/cohort.csv",
+        result=IterationResult(
+            outcome=TurnOutcome.COMPLETED, output="id,age", tool_calls=1, transcript=[]
+        ),
+    )
+    report._save_report_transcript(job_dir, [])
+
+    written = sorted(p.relative_to(job_dir).as_posix() for p in job_dir.rglob("*") if p.is_file())
+    assert len(written) == 3
+    for name in written:
+        assert artifact_file(job_dir, name) is not None
+        assert artifact_file(job_dir, name, public_reader=True) is None
 
 
 @pytest.mark.asyncio
@@ -282,7 +316,7 @@ async def test_api_artifacts_omit_uploads_for_public_viewers(
     (job_dir / "previews" / "scan.png.jpg").write_bytes(b"private image")
     (job_dir / "provenance").mkdir()
     (job_dir / "provenance" / "figure.png").write_bytes(b"generated figure")
-    for name in ("final_report.pdf", "final_report.html", "report.pdf"):
+    for name in _DIRECT_ONLY_FILES:
         (job_dir / name).write_bytes(b"EMBEDDED-UPLOADED-INPUT")
 
     names: dict[str, set[str]] = {}
@@ -302,7 +336,7 @@ async def test_api_artifacts_omit_uploads_for_public_viewers(
     assert "previews/scan.png.jpg" in names["owner"]
     assert "previews/scan.png.jpg" not in names["viewer"]
     assert "provenance/figure.png" in names["viewer"]
-    for name in ("final_report.pdf", "final_report.html", "report.pdf"):
+    for name in _DIRECT_ONLY_FILES:
         assert name in names["owner"]
         assert name not in names["viewer"]
 
@@ -341,9 +375,7 @@ async def test_view_sharee_of_public_job_still_gets_uploads(
     [
         "data/cohort.csv",
         "previews/scan.png.jpg",
-        "final_report.pdf",
-        "final_report.html",
-        "report.pdf",
+        *_DIRECT_ONLY_FILES,
     ],
 )
 async def test_web_file_route_404s_uploads_for_public_viewers(
@@ -383,7 +415,7 @@ async def test_web_artifacts_zip_omits_uploads_for_public_viewers(
     (job_dir / "previews" / "scan.png.jpg").write_bytes(b"private image")
     (job_dir / "provenance").mkdir()
     (job_dir / "provenance" / "figure.png").write_bytes(b"generated figure")
-    for name in ("final_report.pdf", "final_report.html", "report.pdf"):
+    for name in _DIRECT_ONLY_FILES:
         (job_dir / name).write_bytes(b"EMBEDDED-UPLOADED-INPUT")
 
     names: dict[str, set[str]] = {}
@@ -405,7 +437,7 @@ async def test_web_artifacts_zip_omits_uploads_for_public_viewers(
     assert "previews/scan.png.jpg" in names["owner"]
     assert "previews/scan.png.jpg" not in names["viewer"]
     assert "provenance/figure.png" in names["viewer"]
-    for name in ("final_report.pdf", "final_report.html", "report.pdf"):
+    for name in _DIRECT_ONLY_FILES:
         assert name in names["owner"]
         assert name not in names["viewer"]
 

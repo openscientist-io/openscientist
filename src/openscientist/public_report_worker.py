@@ -26,11 +26,7 @@ def main() -> int:
         from openscientist.report.pdf import render_public_report_pdf
 
         request = json.loads(sys.argv[4])
-        rendered = render_public_report_pdf(
-            Path(request["job_dir"]),
-            tuple(request["excluded_top_level_dirs"]),
-            request["run_environment"],
-        )
+        rendered = render_public_report_pdf(Path(request["job_dir"]), request["run_environment"])
         sys.stdout.buffer.write(rendered)
         sys.stdout.buffer.flush()
     except FileNotFoundError:

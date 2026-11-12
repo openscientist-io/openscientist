@@ -21,6 +21,7 @@ from openscientist.agent.base import (
     TurnOutcome,
 )
 from openscientist.agent.factory import agent_class_for_provider_id, get_agent
+from openscientist.artifact_packager import ITERATION_LOG_FILE, TRANSCRIPT_SUFFIX
 from openscientist.database.models import JobDataFile
 from openscientist.database.models.job import Job as JobModel
 from openscientist.database.session import async_session_local
@@ -123,7 +124,7 @@ def _append_iteration_artifacts(
     overwrite_log: bool = False,
 ) -> None:
     """Persist transcript and log entry for a completed iteration."""
-    _save_transcript(provenance_dir / f"iter{iteration}_transcript.json", result.transcript)
+    _save_transcript(provenance_dir / f"iter{iteration}{TRANSCRIPT_SUFFIX}", result.transcript)
     _append_log(
         log_file,
         iteration,
@@ -453,7 +454,7 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
 
     provenance_dir = job_dir / "provenance"
     provenance_dir.mkdir(parents=True, exist_ok=True)
-    log_file = job_dir / "claude_iterations.log"
+    log_file = job_dir / ITERATION_LOG_FILE
 
     try:
         # A budget limit (or a check the web could not answer in time) stops the

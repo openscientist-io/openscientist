@@ -30,11 +30,11 @@ async def report_download_response(
     job_dir: Path,
     download_label: str,
     *,
-    excluded_top_level_dirs: tuple[str, ...] = (),
+    public_reader: bool = False,
     run_environment: str | None = None,
 ) -> Response:
     """Serve a saved report to direct viewers or render an uncached public PDF."""
-    if excluded_top_level_dirs:
+    if public_reader:
         source = try_open_job_file(
             job_dir, "final_report.md", max_size=MAX_ARTIFACT_FILE_SIZE_BYTES
         )
@@ -42,9 +42,7 @@ async def report_download_response(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
         source.close()
         try:
-            rendered = await render_public_report_pdf_isolated(
-                job_dir, excluded_top_level_dirs, run_environment
-            )
+            rendered = await render_public_report_pdf_isolated(job_dir, run_environment)
         except PublicReportBusyError as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

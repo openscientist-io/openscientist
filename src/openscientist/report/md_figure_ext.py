@@ -43,12 +43,12 @@ class FigureBlockProcessor(BlockProcessor):
         parser: object,
         provenance_dir: Path,
         use_base64: bool,
-        excluded_top_level_dirs: tuple[str, ...] = (),
+        public_reader: bool = False,
     ) -> None:
         super().__init__(parser)
         self.provenance_dir = provenance_dir
         self.use_base64 = use_base64
-        self.excluded_top_level_dirs = excluded_top_level_dirs
+        self.public_reader = public_reader
 
     def test(self, parent: etree.Element, block: str) -> bool:
         return bool(_FIGURE_START_RE.match(block))
@@ -72,7 +72,7 @@ class FigureBlockProcessor(BlockProcessor):
         image = artifact_file(
             self.provenance_dir.parent,
             f"provenance/{filename}",
-            excluded_top_level_dirs=self.excluded_top_level_dirs,
+            public_reader=self.public_reader,
         )
         if image is None:
             logger.warning("Figure not found: %s", filename)
@@ -106,12 +106,12 @@ class ImageSrcTreeProcessor(Treeprocessor):
         md: Markdown,
         provenance_dir: Path,
         use_base64: bool,
-        excluded_top_level_dirs: tuple[str, ...] = (),
+        public_reader: bool = False,
     ) -> None:
         super().__init__(md)
         self.provenance_dir = provenance_dir
         self.use_base64 = use_base64
-        self.excluded_top_level_dirs = excluded_top_level_dirs
+        self.public_reader = public_reader
 
     def run(self, root: etree.Element) -> etree.Element | None:
         for parent in root.iter():
@@ -130,10 +130,8 @@ class ImageSrcTreeProcessor(Treeprocessor):
                 image = artifact_file(
                     job_dir,
                     f"provenance/{Path(src).name}",
-                    excluded_top_level_dirs=self.excluded_top_level_dirs,
-                ) or artifact_file(
-                    job_dir, src, excluded_top_level_dirs=self.excluded_top_level_dirs
-                )
+                    public_reader=self.public_reader,
+                ) or artifact_file(job_dir, src, public_reader=self.public_reader)
                 if image is None:
                     placeholder = etree.Element("span")
                     placeholder.text = child.get("alt", "")
@@ -171,9 +169,9 @@ class FigureExtension(Extension):
         self.config = {
             "provenance_dir": [".", "Directory containing figure images"],
             "use_base64": [False, "Embed images as base64 data URIs"],
-            "excluded_top_level_dirs": [
-                (),
-                "Top-level job directories whose files are never embedded",
+            "public_reader": [
+                False,
+                "Embed only what a reader who has the job only because it is public receives",
             ],
         }
         super().__init__(**kwargs)
@@ -181,14 +179,14 @@ class FigureExtension(Extension):
     def extendMarkdown(self, md: Markdown) -> None:  # noqa: N802
         provenance_dir = Path(str(self.getConfig("provenance_dir")))
         use_base64 = bool(self.getConfig("use_base64"))
-        excluded_top_level_dirs = tuple(self.getConfig("excluded_top_level_dirs"))
+        public_reader = bool(self.getConfig("public_reader"))
 
         md.parser.blockprocessors.register(
             FigureBlockProcessor(
                 md.parser,
                 provenance_dir,
                 use_base64,
-                excluded_top_level_dirs=excluded_top_level_dirs,
+                public_reader=public_reader,
             ),
             "figure_block",
             105,
@@ -199,7 +197,7 @@ class FigureExtension(Extension):
                 md,
                 provenance_dir,
                 use_base64,
-                excluded_top_level_dirs=excluded_top_level_dirs,
+                public_reader=public_reader,
             ),
             "image_src_resolve",
             5,
