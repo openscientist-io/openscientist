@@ -37,10 +37,12 @@ async def signed_in_job_user(test_engine: AsyncEngine) -> AsyncIterator[tuple[Us
         user = User(email=f"submit-{uuid4().hex}@page.test", name="Submitter", is_approved=True)
         db.add(user)
         await db.flush()
-        login = Session(user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         await db.commit()
-    yield user, str(login.id)
+    yield user, login_token
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(Job).where(Job.owner_id == user.id))
         await db.execute(delete(User).where(User.id == user.id))

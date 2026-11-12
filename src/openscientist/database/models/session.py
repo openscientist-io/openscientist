@@ -1,10 +1,14 @@
 """Session model for user login sessions."""
 
+from __future__ import annotations
+
+import hashlib
+import secrets
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey
+from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -14,10 +18,25 @@ if TYPE_CHECKING:
     from .user import User
 
 
+def hash_session_token(token: str) -> str:
+    """Hash a session cookie before storing or looking it up."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
 class Session(UUIDv7Mixin, Base):
     """User login session."""
 
     __tablename__ = "sessions"
+
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+
+    @classmethod
+    def issue(cls, *, user_id: UUID, expires_at: datetime) -> tuple[Session, str]:
+        """Return a session row and its one-time plaintext cookie."""
+        token = secrets.token_urlsafe(32)
+        return cls(
+            user_id=user_id, expires_at=expires_at, token_hash=hash_session_token(token)
+        ), token
 
     user_id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),

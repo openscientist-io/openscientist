@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import stat
+import struct
+import zlib
 from pathlib import Path
 from uuid import uuid4
 
@@ -85,3 +87,32 @@ def test_a_new_job_has_agent_owned_copies_of_its_images(
     assert _mode(previews / "gel.jpg.jpg") == JOB_FILE_MODE
     assert chowns.in_jobs(previews)
     assert chowns.in_jobs(previews / "gel.jpg.jpg")
+
+
+@pytest.mark.parametrize("size", [(5001, 4000), (10000, 10000)])
+def test_oversized_image_is_skipped_before_decoding_during_job_creation(
+    tmp_path: Path,
+    test_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+    size: tuple[int, int],
+) -> None:
+    from PIL import PngImagePlugin
+
+    from openscientist.orchestrator.setup import create_job
+
+    ChownRecorder(monkeypatch)
+    original = tmp_path / "large.png"
+    Image.new("RGB", (1, 1)).save(original)
+    png = bytearray(original.read_bytes())
+    png[16:24] = struct.pack(">II", *size)
+    png[29:33] = struct.pack(">I", zlib.crc32(png[12:29]))
+    original.write_bytes(png)
+
+    def refuse_decode(image: Image.Image) -> None:
+        pytest.fail("Oversized image reached the decoder")
+
+    monkeypatch.setattr(PngImagePlugin.PngImageFile, "load", refuse_decode)
+    job_dir = create_job(str(uuid4()), "Question?", [original], 5, jobs_dir=tmp_path / "jobs")
+
+    assert (job_dir / "data" / original.name).read_bytes() == original.read_bytes()
+    assert not (job_dir / PREVIEW_DIR).exists()

@@ -23,10 +23,11 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from nicegui import background_tasks, storage, ui
+from nicegui import app, background_tasks, storage, ui
 from nicegui.client import Client
 from nicegui.elements.upload_files import FileUpload, create_file_upload
 from nicegui.events import UploadEventArguments, handle_event
+from nicegui.persistence.file_persistent_dict import FilePersistentDict
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from starlette.datastructures import Headers
@@ -48,10 +49,12 @@ async def new_page_user(test_engine: AsyncEngine) -> AsyncIterator[tuple[User, s
         user = User(email=f"upload-{uuid4().hex}@page.test", name="Uploader", is_approved=True)
         db.add(user)
         await db.flush()
-        login = Session(user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         await db.commit()
-    yield user, str(login.id)
+    yield user, login_token
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(User).where(User.id == user.id))
         await db.commit()
@@ -371,3 +374,19 @@ def test_upload_storage_cleanup_removes_crash_leftovers() -> None:
     stale.write_bytes(b"a,b\n1,2\n")
     clear_upload_storage()
     assert not root.exists()
+
+
+def test_nicegui_storage_uses_the_test_directory(tmp_path: Path) -> None:
+    root = tmp_path / ".nicegui"
+    assert storage.Storage.path == root
+    assert isinstance(app.storage._general, FilePersistentDict)
+    assert app.storage._general.filepath == root / "storage-general.json"
+    sibling = tmp_path / "keep.txt"
+    sibling.write_text("keep")
+
+    app.storage.general["probe"] = True
+    assert (root / "storage-general.json").is_file()
+    app.storage.clear()
+
+    assert not root.exists()
+    assert sibling.read_text() == "keep"

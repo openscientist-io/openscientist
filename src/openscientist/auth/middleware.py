@@ -16,7 +16,9 @@ from sqlalchemy.orm import selectinload
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
 
+from openscientist.auth.access import user_access_allowed
 from openscientist.database.models import Session, User
+from openscientist.database.models.session import hash_session_token
 from openscientist.database.retry import is_connection_error
 from openscientist.database.session import get_admin_session
 
@@ -40,8 +42,9 @@ async def get_current_user(db: AsyncSession, session_token: str) -> User | None:
         select(User)
         .join(Session)
         .where(
-            Session.id == session_token,
+            Session.token_hash == hash_session_token(session_token),
             Session.expires_at > datetime.now(UTC),
+            user_access_allowed(),
         )
         .options(selectinload(User.administrator))
     )
@@ -260,7 +263,7 @@ async def session_still_valid_for(user_id: str) -> bool:
 
     Periodic ticks call it before touching data. It re-reads the
     ``session_token`` cookie the page was built with against the sessions
-    table, in one primary-key lookup, and is true while the row is
+    table, in one indexed hash lookup, and is true while the row is
     unexpired and belongs to ``user_id``, the user the page was built for.
     A database it cannot reach cannot prove the session is gone, so it
     reads as still valid and the tick's own data load reports the outage,

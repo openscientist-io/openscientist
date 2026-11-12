@@ -8,7 +8,7 @@ import secrets
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from docker.types import Mount
+from docker.types import Mount, Ulimit
 
 from openscientist_launcher.config import LauncherConfig
 from openscientist_launcher.validation import AgentLaunch, ExecRequest
@@ -92,6 +92,8 @@ def agent_run_kwargs(cfg: LauncherConfig, launch: AgentLaunch, *, network: str) 
         "network": network,
         "mem_limit": f"{launch.memory_mib}m",
         "nano_cpus": int(launch.cpu * 1e9),
+        "pids_limit": launch.pids_limit,
+        "ulimits": [Ulimit(name="nofile", soft=65536, hard=65536)],
         "platform": cfg.agent_platform,
         "security_opt": ["no-new-privileges:true"],
         # The container reaches a host-local model endpoint through the gateway.
@@ -143,6 +145,8 @@ def executor_run_kwargs(cfg: LauncherConfig, req: ExecRequest, *, network: str) 
         "network": "none" if req.airgapped else network,
         "mem_limit": f"{req.memory_mib}m",
         "nano_cpus": int(req.cpu * 1e9),
+        "pids_limit": req.pids_limit,
+        "ulimits": [Ulimit(name="nofile", soft=65536, hard=65536)],
         "security_opt": ["no-new-privileges:true"],
         "user": "executor",
         "labels": _labels(cfg, req.job_id, "executor"),

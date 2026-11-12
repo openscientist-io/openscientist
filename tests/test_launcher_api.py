@@ -12,6 +12,7 @@ import base64
 import io
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import tarfile
@@ -174,6 +175,31 @@ class TestHealth:
 
 
 class TestAgentCreate:
+    @pytest.mark.parametrize("limit", [None, 128, 4096])
+    def test_process_limit_applied(
+        self, launcher: Launcher, docker_client: docker.DockerClient, limit: int | None
+    ) -> None:
+        body = _agent_body()
+        if limit is not None:
+            body["pids_limit"] = limit
+        with launcher.client() as client:
+            response = client.post("/v1/containers/agent", json=body)
+            assert response.status_code == 200, response.text
+            name = response.json()["name"]
+            try:
+                host = _inspect(docker_client, name)["HostConfig"]
+                assert host["PidsLimit"] == (limit or 4096)
+                assert host["Ulimits"] == [{"Name": "nofile", "Soft": 65536, "Hard": 65536}]
+            finally:
+                client.post(f"/v1/containers/{name}/remove")
+
+    @pytest.mark.parametrize("limit", [0, -1, 4097, True, 1.5, "512"])
+    def test_process_limit_outside_bounds_refused(self, launcher: Launcher, limit: object) -> None:
+        with launcher.client() as client:
+            response = client.post("/v1/containers/agent", json=_agent_body(pids_limit=limit))
+        assert response.status_code == 400, response.text
+        assert "pids_limit" in response.json()["error"]
+
     def test_valid_request_creates_the_template_container(
         self, launcher: Launcher, docker_client: docker.DockerClient, jobs_root: Path
     ) -> None:
@@ -267,7 +293,7 @@ class TestAgentCreate:
             client.post(f"/v1/containers/{response.json()['name']}/remove")
 
     @pytest.mark.parametrize(
-        "field", ["privileged", "cap_add", "volumes", "network", "user", "image"]
+        "field", ["privileged", "cap_add", "volumes", "network", "user", "image", "extra_hosts"]
     )
     def test_injection_fields_refused(self, launcher: Launcher, field: str) -> None:
         with launcher.client() as client:
@@ -717,6 +743,50 @@ class TestHealthCheck:
 
 
 class TestExecutor:
+    def test_default_process_limit_allows_128_python_threads(
+        self, launcher: Launcher, jobs_root: Path
+    ) -> None:
+        out_dir = jobs_root / JOB_ID / "out"
+        out_dir.mkdir()
+        script = (
+            "import threading\n"
+            "release = threading.Event()\n"
+            "threads = [threading.Thread(target=release.wait, args=(15,)) for _ in range(128)]\n"
+            "try:\n"
+            "    for thread in threads:\n"
+            "        thread.start()\n"
+            "    assert sum(thread.is_alive() for thread in threads) == 128\n"
+            "    with open('thread-count.txt', 'w') as result:\n"
+            "        result.write('128')\n"
+            "finally:\n"
+            "    release.set()\n"
+            "    for thread in threads:\n"
+            "        if thread.ident is not None:\n"
+            "            thread.join(timeout=5)\n"
+        )
+        command = f"python -c {shlex.quote(script)}"
+        body = {
+            "job_id": JOB_ID,
+            "timeout_seconds": 120,
+            "memory_mib": 1024,
+            "cpu": 0.5,
+            "airgapped": True,
+            "input": {
+                "code": f"import os\nassert os.system({command!r}) == 0\n",
+                "language": "python",
+                "output_dir": str(out_dir),
+                "timeout": 60,
+                "iteration": 0,
+            },
+        }
+        with launcher.client() as client:
+            response = client.post("/v1/exec", json=body)
+        assert response.status_code == 200, response.text
+        assert response.json()["exit_code"] == 0
+        result = json.loads(response.json()["stdout"].splitlines()[-1])
+        assert result["success"], result
+        assert (out_dir / "thread-count.txt").read_text() == "128"
+
     def test_valid_executor_run_roundtrip(
         self, launcher: Launcher, docker_client: docker.DockerClient, jobs_root: Path
     ) -> None:
@@ -795,6 +865,8 @@ class TestExecutor:
         assert host["CapAdd"] == ["NET_ADMIN"]
         assert host["Memory"] == 1024 * 1024**2
         assert host["NanoCpus"] == 500_000_000
+        assert host["PidsLimit"] == 4096
+        assert host["Ulimits"] == [{"Name": "nofile", "Soft": 65536, "Hard": 65536}]
         assert host.get("Binds") is None
         job_mount = f"/agent/jobs/{JOB_ID}"
         assert _host_binds(host) == [(str(job_dir), job_mount, False)]
@@ -926,6 +998,10 @@ class TestExecutor:
             assert memory.status_code == 400
             cpu = client.post("/v1/exec", json=_exec(cpu=1.1))
             assert cpu.status_code == 400
+            for limit in (0, -1, 4097, True, 1.5, "512"):
+                response = client.post("/v1/exec", json=_exec(pids_limit=limit))
+                assert response.status_code == 400, response.text
+                assert "pids_limit" in response.json()["error"]
             outside = tmp_path / "out"
             outside.mkdir()
             mount = client.post(
