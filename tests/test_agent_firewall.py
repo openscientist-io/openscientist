@@ -13,10 +13,12 @@ import os
 import re
 import shutil
 import subprocess
+import sysconfig
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from textwrap import dedent
 from typing import Any
 from uuid import uuid4
@@ -65,7 +67,9 @@ class Rendered:
 
     @property
     def accepts(self) -> list[str]:
-        return [rule for rule in self.rules if rule.startswith("ip daddr")]
+        return [
+            rule for rule in self.rules if rule.startswith("ip daddr") and rule.endswith("accept")
+        ]
 
     @property
     def command(self) -> list[str]:
@@ -122,10 +126,7 @@ def _render(
     mode: str | None = None,
     run_as: str | None = None,
 ) -> Rendered:
-    """Run the entrypoint with its three privileged commands stubbed out.
-
-    `allow=None` leaves the env var unset.
-    """
+    """Run the entrypoint with privileged commands stubbed out."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     ruleset_file = tmp_path / "ruleset"
@@ -190,6 +191,7 @@ class TestRulesetRendering:
             table inet airgap {
                 chain output {
                     type filter hook output priority 0; policy drop;
+                    ip daddr 127.0.0.11 drop
                     oif "lo" accept
                     ct state established,related accept
                     ip daddr 172.26.0.2 tcp dport 5432 accept
@@ -225,6 +227,7 @@ class TestRulesetRendering:
         rendered = _render(tmp_path, "")
         assert rendered.rules == [
             "type filter hook output priority 0; policy drop;",
+            "ip daddr 127.0.0.11 drop",
             'oif "lo" accept',
             "ct state established,related accept",
         ]
@@ -645,6 +648,103 @@ class _Lab:
             )
         )
 
+    def run_launcher_probe(
+        self,
+        allow: str,
+        source: str,
+        target: str,
+        *,
+        read_only: bool,
+        extra_environment: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Run the launcher and agent in the same Docker DNS namespace."""
+        launcher_source = dedent(
+            """
+            import json, os
+            from openscientist_launcher import api
+            from openscientist_launcher.config import LauncherConfig
+
+            template = api.agent_run_kwargs
+            def probe_template(*args, **kwargs):
+                result = template(*args, **kwargs)
+                result.update(json.loads(os.environ["PROBE_KWARGS"]))
+                result["environment"].update(json.loads(os.environ["PROBE_ENV"]))
+                return result
+            api.agent_run_kwargs = probe_template
+            server = api.Server(LauncherConfig.from_env())
+            print(json.dumps(server.create_agent(json.loads(os.environ["PROBE_REQUEST"]))))
+            """
+        )
+        with TemporaryDirectory(prefix="firewall-launcher-") as temporary:
+            root = Path(temporary)
+            job_id = str(uuid4())
+            (root / job_id / "data").mkdir(parents=True)
+            digest = str(self._client.images.get(TEST_IMAGE).attrs["Id"])
+            environment = {
+                "PYTHONPATH": "/test-src:/test-deps",
+                "JOBS_ROOT": str(root),
+                "AGENT_IMAGE": TEST_IMAGE,
+                "EXECUTOR_IMAGE": TEST_IMAGE,
+                "AGENT_IMAGE_DIGESTS": digest,
+                "EXECUTOR_IMAGE_DIGESTS": digest,
+                "LAUNCHER_INSTANCE_ID": self.suffix,
+                "LAUNCHER_NETWORK": self.network.name,
+                "AGENT_MAX_MEMORY_MIB": "512",
+                "EXECUTOR_MAX_MEMORY_MIB": "512",
+                "PROBE_ENV": json.dumps({"PROBE_TARGET": target, **(extra_environment or {})}),
+                "AGENT_MAX_CPU": "1",
+                "EXECUTOR_MAX_CPU": "1",
+                "MAX_LIFETIME_SECONDS": "120",
+                "PROBE_REQUEST": json.dumps(
+                    {
+                        "job_id": job_id,
+                        "mode": "discovery",
+                        "lifetime_seconds": 120,
+                        "memory_mib": 512,
+                        "cpu": 1,
+                        "airgapped": True,
+                        "egress_allow": allow.split(","),
+                    }
+                ),
+                "PROBE_KWARGS": json.dumps(
+                    {
+                        "read_only": read_only,
+                        "command": ["python3", "-c", source.replace("__TARGET__", repr(target))],
+                        "volumes": {
+                            str(SCRIPT): {"bind": "/agent-firewall-entrypoint.sh", "mode": "ro"}
+                        },
+                    }
+                ),
+            }
+            launcher = self._client.containers.create(
+                TEST_IMAGE,
+                entrypoint=["python3", "-c", launcher_source],
+                environment=environment,
+                network=self.network.name,
+                volumes={
+                    "/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "rw"},
+                    str(REPO_ROOT / "src"): {"bind": "/test-src", "mode": "ro"},
+                    sysconfig.get_path("purelib"): {"bind": "/test-deps", "mode": "ro"},
+                    str(root): {"bind": str(root), "mode": "rw"},
+                },
+            )
+            self.started.append(launcher)
+            launcher.start()
+            status = launcher.wait(timeout=120)
+            logs = launcher.logs().decode()
+            assert status["StatusCode"] == 0, logs
+            container = self._client.containers.get(json.loads(logs)["id"])
+            self.started.append(container)
+            status = container.wait(timeout=120)
+            stdout = container.logs(stdout=True, stderr=False).decode()
+            stderr = container.logs(stdout=False, stderr=True).decode()
+            assert status["StatusCode"] == 0, stderr or stdout
+            probe = dict(json.loads(stdout))
+            probe["extra_hosts"] = container.attrs["HostConfig"]["ExtraHosts"]
+            probe["read_only"] = container.attrs["HostConfig"]["ReadonlyRootfs"]
+            container.remove(force=True)
+            return probe
+
     def run_probe(
         self,
         allow: str,
@@ -659,6 +759,11 @@ class _Lab:
         """The first network connected is the default route; the extras add
         direct routes for the link-local listeners. `resolv_conf` bind-mounts
         over /etc/resolv.conf; Docker leaves a mounted file untouched."""
+        if mode == "airgap":
+            assert extra_networks is None and resolv_conf is None
+            return self.run_launcher_probe(
+                allow, source, target, read_only=False, extra_environment=extra_environment
+            )
         environment = {
             "OPENSCIENTIST_FIREWALL_ALLOW": allow,
             "OPENSCIENTIST_FIREWALL_MODE": mode,
@@ -750,6 +855,103 @@ def firewall_image(docker_client: Any) -> str:
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("transport", ["tcp", "udp"])
+def test_airgap_blocks_embedded_resolver(
+    docker_client: Any, firewall_image: str, transport: str
+) -> None:
+    source = _HELPERS + dedent(
+        """
+        import struct
+
+        query = struct.pack("!6H", 20299, 256, 1, 0, 0, 0)
+        query += b"".join(bytes([len(part)]) + part.encode() for part in target.split("."))
+        query += b"\\x00\\x00\\x01\\x00\\x01"
+        transport = os.environ["PROBE_TRANSPORT"]
+        kind = socket.SOCK_STREAM if transport == "tcp" else socket.SOCK_DGRAM
+        with socket.socket(socket.AF_INET, kind) as resolver:
+            resolver.settimeout(2)
+            try:
+                resolver.connect(("127.0.0.11", 53))
+                if transport == "tcp":
+                    query = struct.pack("!H", len(query)) + query
+                resolver.sendall(query)
+                response = resolver.recv(4096)
+                reached = bool(response)
+            except OSError:
+                reached = False
+        print(json.dumps({"resolver_reachable": reached}))
+        """
+    )
+    with _lab(docker_client) as lab:
+        target = lab.start_listener("dns-target", [8000])
+        probe = lab.run_probe(
+            f"{target}:8000",
+            source,
+            target,
+            mode="airgap",
+            extra_environment={"PROBE_TRANSPORT": transport},
+        )
+    assert probe["resolver_reachable"] is False
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("read_only", [True, False], ids=["readonly", "writable"])
+def test_launcher_pins_airgap_hosts(
+    docker_client: Any, firewall_image: str, read_only: bool
+) -> None:
+    source = dedent(
+        """
+        import json, os, socket, struct
+        from pathlib import Path
+
+        target = __TARGET__
+        addresses = sorted({r[4][0] for r in socket.getaddrinfo(target, 8000, socket.AF_INET)})
+        reachable = []
+        for address in addresses:
+            with socket.create_connection((address, 8000), timeout=2):
+                reachable.append(address)
+        query = struct.pack("!6H", 20299, 256, 1, 0, 0, 0)
+        query += b"\\x07example\\x03com\\x00\\x00\\x01\\x00\\x01"
+        responses = []
+        for host in ("127.0.0.11", "8.8.8.8"):
+            for kind in (socket.SOCK_STREAM, socket.SOCK_DGRAM):
+                with socket.socket(socket.AF_INET, kind) as resolver:
+                    resolver.settimeout(1)
+                    try:
+                        resolver.connect((host, 53))
+                        message = struct.pack("!H", len(query)) + query
+                        resolver.sendall(message if kind == socket.SOCK_STREAM else query)
+                        responses.append(bool(resolver.recv(4096)))
+                    except OSError:
+                        responses.append(False)
+        print(json.dumps({
+            "addresses": addresses,
+            "reachable": reachable,
+            "hosts": Path("/etc/hosts").read_text(),
+            "dns_responses": responses,
+            "uid": os.getuid(),
+        }))
+        """
+    )
+    with _lab(docker_client) as lab:
+        alias = f"pinned-{lab.suffix}"
+        names = [
+            lab.start_listener("pin-a", [8000], alias=alias),
+            lab.start_listener("pin-b", [8000], alias=alias),
+        ]
+        addresses = sorted(lab.address_of(name, lab.network) for name in names)
+        probe = lab.run_launcher_probe(f"{alias}:8000", source, alias, read_only=read_only)
+    assert probe["read_only"] is read_only
+    assert probe["addresses"] == addresses
+    assert probe["reachable"] == addresses
+    assert probe["dns_responses"] == [False] * 4
+    assert probe["uid"] != 0
+    for address in addresses:
+        assert f"{alias}:{address}" in probe["extra_hosts"]
+        assert any(line.split() == [address, alias] for line in probe["hosts"].splitlines())
+
+
+@pytest.mark.integration
 class TestFirewallBehaviour:
     @pytest.fixture(scope="class")
     def probe(self, docker_client: Any, firewall_image: str) -> Iterator[dict[str, Any]]:
@@ -757,10 +959,15 @@ class TestFirewallBehaviour:
             # Two listeners, so a blocked connect is not confused with nothing
             # listening on the unallowlisted port.
             target = lab.start_listener("target", [8000, 9000])
-            yield lab.run_probe(f"{target}:8000", _PROBE, target, mode="airgap")
+            yield lab.run_probe(
+                f"{target}:8000",
+                _PROBE,
+                target,
+                mode="airgap",
+                extra_environment={"RES_OPTIONS": "attempts:1 timeout:1"},
+            )
 
     def test_service_names_still_resolve(self, probe: dict[str, Any]) -> None:
-        """No rule opens port 53. The embedded resolver is reached over lo."""
         assert probe["resolved_target"] is not None
 
     def test_an_allowlisted_endpoint_is_reachable(self, probe: dict[str, Any]) -> None:
@@ -801,7 +1008,6 @@ class TestMultiAddressAllowlist:
             yield lab.run_probe(f"{alias}:8000", _REPLICA_PROBE, alias, mode="airgap")
 
     def test_the_name_resolves_to_several_addresses(self, probe: dict[str, Any]) -> None:
-        """Guards the fixture: with one address the test below passes either way."""
         assert len(probe["addresses"]) >= 2
 
     def test_every_address_is_reachable(self, probe: dict[str, Any]) -> None:

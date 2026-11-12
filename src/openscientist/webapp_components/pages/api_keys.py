@@ -21,6 +21,7 @@ from openscientist.webapp_components.components.common import (
 )
 from openscientist.webapp_components.components.navigation import render_navigator
 from openscientist.webapp_components.utils import get_event_value
+from openscientist.webapp_components.utils.permissions import revalidate_session
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +146,9 @@ async def _key_name_exists(session: Any, user_uuid: UUID, key_name: str) -> bool
 
 async def _create_key_for_user(user_id: str, key_name: str) -> str:
     """Create API key and return plaintext key to display exactly once."""
+    caller = await revalidate_session()
+    if caller is None or caller["user_id"] != user_id:
+        raise ValueError("Your session is no longer valid. Please sign in again.")
     user_uuid = UUID(user_id)
     async with get_session_ctx() as session:
         await set_current_user(session, user_uuid)
@@ -162,6 +166,9 @@ async def _create_key_for_user(user_id: str, key_name: str) -> str:
 
 async def _revoke_key(api_key_id: str, requester_id: str, is_admin: bool) -> bool:
     """Revoke API key by id, enforcing ownership for non-admin users."""
+    caller = await revalidate_session()
+    if caller is None or caller["user_id"] != requester_id or (is_admin and not caller["is_admin"]):
+        return False
     key_uuid = UUID(api_key_id)
     requester_uuid = UUID(requester_id)
 
@@ -190,6 +197,9 @@ async def _revoke_key(api_key_id: str, requester_id: str, is_admin: bool) -> boo
 
 async def _query_api_keys(search_query: str, is_admin: bool, user_id: str) -> list[APIKey]:
     """Query API keys according to role and search string."""
+    caller = await revalidate_session()
+    if caller is None or caller["user_id"] != user_id or (is_admin and not caller["is_admin"]):
+        return []
     normalized = search_query.strip().lower()
     if is_admin:
         async with get_admin_session() as session:
