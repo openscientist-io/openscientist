@@ -38,10 +38,12 @@ async def signed_in_admin(test_engine: AsyncEngine) -> AsyncIterator[tuple[User,
         await db.flush()
         db.add(Administrator(user_id=owner.id))
         job = Job(owner_id=owner.id, research_question="Page recheck", status="completed")
-        login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add_all([job, login])
         await db.commit()
-    yield owner, job, str(login.id), pending
+    yield owner, job, login_token, pending
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(Job).where(Job.id == job.id))
         await db.execute(delete(User).where(User.id.in_([owner.id, pending.id])))
@@ -171,10 +173,12 @@ async def test_submit_job_is_refused_once_the_user_is_demoted(
         user = User(email=f"demoted-{uuid4().hex}@page.test", name="Demoted", is_approved=True)
         db.add(user)
         await db.flush()
-        login = Session(user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         await db.commit()
-        token = str(login.id)
+        token = login_token
 
     try:
         recorder = _RecordingJobManager()

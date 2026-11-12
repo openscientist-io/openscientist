@@ -8,6 +8,7 @@ while the original in ``data/`` stays untouched for code that analyses it.
 from __future__ import annotations
 
 import logging
+import warnings
 from pathlib import Path
 
 from PIL import Image, ImageOps
@@ -21,6 +22,7 @@ VIEWABLE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp"})
 #: The longest edge the Messages API keeps. It scales larger images down to
 #: this itself, so the model sees nothing a copy at this size leaves out.
 MAX_EDGE_PX = 1568
+MAX_INPUT_PIXELS = 20_000_000
 _JPEG_QUALITY = 85
 
 
@@ -39,7 +41,12 @@ def write_previews(data_paths: list[Path], job_dir: Path) -> list[Path]:
         if original.suffix.lower() not in VIEWABLE_SUFFIXES:
             continue
         try:
-            with Image.open(original) as image:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", Image.DecompressionBombWarning)
+                image = Image.open(original)
+            with image:
+                if image.width * image.height > MAX_INPUT_PIXELS:
+                    raise ValueError("Image exceeds the preview pixel limit")
                 image.seek(0)
                 copy = ImageOps.exif_transpose(image)
                 copy.thumbnail((MAX_EDGE_PX, MAX_EDGE_PX))
@@ -48,7 +55,12 @@ def write_previews(data_paths: list[Path], job_dir: Path) -> list[Path]:
                     copy = Image.new("RGB", rgba.size, "white")
                     copy.paste(rgba, mask=rgba.getchannel("A"))
                 copy = copy.convert("RGB")
-        except (OSError, ValueError, Image.DecompressionBombError) as error:
+        except (
+            OSError,
+            ValueError,
+            Image.DecompressionBombError,
+            Image.DecompressionBombWarning,
+        ) as error:
             logger.warning("No viewing copy for %s: %s", original.name, type(error).__name__)
             continue
         target = job_dir / PREVIEW_DIR / preview_name(original.name)

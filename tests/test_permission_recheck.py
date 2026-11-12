@@ -32,6 +32,7 @@ from openscientist.database.models import (
     Session,
     User,
 )
+from openscientist.database.models.session import hash_session_token
 from openscientist.job.types import JobStatus
 from openscientist.webapp_components.components import dialogs as dialogs_module
 from openscientist.webapp_components.pages import admin as admin_page
@@ -94,7 +95,7 @@ async def _demote_admin(db: AsyncSession, user_id) -> None:
 
 
 async def _delete_session(db: AsyncSession, session_id) -> None:
-    await db.execute(delete(Session).where(Session.id == session_id))
+    await db.execute(delete(Session).where(Session.token_hash == hash_session_token(session_id)))
     await db.commit()
 
 
@@ -121,10 +122,12 @@ async def admin_actor(test_engine: AsyncEngine):
     async with AsyncSession(test_engine, expire_on_commit=False) as db:
         user = await _create_user(db, "Recheck Admin")
         db.add(Administrator(user_id=user.id))
-        login = Session(user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         await db.commit()
-        yield {"user_id": user.id, "session_id": login.id}
+        yield {"user_id": user.id, "session_id": login_token}
     async with _session(test_engine) as db:
         await db.execute(delete(User).where(User.id == user.id))
         await db.commit()
@@ -140,9 +143,15 @@ async def job_actors(test_engine: AsyncEngine):
         viewer = await _create_user(db, "Recheck Viewer")
         target = await _create_user(db, "Recheck Target")
         job = await _create_job(db, owner, status="awaiting_feedback")
-        owner_login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
-        editor_login = Session(user_id=editor.id, expires_at=datetime.now(UTC) + timedelta(days=1))
-        viewer_login = Session(user_id=viewer.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        owner_login, owner_login_token = Session.issue(
+            user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
+        editor_login, editor_login_token = Session.issue(
+            user_id=editor.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
+        viewer_login, viewer_login_token = Session.issue(
+            user_id=viewer.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add_all([owner_login, editor_login, viewer_login])
         db.add(JobShare(job_id=job.id, shared_with_user_id=editor.id, permission_level="edit"))
         db.add(JobShare(job_id=job.id, shared_with_user_id=viewer.id, permission_level="view"))
@@ -150,15 +159,15 @@ async def job_actors(test_engine: AsyncEngine):
         actors = {
             "owner": {
                 "user_id": owner.id,
-                "session_id": owner_login.id,
+                "session_id": owner_login_token,
             },
             "editor": {
                 "user_id": editor.id,
-                "session_id": editor_login.id,
+                "session_id": editor_login_token,
             },
             "viewer": {
                 "user_id": viewer.id,
-                "session_id": viewer_login.id,
+                "session_id": viewer_login_token,
             },
             "target": target,
             "job_id": job.id,

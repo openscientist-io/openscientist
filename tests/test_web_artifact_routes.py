@@ -42,7 +42,9 @@ async def owner_with_job(
         )
         db.add(owner)
         await db.flush()
-        login = Session(user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=owner.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         job = Job(
             owner_id=owner.id,
@@ -54,7 +56,7 @@ async def owner_with_job(
         db.add(job)
         await db.commit()
         await db.refresh(job)
-    yield owner, str(login.id), job
+    yield owner, login_token, job
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(Job).where(Job.id == job.id))
         await db.execute(delete(User).where(User.id == owner.id))
@@ -71,10 +73,12 @@ async def signed_in_viewer(test_engine: AsyncEngine) -> AsyncIterator[tuple[User
         )
         db.add(viewer)
         await db.flush()
-        login = Session(user_id=viewer.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        login, login_token = Session.issue(
+            user_id=viewer.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(login)
         await db.commit()
-    yield viewer, str(login.id)
+    yield viewer, login_token
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(User).where(User.id == viewer.id))
         await db.commit()

@@ -44,10 +44,12 @@ async def login(test_engine: AsyncEngine) -> AsyncIterator[str]:
         user = User(email=email, name="Slow Builder", is_approved=True)
         db.add(user)
         await db.flush()
-        session = Session(user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1))
+        session, session_token = Session.issue(
+            user_id=user.id, expires_at=datetime.now(UTC) + timedelta(days=1)
+        )
         db.add(session)
         await db.commit()
-    yield str(session.id)
+    yield session_token
     async with AsyncSession(test_engine) as db:
         await db.execute(delete(User).where(User.email == email))
         await db.commit()
