@@ -153,6 +153,83 @@ class TestWebsocketBudget:
                     assert await connection.recv() == stub_upstream.reply
             assert len(stub_upstream.frames) == 6
 
+    @pytest.mark.parametrize(
+        ("stream", "duplicate", "status", "detail"),
+        [
+            (1, False, 400, "Invalid response stream"),
+            ("same", True, 429, "Response stream already active"),
+        ],
+    )
+    async def test_invalid_or_active_stream_is_refused(
+        self,
+        stream,
+        duplicate,
+        status,
+        detail,
+        test_engine,
+        placeholder_for,
+        live_proxy,
+        stub_upstream,
+    ):
+        async with job_with_costs(test_engine, []) as job:
+            async with (
+                asyncio.timeout(5),
+                connect(
+                    f"ws://127.0.0.1:{live_proxy}/responses",
+                    additional_headers={"authorization": f"Bearer {placeholder_for(str(job.id))}"},
+                    proxy=None,
+                ) as connection,
+            ):
+                frame = json.dumps(
+                    {"type": "response.create", "model": "gpt-5.2", "stream_id": stream}
+                )
+                if duplicate:
+                    await connection.send(frame)
+                    assert await connection.recv() == "stub-reply"
+                await connection.send(frame)
+                error = json.loads(await connection.recv())
+                assert error["status"] == status
+                assert error["error"]["message"] == detail
+            assert stub_upstream.frames == ([frame] if duplicate else [])
+
+    async def test_empty_asgi_receive_preserves_next_frame(
+        self, test_engine, placeholder_for, stub_upstream
+    ):
+        async with job_with_costs(test_engine, []) as job:
+            incoming = asyncio.Queue()
+            incoming.put_nowait({"type": "websocket.connect"})
+            incoming.put_nowait({"type": "websocket.receive"})
+            incoming.put_nowait({"type": "websocket.receive", "text": "ping"})
+            sent = []
+
+            async def send(message):
+                sent.append(message)
+                if message["type"] == "websocket.send":
+                    incoming.put_nowait({"type": "websocket.disconnect", "code": 1000})
+
+            async with httpx.AsyncClient() as client:
+                app = create_llm_proxy_app(
+                    upstream=lambda: LlmUpstream(
+                        f"http://127.0.0.1:{stub_upstream.port}", StaticHeadersSigning({})
+                    ),
+                    client=client,
+                    provider_id=lambda: "openai",
+                )
+                async with asyncio.timeout(5):
+                    await app(
+                        {
+                            "type": "websocket",
+                            "path": "/responses",
+                            "raw_path": b"/responses",
+                            "query_string": b"",
+                            "headers": [(b"x-api-key", placeholder_for(str(job.id)).encode())],
+                        },
+                        incoming.get,
+                        send,
+                    )
+            assert stub_upstream.frames == ["ping"]
+            assert {"type": "websocket.send", "text": "stub-reply"} in sent
+
 
 @pytest.mark.parametrize("aborted", [False, True])
 async def test_http_parallel_admission_holds_until_metered(test_engine, placeholder_for, aborted):
@@ -345,6 +422,8 @@ async def test_cancelling_meter_wait_keeps_slots_until_settlement():
     next_call = admissions.acquire("job")
     assert next_call is not None
     next_call.release()
+    next_call.release()
+    assert admissions.active == {}
 
 
 async def test_failed_meter_releases_admission():
