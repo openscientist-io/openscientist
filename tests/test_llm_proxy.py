@@ -1072,9 +1072,11 @@ class TestBedrockSigV4ProxyForwarding:
             "arn%3Aaws%3Abedrock%3Aus-east-1%3A123456789012%3Ainference-profile/x",
             "arn%3Aaws%3Abedrock%3Aus-east-1%3A123456789012%3Ainference-profile%5Cx",
             "arn%3Aaws%3Abedrock%3Aus-east-1%3A123456789012%3Ainference-profile%2F.",
+            "%C3%A9",
+            "%FF",
         ],
     )
-    def test_refuses_arn_shaped_path_traversal(self, component, placeholder_for):
+    def test_refuses_invalid_model_paths(self, component, placeholder_for):
         recorded: list[dict] = []
         app = self._app(recorded)
         with TestClient(app) as client:

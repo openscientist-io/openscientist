@@ -19,9 +19,12 @@ def small_request_limit(monkeypatch):
     monkeypatch.setattr(llm_proxy, "_MAX_REQUEST_BYTES", 1024, raising=False)
 
 
-@pytest.mark.parametrize("declared_length", ["1025", "9" * 5000])
-async def test_oversized_content_length_is_refused_without_reading(
-    declared_length, placeholder_for
+@pytest.mark.parametrize(
+    ("declared_length", "status"),
+    [("1025", 413), ("9" * 5000, 413), ("invalid", 400), ("-1", 400), ("\xb2", 400)],
+)
+async def test_invalid_content_length_is_refused_without_reading(
+    declared_length, status, placeholder_for
 ):
     recorded = []
     read_chunks = 0
@@ -41,10 +44,13 @@ async def test_oversized_content_length_is_refused_without_reading(
     ) as client:
         response = await client.post(
             "/v1/messages",
-            headers={"x-api-key": placeholder_for("run"), "content-length": declared_length},
+            headers={
+                "x-api-key": placeholder_for("run").encode(),
+                "content-length": declared_length.encode("latin-1"),
+            },
             content=body(),
         )
-    assert response.status_code == 413
+    assert response.status_code == status
     assert read_chunks == 0
     assert recorded == []
 
