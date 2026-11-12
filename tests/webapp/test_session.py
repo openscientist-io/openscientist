@@ -1,13 +1,21 @@
 """Tests for session management utilities."""
 
+import asyncio
 import tempfile
 from pathlib import Path
 
+from nicegui.elements.upload_files import SmallFileUpload
+
 from openscientist.webapp_components.utils.session import (
+    _upload_locks,
     _uploaded_files,
     add_uploaded_file,
+    begin_upload,
     clear_uploaded_files,
+    finish_upload,
     get_uploaded_files,
+    save_uploaded_file,
+    upload_storage_root,
 )
 
 
@@ -98,3 +106,36 @@ class TestSessionManagement:
         assert len(files2) == 1
         assert files1[0]["name"] == "file1.txt"
         assert files2[0]["name"] == "file2.txt"
+
+
+async def test_disconnected_session_discards_upload_waiting_for_lock() -> None:
+    session_id = "queued-upload"
+    file = SmallFileUpload("data.csv", "text/csv", b"a,b\n1,2\n")
+    upload = begin_upload(session_id, file)
+    assert await save_uploaded_file(session_id, file, upload, max_files=2, max_file_size_bytes=1024)
+    finish_upload(session_id, upload)
+    saved_path = get_uploaded_files(session_id)[0]["path"]
+    assert saved_path.read_bytes() == b"a,b\n1,2\n"
+    lock = _upload_locks[session_id]
+    started = asyncio.Event()
+    queued_file = SmallFileUpload("queued.csv", "text/csv", b"a,b\n3,4\n")
+    queued_upload = begin_upload(session_id, queued_file)
+
+    async def save_queued_file() -> bool:
+        started.set()
+        return await save_uploaded_file(
+            session_id, queued_file, queued_upload, max_files=2, max_file_size_bytes=1024
+        )
+
+    async with lock:
+        pending = asyncio.create_task(save_queued_file(), name=session_id)
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+            assert not pending.done()
+        finally:
+            clear_uploaded_files(session_id)
+    assert await asyncio.wait_for(pending, timeout=5) is False
+    assert session_id not in _uploaded_files
+    assert session_id not in _upload_locks
+    assert not saved_path.exists()
+    assert list(upload_storage_root().iterdir()) == []
