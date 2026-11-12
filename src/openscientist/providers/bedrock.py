@@ -112,6 +112,7 @@ class BedrockProvider(ClaudeCompatible):
         return "bedrock"
 
     display_name = "AWS Bedrock"
+    credential_env_keys = ("AWS_BEARER_TOKEN_BEDROCK", "ANTHROPIC_AUTH_TOKEN")
 
     mode_flag = "CLAUDE_CODE_USE_BEDROCK"
     default_claude_model = "us.anthropic.claude-sonnet-5-5"

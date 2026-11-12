@@ -54,6 +54,7 @@ class LlamaCppProvider(SelfHostedOpenAiWire):
     server_name = "llama.cpp"
     base_url_env = "LLAMACPP_BASE_URL"
     api_key_env = "LLAMACPP_API_KEY"
+    credential_env_keys = (api_key_env, "OPENAI_API_KEY")
 
     @classmethod
     def _base_url_of(cls, provider: ProviderSettings) -> str:
