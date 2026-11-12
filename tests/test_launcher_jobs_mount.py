@@ -54,7 +54,7 @@ def agent_image(docker_client: docker.DockerClient) -> str:
 @pytest.fixture()
 def host_jobs(tmp_path: Path) -> Path:
     jobs = tmp_path / "jobs"
-    (jobs / JOB_ID).mkdir(parents=True)
+    (jobs / JOB_ID / "data").mkdir(parents=True)
     (jobs / JOB_ID).chmod(0o777)
     (jobs / JOB_ID / "marker.txt").write_text("the host job directory", encoding="utf-8")
     return jobs

@@ -161,7 +161,7 @@ class TestAgentPathThroughLauncher:
             job_id = str(model.id)
         # The web creates the job directory when the job is created; the
         # launcher validates the id against it.
-        (jobs_root / job_id).mkdir(parents=True)
+        (jobs_root / job_id / "data").mkdir(parents=True)
         try:
             yield job_id
         finally:

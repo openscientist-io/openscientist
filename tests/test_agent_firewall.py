@@ -678,7 +678,7 @@ class _Lab:
         with TemporaryDirectory(prefix="firewall-launcher-") as temporary:
             root = Path(temporary)
             job_id = str(uuid4())
-            (root / job_id).mkdir()
+            (root / job_id / "data").mkdir(parents=True)
             digest = str(self._client.images.get(TEST_IMAGE).attrs["Id"])
             environment = {
                 "PYTHONPATH": "/test-src:/test-deps",

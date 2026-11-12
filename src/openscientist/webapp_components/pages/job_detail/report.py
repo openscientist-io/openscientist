@@ -17,6 +17,7 @@ from openscientist.job_files import (
     read_job_file_text,
     try_open_job_file,
 )
+from openscientist.webapp_components.components.agent_markdown import render_agent_markdown
 from openscientist.webapp_components.components.badges import transform_pmid_references
 from openscientist.webapp_components.pages.job_detail.common import _JobDetailContext
 from openscientist.webapp_components.utils.permissions import revalidate_admin_session
@@ -188,7 +189,7 @@ async def _render_report_markdown(container: ui.column, report_path: Path) -> No
                 ui.label("The report is too large to show.").classes("text-gray-500 italic")
         return
     with container:
-        ui.markdown(content).classes("w-full")
+        render_agent_markdown(content).classes("w-full")
 
 
 def _render_lazy_markdown_report(tabs: ui.tabs, report_tab: ui.tab, report_path: Path) -> None:

@@ -52,7 +52,7 @@ def _config(jobs_root: Path, **overrides: object) -> LauncherConfig:
 
 def _jobs(tmp_path: Path) -> Path:
     jobs = tmp_path / "jobs"
-    (jobs / JOB_ID).mkdir(parents=True)
+    (jobs / JOB_ID / "data").mkdir(parents=True)
     return jobs
 
 
@@ -477,7 +477,10 @@ class TestAgentTemplate:
         assert kwargs["nano_cpus"] == 2_000_000_000
         assert kwargs["security_opt"] == ["no-new-privileges:true"]
         assert kwargs["extra_hosts"] == {"host.docker.internal": "host-gateway"}
-        assert _binds(kwargs) == {str(cfg.jobs_root / JOB_ID): (f"/agent/jobs/{JOB_ID}", False)}
+        assert _binds(kwargs) == {
+            str(cfg.jobs_root / JOB_ID): (f"/agent/jobs/{JOB_ID}", False),
+            str(cfg.jobs_root / JOB_ID / "data"): (f"/agent/jobs/{JOB_ID}/data", True),
+        }
         labels = kwargs["labels"]
         assert labels["openscientist.job_id"] == JOB_ID
         assert labels["openscientist.type"] == "agent"
@@ -550,10 +553,35 @@ class TestSymlinkedPathsRefused:
     """The daemon follows a symlink it is given as a bind source, so the
     launcher refuses to hand one to it."""
 
+    @pytest.mark.parametrize("kind", ["missing", "file", "symlink", "dangling"])
+    def test_agent_requires_a_real_data_directory(self, tmp_path: Path, kind: str) -> None:
+        jobs = _jobs(tmp_path)
+        data_dir = jobs / JOB_ID / "data"
+        data_dir.rmdir()
+        if kind == "file":
+            data_dir.touch()
+        elif kind == "symlink":
+            data_dir.symlink_to(tmp_path, target_is_directory=True)
+        elif kind == "dangling":
+            data_dir.symlink_to(tmp_path / "missing", target_is_directory=True)
+        with pytest.raises(ValidationError, match="data"):
+            validate_agent_request(_agent_request(), _config(jobs))
+
+    def test_executor_rechecks_the_data_bind_source(self, tmp_path: Path) -> None:
+        jobs = _jobs(tmp_path)
+        cfg = _config(jobs)
+        req = validate_exec_request(_executor_body(jobs), cfg)
+        data_dir = jobs / JOB_ID / "data"
+        data_dir.rmdir()
+        data_dir.symlink_to(tmp_path, target_is_directory=True)
+        with pytest.raises(ValidationError, match="data is not a real directory"):
+            executor_run_kwargs(cfg, req, network="bridge")
+
     def _symlinked_job_dir(self, tmp_path: Path) -> Path:
         jobs = _jobs(tmp_path)
         outside = tmp_path / "outside"
         outside.mkdir()
+        (jobs / JOB_ID / "data").rmdir()
         (jobs / JOB_ID).rmdir()
         (jobs / JOB_ID).symlink_to(outside, target_is_directory=True)
         return jobs
@@ -680,9 +708,11 @@ class TestExecutorTemplate:
         assert kwargs["mem_limit"] == "1024m"
         assert kwargs["nano_cpus"] == 500_000_000
         assert kwargs["labels"]["openscientist.type"] == "executor"
-        # The job directory is the only bind source, at the path the agent sees it.
         job_mount = f"/agent/jobs/{JOB_ID}"
-        assert _binds(kwargs) == {str(jobs / JOB_ID): (job_mount, False)}
+        assert _binds(kwargs) == {
+            str(jobs / JOB_ID): (job_mount, False),
+            str(jobs / JOB_ID / "data"): (f"{job_mount}/data", True),
+        }
         command = kwargs["command"]
         assert command[:2] == ["sh", "-c"]
         assert command[2].startswith("echo ")

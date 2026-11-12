@@ -1,19 +1,16 @@
-"""The web's metering of every model call the LLM proxy forwards.
-
-The proxy tees each response: the bytes and frames pass through unchanged
-while a wire-format decoder accumulates the token buckets the response
-carries, and at response end the web writes the cost row through its admin
-session. The container writes no cost rows, so the tokens and the cost come
-from the wire the proxy observed, not from the harness's word.
-"""
+"""Decode provider usage and persist actual or estimated model costs."""
 
 from __future__ import annotations
 
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
+
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
 
 from openscientist.agent.base import TokenUsage
 from openscientist.database.models import CostRecord
@@ -41,6 +38,7 @@ class _ObservedCall:
 
     model: str
     buckets: TokenUsage
+    usage_reported: bool = True
 
 
 def _int(value: object) -> int:
@@ -144,6 +142,7 @@ class _JsonDecoder:
         self._model = model
         self._buckets_from_usage = buckets_from_usage
         self._body = b""
+        self.error_code: str | None = None
 
     def feed(self, chunk: bytes) -> None:
         self._body += chunk
@@ -153,11 +152,13 @@ class _JsonDecoder:
             parsed = json.loads(self._body)
         except ValueError:
             return [
-                _ObservedCall(self._model, TokenUsage())
+                _ObservedCall(self._model, TokenUsage(), usage_reported=False)
             ], "response body was not parseable as JSON"
+        code = _dict(_dict(parsed).get("error")).get("code")
+        self.error_code = code if isinstance(code, str) else None
         usage = _dict(parsed).get("usage")
-        if not isinstance(usage, dict):
-            return [_ObservedCall(self._model, TokenUsage())], None
+        if not isinstance(usage, dict) or not usage:
+            return [_ObservedCall(self._model, TokenUsage(), usage_reported=False)], None
         return [_ObservedCall(self._model, self._buckets_from_usage(usage))], None
 
 
@@ -267,11 +268,7 @@ class _BedrockStreamDecoder:
 
 
 class _ChatSseDecoder:
-    """The OpenAI chat-completions stream. The chunks carry no usage except
-    the final one, and only when the request asked for it. The stream is only
-    complete once it sends ``[DONE]``, so a completed stream with no usage
-    writes the zero row, and a stream that ends or is cut before it writes
-    none."""
+    """Decode final chat usage while incomplete proxied calls retain estimated costs."""
 
     def __init__(self, model: str) -> None:
         self._model = model
@@ -318,13 +315,7 @@ class _ChatSseDecoder:
 
 
 class _ResponsesDecoder:
-    """The OpenAI Responses stream, the REST SSE and the websocket alike.
-    Usage is reported only at completion, so each ``response.completed``
-    event meters one call (a websocket turn can carry several), and a stream
-    that ends without one writes no row. The REST body streams through
-    ``feed``. The websocket path feeds one upstream frame per ``feed_frame``
-    call, and a frame that is a single JSON object is a complete event, since
-    the codex wire carries no SSE framing."""
+    """Decode completed Responses calls while incomplete proxied calls retain estimated costs."""
 
     def __init__(self, model: str) -> None:
         self._model = model
@@ -368,7 +359,11 @@ class _ResponsesDecoder:
                 model = self._model
             usage = response.get("usage")
             buckets = _responses_buckets(usage) if isinstance(usage, dict) else TokenUsage()
-            self._calls.append(_ObservedCall(model, buckets))
+            self._calls.append(
+                _ObservedCall(
+                    model, buckets, usage_reported=isinstance(usage, dict) and bool(usage)
+                )
+            )
             self._completed = True
 
     def take_completed(self) -> list[_ObservedCall]:
@@ -395,7 +390,7 @@ class _ResponsesDecoder:
 
 
 def _usage_decoder(
-    path: str, content_type: str, model: str
+    path: str, content_type: str, model: str, *, status_code: int = 200
 ) -> (
     _JsonDecoder
     | _AnthropicSseDecoder
@@ -407,8 +402,14 @@ def _usage_decoder(
     """The decoder for a forwarded request, chosen from the request path and
     the upstream content type, or None when the path is not a model call the
     proxy meters (a count-tokens lookup)."""
-    if "count-tokens" in path:
+    if path.endswith(("/count_tokens", "/count-tokens:rawPredict")):
         return None
+    if status_code >= 400:
+        if path.endswith("/chat/completions"):
+            return _JsonDecoder(model, _openai_chat_buckets)
+        if path.endswith(("/responses", "/responses/compact")):
+            return _JsonDecoder(model, _responses_buckets)
+        return _JsonDecoder(model, _anthropic_buckets)
     if path.endswith(":streamRawPredict"):
         return _AnthropicSseDecoder(model)
     if path.endswith(":rawPredict"):
@@ -417,6 +418,8 @@ def _usage_decoder(
         return _BedrockStreamDecoder(model)
     if path.endswith("/invoke"):
         return _JsonDecoder(model, _anthropic_buckets)
+    if path.endswith("/responses/compact"):
+        return _JsonDecoder(model, _responses_buckets)
     if path.rsplit("/", 1)[-1] == "responses":
         return _ResponsesDecoder(model)
     streaming = "text/event-stream" in content_type
@@ -478,11 +481,12 @@ async def record_model_call(
     model: str,
     provider_id: str,
     buckets: TokenUsage,
-) -> None:
-    """Write the cost row of one observed model call, as the web's admin
-    login. A lost database connection is retried, and a write that still
-    fails logs every bucket so the call can still be billed by hand. It never
-    raises, so a metering failure cannot drop a forwarded response."""
+    record_id: UUID | None = None,
+    cost_usd: float | None = None,
+    estimated: bool = False,
+    created_at: datetime | None = None,
+) -> bool:
+    """Persist a cost row idempotently or settle it when its job no longer exists."""
     try:
         uid = UUID(job_id)
     except ValueError:
@@ -498,9 +502,10 @@ async def record_model_call(
             buckets.cache_write_tokens + buckets.cache_write_1h_tokens,
             buckets.reasoning_tokens,
         )
-        return
+        return False
 
-    async def _write() -> None:
+    async def _write() -> bool:
+        nonlocal record_id
         async with get_admin_session() as session:
             job = await session.get(JobModel, uid)
             if job is None:
@@ -513,39 +518,44 @@ async def record_model_call(
                     buckets.input_tokens,
                     buckets.output_tokens,
                 )
-                return
+                return True
+            if record_id is None:
+                record_id = await session.scalar(select(func.uuidv7()))
             operation, iteration = _operation_labels(job, kind)
-            cost_usd = estimate_cost_usd(
-                model,
-                buckets.input_tokens,
-                buckets.output_tokens,
-                cache_read_tokens=buckets.cache_read_tokens,
-                cache_write_tokens=buckets.cache_write_tokens,
-                cache_write_1h_tokens=buckets.cache_write_1h_tokens,
-                reasoning_tokens=buckets.reasoning_tokens,
-            )
-            session.add(
-                CostRecord(
-                    job_id=uid,
-                    user_id=job.owner_id,
-                    iteration=iteration,
-                    operation_type=operation,
-                    provider=provider_id,
-                    model=model,
-                    input_tokens=buckets.input_tokens,
-                    output_tokens=buckets.output_tokens,
+            amount = cost_usd
+            if amount is None:
+                amount = estimate_cost_usd(
+                    model,
+                    buckets.input_tokens,
+                    buckets.output_tokens,
                     cache_read_tokens=buckets.cache_read_tokens,
-                    # The column holds every cache write. Only the price keeps
-                    # the tiers apart, and `cost_usd` already does.
-                    cache_write_tokens=buckets.cache_write_tokens + buckets.cache_write_1h_tokens,
+                    cache_write_tokens=buckets.cache_write_tokens,
+                    cache_write_1h_tokens=buckets.cache_write_1h_tokens,
                     reasoning_tokens=buckets.reasoning_tokens,
-                    cost_usd=cost_usd,
                 )
+            statement = insert(CostRecord).values(
+                id=record_id,
+                job_id=uid,
+                user_id=job.owner_id,
+                iteration=iteration,
+                operation_type=f"{operation}_estimated" if estimated else operation,
+                provider=provider_id,
+                model=model,
+                input_tokens=buckets.input_tokens,
+                output_tokens=buckets.output_tokens,
+                cache_read_tokens=buckets.cache_read_tokens,
+                cache_write_tokens=buckets.cache_write_tokens + buckets.cache_write_1h_tokens,
+                reasoning_tokens=buckets.reasoning_tokens,
+                cost_usd=amount,
             )
+            if created_at is not None:
+                statement = statement.values(created_at=created_at)
+            await session.execute(statement.on_conflict_do_nothing(index_elements=[CostRecord.id]))
             await session.commit()
+            return True
 
     try:
-        await retry_async(
+        return await retry_async(
             _write, within=_WRITE_RETRY_SECONDS, what=f"writing the cost of job {job_id}"
         )
     except Exception as e:
@@ -563,3 +573,4 @@ async def record_model_call(
             buckets.reasoning_tokens,
             e,
         )
+        return False

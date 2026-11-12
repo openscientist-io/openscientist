@@ -37,7 +37,7 @@ def _get_pubmed_badge_html(pmid: str) -> str:
         'min-height:14px;flex-shrink:0;vertical-align:middle;margin-right:3px;">'
         '<rect x="1" y="1" width="14" height="14" rx="2" fill="#326599"/>'
         '<text x="8" y="12" text-anchor="middle" '
-        'style="font-size:11px;font-weight:bold;font-family:Arial,sans-serif;fill:white;">'
+        'font-size="11px" font-weight="bold" font-family="Arial,sans-serif" fill="white">'
         "P</text></svg>"
     )
 

@@ -19,17 +19,22 @@ import tarfile
 import time
 from collections.abc import Iterator
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 from typing import Any
 
 import httpx
 import pytest
 from docker.models.containers import Container
+from starlette.testclient import TestClient
 
 import docker
-from openscientist_launcher.config import LauncherConfig
-from openscientist_launcher.templates import executor_run_kwargs
-from openscientist_launcher.validation import validate_exec_request
+from openscientist.job_container.launcher_client import LauncherClient
+from openscientist.job_container.runner import JobContainerRunner
+from openscientist_launcher import api
+from openscientist_launcher.api import ApiError, Server
+from openscientist_launcher.config import ConfigError, LauncherConfig
+from openscientist_launcher.templates import agent_run_kwargs, executor_run_kwargs
+from openscientist_launcher.validation import validate_agent_request, validate_exec_request
 from tests.launcher import (
     EXECUTOR_IMAGE,
     LAUNCHER_INSTANCE_ID,
@@ -87,7 +92,7 @@ def test_agent_image(docker_client: docker.DockerClient) -> str:
 @pytest.fixture()
 def jobs_root(tmp_path: Path) -> Path:
     jobs = tmp_path / "jobs"
-    (jobs / JOB_ID).mkdir(parents=True)
+    (jobs / JOB_ID / "data").mkdir(parents=True)
     return jobs
 
 
@@ -200,6 +205,55 @@ class TestAgentCreate:
         assert response.status_code == 400, response.text
         assert "pids_limit" in response.json()["error"]
 
+    @pytest.mark.parametrize("mode", ["discovery", "report_only", "chat"])
+    def test_agent_cannot_swap_the_executor_data_mount(
+        self, launcher: Launcher, docker_client: docker.DockerClient, jobs_root: Path, mode: str
+    ) -> None:
+        job_dir = jobs_root / JOB_ID
+        job_dir.chmod(0o777)
+        (job_dir / "data" / "input.txt").write_text("original")
+        (job_dir / "out").mkdir()
+        body = _agent_body(mode=mode, **({"chat_turn": "hello"} if mode == "chat" else {}))
+        with launcher.client() as client:
+            response = client.post("/v1/containers/agent", json=body)
+            assert response.status_code == 200, response.text
+            name = response.json()["name"]
+            try:
+                cfg = LauncherConfig.from_env(launcher.env)
+                validate_exec_request(
+                    {
+                        "job_id": JOB_ID,
+                        "timeout_seconds": 60,
+                        "memory_mib": 1024,
+                        "cpu": 0.5,
+                        "airgapped": True,
+                        "input": {
+                            "code": "print(1)",
+                            "language": "python",
+                            "output_dir": str(job_dir / "out"),
+                            "timeout": 30,
+                            "iteration": 0,
+                        },
+                    },
+                    cfg,
+                )
+                container = docker_client.containers.get(name)
+                mount = f"/agent/jobs/{JOB_ID}"
+                swap = container.exec_run(
+                    ["sh", "-c", f"mv {mount}/data {mount}/moved && ln -s /etc {mount}/data"],
+                    user="1001:1001",
+                )
+                assert swap.exit_code != 0, swap.output
+                assert b"Device or resource busy" in swap.output
+                assert not (job_dir / "moved").exists()
+                write = container.exec_run(["touch", f"{mount}/data/new"], user="1001:1001")
+                assert write.exit_code != 0
+                assert b"Read-only file system" in write.output
+                output = container.exec_run(["touch", f"{mount}/output"], user="1001:1001")
+                assert output.exit_code == 0, output.output
+            finally:
+                client.post(f"/v1/containers/{name}/remove")
+
     def test_valid_request_creates_the_template_container(
         self, launcher: Launcher, docker_client: docker.DockerClient, jobs_root: Path
     ) -> None:
@@ -230,7 +284,10 @@ class TestAgentCreate:
         assert host["Privileged"] is False
         assert host["CapAdd"] == ["NET_ADMIN"]
         assert host.get("Binds") is None
-        assert _host_binds(host) == [(str(jobs_root / JOB_ID), f"/agent/jobs/{JOB_ID}", False)]
+        assert _host_binds(host) == [
+            (str(jobs_root / JOB_ID), f"/agent/jobs/{JOB_ID}", False),
+            (str(jobs_root / JOB_ID / "data"), f"/agent/jobs/{JOB_ID}/data", True),
+        ]
         assert host["NetworkMode"] == "bridge"
         assert host["SecurityOpt"] == ["no-new-privileges:true"]
         assert host["Memory"] == 4096 * 1024**2
@@ -444,11 +501,14 @@ class TestRunHome:
             pytest.fail("agent container never reached running")
         try:
             job_dir = jobs_root / JOB_ID
-            assert sorted(os.listdir(job_dir)) == ["keep"], sorted(os.listdir(job_dir))
+            assert sorted(os.listdir(job_dir)) == ["data", "keep"], sorted(os.listdir(job_dir))
             attrs = _inspect(docker_client, name)
             binds = _host_binds(attrs["HostConfig"])
             assert (str(home), "/agent/run-home", False) in binds
-            assert not any(target.startswith(f"/agent/jobs/{JOB_ID}/") for _, target, _ in binds)
+            assert not any(
+                source == str(home) and target.startswith(f"/agent/jobs/{JOB_ID}/")
+                for source, target, _ in binds
+            )
             env = dict(item.split("=", 1) for item in attrs["Config"]["Env"] if "=" in item)
             assert env["OPENSCIENTIST_RUN_HOME"] == "/agent/run-home"
             result = docker_client.containers.get(name).exec_run(
@@ -787,6 +847,67 @@ class TestExecutor:
         assert result["success"], result
         assert (out_dir / "thread-count.txt").read_text() == "128"
 
+    @pytest.mark.parametrize("data_kind", ["directory", "missing", "symlink", "file"])
+    def test_executor_uploads_are_read_only(
+        self, launcher: Launcher, jobs_root: Path, tmp_path: Path, data_kind: str
+    ) -> None:
+        job_dir = jobs_root / JOB_ID
+        data_dir = job_dir / "data"
+        data_dir.rmdir()
+        out_dir = job_dir / "out"
+        out_dir.mkdir()
+        if data_kind == "directory":
+            data_dir.mkdir()
+            (data_dir / "input.txt").write_text("original")
+        elif data_kind == "symlink":
+            data_dir.symlink_to(tmp_path, target_is_directory=True)
+        elif data_kind == "file":
+            data_dir.touch()
+        code = (
+            "import os\n"
+            f"data = '/agent/jobs/{JOB_ID}/data'\n"
+            "with open('output.txt', 'w') as output:\n"
+            "    output.write('output')\n"
+            "if os.path.isdir(data):\n"
+            "    with open(data + '/input.txt') as source:\n"
+            "        assert source.read() == 'original'\n"
+            "    for operation in [lambda: open(data + '/input.txt', 'w'), "
+            "lambda: os.unlink(data + '/input.txt'), "
+            "lambda: open(data + '/new.txt', 'w')]:\n"
+            "        try:\n"
+            "            operation()\n"
+            "        except OSError as exc:\n"
+            "            assert exc.errno == 30, exc\n"
+            "        else:\n"
+            "            raise AssertionError('input data was writable')\n"
+        )
+        body = {
+            "job_id": JOB_ID,
+            "timeout_seconds": 120,
+            "memory_mib": 1024,
+            "cpu": 0.5,
+            "airgapped": True,
+            "input": {
+                "code": code,
+                "language": "python",
+                "output_dir": str(out_dir),
+                "timeout": 60,
+                "iteration": 0,
+            },
+        }
+        with launcher.client() as client:
+            response = client.post("/v1/exec", json=body)
+        if data_kind in {"symlink", "file"}:
+            assert response.status_code == 400, response.text
+            assert "data" in response.json()["error"]
+            return
+        assert response.status_code == 200, response.text
+        result = json.loads(response.json()["stdout"].splitlines()[-1])
+        assert result["success"], result
+        assert (out_dir / "output.txt").read_text() == "output"
+        if data_kind == "directory":
+            assert (data_dir / "input.txt").read_text() == "original"
+
     def test_valid_executor_run_roundtrip(
         self, launcher: Launcher, docker_client: docker.DockerClient, jobs_root: Path
     ) -> None:
@@ -869,7 +990,10 @@ class TestExecutor:
         assert host["Ulimits"] == [{"Name": "nofile", "Soft": 65536, "Hard": 65536}]
         assert host.get("Binds") is None
         job_mount = f"/agent/jobs/{JOB_ID}"
-        assert _host_binds(host) == [(str(job_dir), job_mount, False)]
+        assert _host_binds(host) == [
+            (str(job_dir), job_mount, False),
+            (str(job_dir / "data"), f"{job_mount}/data", True),
+        ]
         env = dict(item.split("=", 1) for item in config["Env"] if "=" in item)
         assert env["OPENSCIENTIST_FIREWALL_MODE"] == "restrict"
         assert env["OPENSCIENTIST_FIREWALL_RUN_AS"] == "executor"
@@ -1103,3 +1227,307 @@ class TestExecutor:
         assert not (attrs["HostConfig"].get("CapAdd") or [])
         env = {item.split("=", 1)[0] for item in attrs["Config"]["Env"]}
         assert not any(name.startswith("OPENSCIENTIST_FIREWALL_") for name in env)
+
+    def test_executor_root_is_read_only_and_scratch_is_bounded(
+        self, launcher: Launcher, jobs_root: Path
+    ) -> None:
+        out_dir = jobs_root / JOB_ID / "out"
+        out_dir.mkdir(mode=0o777)
+        out_dir.chmod(0o777)
+        code = """import os
+try:
+    os.close(os.open('/usr/local/cargo/root-write-proof', os.O_CREAT | os.O_WRONLY, 0o600))
+except OSError as error:
+    assert error.errno == 30, error
+else:
+    raise RuntimeError('container root is writable')
+for path, cap in [('/tmp', 1024**3), ('/home/executor', 64 * 1024**2)]:
+    stats = os.statvfs(path)
+    assert stats.f_blocks * stats.f_frsize <= cap, (path, stats)
+    probe = path + '/write-proof'
+    fd = os.open(probe, os.O_CREAT | os.O_WRONLY, 0o600)
+    os.write(fd, b'scratch works')
+    os.close(fd)
+    os.unlink(probe)
+print('bounded scratch and read-only root')
+"""
+        body = {
+            "job_id": JOB_ID,
+            "timeout_seconds": 120,
+            "memory_mib": 512,
+            "cpu": 0.25,
+            "airgapped": True,
+            "input": {
+                "code": code,
+                "language": "python",
+                "data_path": None,
+                "output_dir": str(out_dir),
+                "timeout": 60,
+                "description": "",
+                "iteration": 0,
+                "data_files": [],
+            },
+        }
+        with launcher.client() as client:
+            response = client.post("/v1/exec", json=body)
+        assert response.status_code == 200, response.text
+        assert '"success": true' in response.json()["stdout"], response.text
+        assert "bounded scratch and read-only root" in response.json()["stdout"]
+
+    def test_rust_executor_compiles_seeded_dependencies_offline(
+        self, launcher: Launcher, jobs_root: Path
+    ) -> None:
+        out_dir = jobs_root / JOB_ID / "rust-out"
+        out_dir.mkdir(mode=0o777)
+        out_dir.chmod(0o777)
+        body = {
+            "job_id": JOB_ID,
+            "timeout_seconds": 300,
+            "memory_mib": 512,
+            "cpu": 1.0,
+            "airgapped": True,
+            "input": {
+                "code": 'fn main() { let x = ndarray::arr1(&[1, 2, 3]); println!("seeded sum {}", x.sum()); }',
+                "language": "rust",
+                "data_path": None,
+                "output_dir": str(out_dir),
+                "timeout": 240,
+                "description": "",
+                "iteration": 0,
+                "data_files": [],
+            },
+        }
+        with launcher.client() as client:
+            response = client.post("/v1/exec", json=body, timeout=320)
+        assert response.status_code == 200, response.text
+        assert '"success": true' in response.json()["stdout"], response.text
+        assert "seeded sum 6" in response.json()["stdout"]
+        assert not list(out_dir.iterdir())
+
+
+class TestStorageReserve:
+    @pytest.mark.parametrize("reserve", ["0", "-1", "nan"])
+    def test_invalid_reserve_refuses_startup(self, launcher: Launcher, reserve: str) -> None:
+        with pytest.raises(ConfigError, match="JOBS_FREE_SPACE_RESERVE_MIB"):
+            LauncherConfig.from_env({**launcher.env, "JOBS_FREE_SPACE_RESERVE_MIB": reserve})
+
+    def test_configured_reserve_accepts_exact_threshold(
+        self, launcher: Launcher, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        server = Server(
+            LauncherConfig.from_env({**launcher.env, "JOBS_FREE_SPACE_RESERVE_MIB": "2"})
+        )
+        monkeypatch.setattr(
+            os,
+            "statvfs",
+            lambda path: os.statvfs_result((4096, 4096, 512, 512, 512, 1, 1, 1, 0, 255)),
+        )
+        try:
+            created = server.create_agent(_agent_body())
+            server.remove(str(created["id"]))
+        finally:
+            server.client.close()
+
+    def test_low_space_refuses_launches_and_recovers(
+        self, launcher: Launcher, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        server = Server(LauncherConfig.from_env(launcher.env))
+        real_statvfs = os.statvfs
+        try:
+            monkeypatch.setattr(
+                os,
+                "statvfs",
+                lambda path: os.statvfs_result((4096, 4096, 1, 0, 0, 1, 1, 1, 0, 255)),
+            )
+            with pytest.raises(ApiError, match="jobs filesystem"):
+                server.create_agent(_agent_body())
+            monkeypatch.setattr(os, "statvfs", real_statvfs)
+            created = server.create_agent(_agent_body())
+            server.remove(str(created["id"]))
+        finally:
+            for container in server.client.containers.list(
+                all=True, filters={"label": f"openscientist.launcher={INSTANCE_ID}"}
+            ):
+                container.remove(force=True)
+            server.client.close()
+
+    def test_reserve_stops_active_runs_with_reason(
+        self, launcher: Launcher, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        server = Server(LauncherConfig.from_env(launcher.env))
+        created = server.create_agent(_agent_body())
+        ref = str(created["id"])
+        try:
+            monkeypatch.setattr(
+                os,
+                "statvfs",
+                lambda path: os.statvfs_result((4096, 4096, 1, 0, 0, 1, 1, 1, 0, 255)),
+            )
+            server.enforce_storage_reserve()
+            container = server.client.containers.get(ref)
+            assert container.status == "exited"
+            with pytest.raises(ApiError, match="jobs filesystem"):
+                server.inspect(ref)
+            with pytest.raises(ApiError, match="jobs filesystem"):
+                server.wait(ref, b'{"timeout_seconds": 1}')
+        finally:
+            server.remove(ref)
+            server.client.close()
+
+    def test_unreadable_filesystem_refuses_launch(
+        self, launcher: Launcher, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        server = Server(LauncherConfig.from_env(launcher.env))
+
+        def unavailable(path: object) -> os.statvfs_result:
+            raise OSError("filesystem unavailable")
+
+        monkeypatch.setattr(os, "statvfs", unavailable)
+        try:
+            with pytest.raises(ApiError, match="jobs filesystem"):
+                server.create_agent(_agent_body())
+        finally:
+            for container in server.client.containers.list(
+                all=True, filters={"label": f"openscientist.launcher={INSTANCE_ID}"}
+            ):
+                container.remove(force=True)
+            server.client.close()
+
+    @pytest.mark.parametrize("unreadable", [False, True])
+    def test_monitor_stops_agent_chat_and_executor(
+        self,
+        launcher: Launcher,
+        jobs_root: Path,
+        docker_client: docker.DockerClient,
+        monkeypatch: pytest.MonkeyPatch,
+        unreadable: bool,
+    ) -> None:
+        cfg = LauncherConfig.from_env(launcher.env)
+        server = Server(cfg)
+        low = Event()
+        real_statvfs = os.statvfs
+
+        def sample(path: object) -> os.statvfs_result:
+            if low.is_set():
+                if unreadable:
+                    raise OSError("filesystem unavailable")
+                return os.statvfs_result((4096, 4096, 1, 0, 0, 1, 1, 1, 0, 255))
+            return real_statvfs(cfg.jobs_root)
+
+        monkeypatch.setattr(os, "statvfs", sample)
+        monkeypatch.setattr(api, "Server", lambda config: server)
+        out_dir = jobs_root / JOB_ID / "out"
+        out_dir.mkdir()
+        body = {
+            "job_id": JOB_ID,
+            "timeout_seconds": 120,
+            "memory_mib": 512,
+            "cpu": 0.25,
+            "airgapped": True,
+            "input": {
+                "code": "import time\ntime.sleep(60)",
+                "language": "python",
+                "data_path": None,
+                "output_dir": str(out_dir),
+                "timeout": 60,
+                "description": "",
+                "iteration": 0,
+                "data_files": [],
+            },
+        }
+        replies: dict[str, tuple[int, str]] = {}
+        foreign = docker_client.containers.run(
+            TEST_IMAGE, entrypoint=["sleep", "60"], detach=True, network="none"
+        )
+        try:
+            with TestClient(api.create_app(cfg)) as client:
+                agent = client.post("/v1/containers/agent", json=_agent_body())
+                chat = client.post(
+                    "/v1/containers/agent", json=_agent_body(mode="chat", chat_turn="hello")
+                )
+                assert agent.status_code == chat.status_code == 200
+
+                def execute() -> None:
+                    response = client.post("/v1/exec", json=body)
+                    replies["executor"] = response.status_code, response.text
+
+                executor = Thread(target=execute, daemon=True)
+                executor.start()
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline:
+                    active = docker_client.containers.list(
+                        filters={
+                            "label": [
+                                f"openscientist.launcher={INSTANCE_ID}",
+                                "openscientist.type=executor",
+                            ]
+                        }
+                    )
+                    if active:
+                        break
+                    time.sleep(0.05)
+                assert active, "executor did not start within 15s"
+                low.set()
+                executor.join(timeout=15)
+                assert not executor.is_alive()
+                status, response_body = replies["executor"]
+                assert status == 507
+                assert "jobs filesystem" in json.loads(response_body)["error"]
+                for created in (agent, chat):
+                    ref = created.json()["id"]
+                    response = client.get(f"/v1/containers/{ref}")
+                    assert response.status_code == 507, response.text
+                    assert docker_client.containers.get(ref).status == "exited"
+                    assert client.get(f"/v1/containers/{ref}/logs").status_code == 200
+                    assert client.post(f"/v1/containers/{ref}/remove").status_code == 200
+                refused = client.post("/v1/containers/agent", json=_agent_body())
+                assert refused.status_code == 507
+                foreign.reload()
+                assert foreign.status == "running"
+                low.clear()
+                recovered = client.post("/v1/containers/agent", json=_agent_body())
+                assert recovered.status_code == 200, recovered.text
+                client.post(f"/v1/containers/{recovered.json()['id']}/remove")
+        finally:
+            foreign.remove(force=True)
+            for container in docker_client.containers.list(
+                all=True, filters={"label": f"openscientist.launcher={INSTANCE_ID}"}
+            ):
+                container.remove(force=True)
+
+
+def test_rotated_agent_log_is_saved_on_cleanup(
+    launcher: Launcher, jobs_root: Path, docker_client: docker.DockerClient
+) -> None:
+    cfg = LauncherConfig.from_env(launcher.env)
+    launch = validate_agent_request(_agent_body(), cfg)
+    kwargs = agent_run_kwargs(cfg, launch, network="none")
+    kwargs["labels"].pop("openscientist.db_login")
+    kwargs["user"] = "agent"
+    kwargs["entrypoint"] = [
+        "python",
+        "-c",
+        "import sys\n"
+        "print('discarded-start', flush=True)\n"
+        "for _ in range(10240):\n"
+        "    sys.stdout.write('x' * 4095 + '\\n')\n"
+        "print('retained-end', flush=True)\n",
+    ]
+    kwargs["command"] = []
+    container = docker_client.containers.run(**kwargs)
+    runner = JobContainerRunner()
+    runner._client = LauncherClient(launcher.socket_path)
+    try:
+        assert container.wait(timeout=30)["StatusCode"] == 0
+        job_dir = jobs_root / JOB_ID
+        runner.cleanup(JOB_ID, log_dir=job_dir)
+        saved = (job_dir / "agent-container.log").read_text()
+        assert saved.endswith("retained-end\n")
+        assert "discarded-start" not in saved
+        assert len(saved.encode()) <= 30 * 1024**2
+    finally:
+        runner.client._http.close()
+        try:
+            container.remove(force=True)
+        except docker.errors.NotFound:
+            pass

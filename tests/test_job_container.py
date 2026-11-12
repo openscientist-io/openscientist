@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock, call, patch
 
+import httpx
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -26,8 +27,10 @@ from openscientist.job_container.db_login import AGENT_LOGIN_LABEL, AgentLogin
 from openscientist.job_container.launcher_client import (
     LauncherClient,
     LauncherDockerError,
+    LauncherError,
     LauncherImageMissingError,
     LauncherNotFoundError,
+    LauncherStorageError,
     LauncherUnavailableError,
 )
 from openscientist.job_container.run_home import create_run_home
@@ -659,6 +662,21 @@ class TestJobContainerRunner:
         client.inspect.return_value = {"status": "exited", "exit_code": 3}
         assert runner.get_exit_code("job-123") == 3
 
+    def test_get_exit_code_reports_storage_reserve_failure(self):
+        runner, client = _runner_with_client()
+        client.list_containers.return_value = [_listed_entry({})]
+        launcher = LauncherClient("/unused.sock")
+        client.inspect.side_effect = launcher.inspect
+        response = httpx.Response(
+            507, json={"error": "storage_reserve: The jobs filesystem is below its reserve"}
+        )
+        try:
+            with patch("httpx.Client.request", return_value=response):
+                with pytest.raises(LauncherError, match="jobs filesystem"):
+                    runner.get_exit_code("job-123")
+        finally:
+            launcher._http.close()
+
     def test_get_exit_code_returns_none_when_container_disappears(self):
         """Exit-code polling treats a vanished container as a benign miss."""
         runner, client = _runner_with_client()
@@ -958,6 +976,26 @@ class TestChatTurnLaunch:
         """A turn cut at its bound still gets its cost written by the stop."""
         with pytest.raises(RuntimeError, match="did not finish"):
             self._run_chat(timed_out=True)
+
+    def test_chat_turn_preserves_storage_error_and_cleans_up(
+        self, agent_login: SimpleNamespace
+    ) -> None:
+        runner, client = _runner_with_client()
+        error = LauncherStorageError("storage_unavailable", "Jobs storage reserve reached")
+        client.wait.side_effect = error
+        with (
+            patch("openscientist.job_container.runner.get_settings", return_value=self._settings()),
+            patch(
+                "openscientist.agent.factory.agent_class_for_provider_id",
+                return_value=MagicMock(RUN_HOME=None),
+            ),
+            pytest.raises(LauncherStorageError) as raised,
+        ):
+            runner.run_chat_turn("job-123", Path("/app/jobs/job-123"), "t1")
+        assert raised.value is error
+        client.stop.assert_called_once_with("c" * 64, timeout_seconds=_STOP_GRACE_SECONDS)
+        client.remove.assert_called_once_with("c" * 64)
+        agent_login.closed.assert_called_once_with(_LOGIN.role)
 
     def test_chat_turn_removes_container_and_drops_login_when_stop_fails(
         self,

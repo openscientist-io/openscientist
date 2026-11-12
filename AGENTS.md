@@ -118,7 +118,7 @@ async with user_simulation(root=some_page) as browser:
 
 ## UI Component Reuse
 
-**Component reuse is critical.** All UI elements with similar functionality MUST use shared components from the `src/openscientist/webapp_components/components/` package (`badges`, `banners`, `common`, `dialogs`, `job_table`, `navigation`, `notifications`).
+**Component reuse is critical.** All UI elements with similar functionality MUST use shared components from the `src/openscientist/webapp_components/components/` package (`agent_markdown`, `badges`, `banners`, `common`, `dialogs`, `job_table`, `navigation`, `notifications`).
 
 ### Error Banners
 
@@ -145,6 +145,10 @@ render_alert_banner(
 ### Status Badges
 
 Use `render_status_cell_slot()` for job status display in tables and `STATUS_COLORS` elsewhere.
+
+### Agent Markdown
+
+Render any markdown written by the agent or an LLM (chat replies, reports) with `render_agent_markdown(content)` from `openscientist.webapp_components.components.agent_markdown`, never with a bare `ui.markdown`. It strips scripts, styles, forms and remote images before the content reaches the page.
 
 ### Adding New Components
 

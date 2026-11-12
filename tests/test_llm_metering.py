@@ -45,11 +45,34 @@ from openscientist.job_container.secrets import (
 )
 from openscientist.llm_proxy import _NoSignalServer, create_llm_proxy_app
 from openscientist.providers.base import LlmUpstream, StaticHeadersSigning
+from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 
-_PROVIDER = "stub-provider"
+_PROVIDER = "anthropic"
 _PRICED_MODEL = "stub-sonnet"
 _BEDROCK_MODEL = "amazon.nova-lite-v1"
 _UNPRICED_MODEL = "stub-no-rate"
+
+
+@pytest.fixture(autouse=True)
+def wire_provider(request, monkeypatch):
+    providers = {
+        "TestOpenAiChatWire": "ollama",
+        "TestResponsesWire": "openai",
+        "TestResponsesWebsocket": "openai",
+        "TestBedrockWire": "bedrock",
+        "TestVertexWire": "vertex",
+        "TestNotMetered": "vertex",
+    }
+    monkeypatch.setattr(
+        "tests.test_llm_metering._PROVIDER", providers.get(request.cls.__name__, "anthropic")
+    )
+    monkeypatch.setenv("ANTHROPIC_VERTEX_PROJECT_ID", "proj")
+    from openscientist.settings import get_settings
+
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
 
 _RATES = {
     "input_cost_per_token": 3e-6,
@@ -57,6 +80,7 @@ _RATES = {
     "cache_read_input_token_cost": 0.3e-6,
     "cache_creation_input_token_cost": 3.75e-6,
     "cache_creation_input_token_cost_above_1hr": 6e-6,
+    "max_output_tokens": 100,
 }
 
 _PRICING = {
@@ -160,6 +184,7 @@ class _Plan:
     chunks: list[bytes] = field(default_factory=list)
     hang_after: int | None = None
     hold_response: bool = False
+    blocked: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 def _upstream_handler(
@@ -168,12 +193,14 @@ def _upstream_handler(
     async def handler(request: Request) -> StreamingResponse:
         plan = _match(request.url.path, plans)
         if plan.hold_response:
+            plan.blocked.set()
             await asyncio.Event().wait()
 
         async def stream() -> AsyncGenerator[bytes, None]:
             for index, chunk in enumerate(plan.chunks):
                 yield chunk
                 if plan.hang_after is not None and index + 1 >= plan.hang_after:
+                    plan.blocked.set()
                     await asyncio.Event().wait()
 
         return StreamingResponse(
@@ -268,7 +295,13 @@ class _StreamingASGITransport(httpx.AsyncBaseTransport):
                 with contextlib.suppress(BaseException):
                     await app_task
 
-        start_message = await start.get()
+        try:
+            start_message = await start.get()
+        except BaseException:
+            app_task.cancel()
+            with contextlib.suppress(BaseException):
+                await app_task
+            raise
         headers = httpx.Headers(
             [(key.decode(), value.decode()) for key, value in start_message.get("headers", [])]
         )
@@ -301,6 +334,22 @@ def _proxy_app(upstream_client: httpx.AsyncClient) -> Starlette:
     )
 
 
+def _estimated_row(body: dict | bytes, model: str = _PRICED_MODEL) -> tuple:
+    wire = body if isinstance(body, bytes) else json.dumps(body).encode()
+    return (
+        "discovery_estimated",
+        3,
+        _PROVIDER,
+        model,
+        len(wire),
+        100,
+        0,
+        0,
+        0,
+        _cost(len(wire), 100),
+    )
+
+
 def _post(app: Starlette, path: str, placeholder: str, body: dict | str) -> None:
     content = body if isinstance(body, str) else json.dumps(body)
     with TestClient(app) as client:
@@ -317,11 +366,9 @@ async def _drive(
     path: str,
     placeholder: str,
     body: bytes,
-    timeout: float,
+    blocked: asyncio.Event,
 ) -> None:
-    """Drive one POST through the app as raw ASGI and cancel the app's task
-    after ``timeout`` seconds, which is how a client going away reaches the
-    app. A request that ends before the timeout runs to its real end."""
+    """Cancel one request after its upstream blocks and await its cleanup."""
     sent: list[Mapping[str, Any]] = []
     scope = {
         "type": "http",
@@ -355,11 +402,13 @@ async def _drive(
 
     task = asyncio.create_task(app(scope, receive, send))
     try:
-        await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
-    except (asyncio.TimeoutError, Exception):
+        async with asyncio.timeout(10):
+            await blocked.wait()
+    finally:
         task.cancel()
-    with contextlib.suppress(asyncio.CancelledError, Exception):
-        await task
+        async with asyncio.timeout(10):
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
 
 def _anthropic_usage(
@@ -463,6 +512,13 @@ class TestAnthropicWire:
     """Rows A and B, the Anthropic Messages JSON and SSE the proxy also sees
     from CBORG, Foundry and the self-hosted Anthropic gateways."""
 
+    async def test_count_tokens_writes_no_cost(self, test_engine, job, run_for):
+        placeholder = run_for(str(job), "discovery").llm_placeholder
+        plan = _Plan(chunks=[b'{"input_tokens": 12}'])
+        app = _proxy_app(_upstream_client({"/v1/messages/count_tokens": plan}))
+        _post(app, "/v1/messages/count_tokens", placeholder, {"model": _PRICED_MODEL})
+        assert await _rows(test_engine, job) == []
+
     @pytest.mark.asyncio
     async def test_a_non_streaming_answer_writes_its_full_row(
         self, test_engine: AsyncEngine, job: UUID, run_for
@@ -533,7 +589,7 @@ class TestAnthropicWire:
         ]
 
     @pytest.mark.asyncio
-    async def test_a_stream_cut_before_its_final_usage_keeps_its_start_buckets(
+    async def test_a_stream_cut_before_final_usage_keeps_the_estimate(
         self, test_engine: AsyncEngine, job: UUID, run_for
     ) -> None:
         placeholder = run_for(str(job), "discovery").llm_placeholder
@@ -542,23 +598,10 @@ class TestAnthropicWire:
         plan = _Plan(content_type="text/event-stream", chunks=chunks)
         app = _proxy_app(_upstream_client({"/v1/messages": plan}))
         _post(app, "/v1/messages", placeholder, body)
-        assert await _rows(test_engine, job) == [
-            (
-                "discovery",
-                3,
-                _PROVIDER,
-                _PRICED_MODEL,
-                100,
-                0,
-                20,
-                0,
-                0,
-                _cost(100, 0, cache_read=20),
-            ),
-        ]
+        assert await _rows(test_engine, job) == [_estimated_row(body)]
 
     @pytest.mark.asyncio
-    async def test_a_client_that_goes_away_keeps_its_start_buckets(
+    async def test_a_client_that_goes_away_keeps_the_estimate(
         self, test_engine: AsyncEngine, job: UUID, run_for
     ) -> None:
         placeholder = run_for(str(job), "discovery").llm_placeholder
@@ -570,24 +613,13 @@ class TestAnthropicWire:
             hang_after=2,
         )
         app = _proxy_app(_upstream_client({"/v1/messages": plan}))
-        await _drive(app, path="/v1/messages", placeholder=placeholder, body=body, timeout=0.2)
-        assert await _rows(test_engine, job) == [
-            (
-                "discovery",
-                3,
-                _PROVIDER,
-                _PRICED_MODEL,
-                100,
-                0,
-                20,
-                0,
-                0,
-                _cost(100, 0, cache_read=20),
-            ),
-        ]
+        await _drive(
+            app, path="/v1/messages", placeholder=placeholder, body=body, blocked=plan.blocked
+        )
+        assert await _rows(test_engine, job) == [_estimated_row(body)]
 
     @pytest.mark.asyncio
-    async def test_a_non_streaming_answer_without_usage_writes_the_zero_row(
+    async def test_a_non_streaming_answer_without_usage_keeps_the_estimate(
         self, test_engine: AsyncEngine, job: UUID, run_for
     ) -> None:
         placeholder = run_for(str(job), "discovery").llm_placeholder
@@ -595,12 +627,10 @@ class TestAnthropicWire:
         plan = _Plan(chunks=[json.dumps({"id": "m1"}).encode()])
         app = _proxy_app(_upstream_client({"/v1/messages": plan}))
         _post(app, "/v1/messages", placeholder, body)
-        assert await _rows(test_engine, job) == [
-            ("discovery", 3, _PROVIDER, _PRICED_MODEL, 0, 0, 0, 0, 0, 0.0),
-        ]
+        assert await _rows(test_engine, job) == [_estimated_row(body)]
 
     @pytest.mark.asyncio
-    async def test_an_upstream_error_writes_no_row(
+    async def test_an_upstream_error_cancels_the_estimate(
         self, test_engine: AsyncEngine, job: UUID, run_for
     ) -> None:
         placeholder = run_for(str(job), "discovery").llm_placeholder
@@ -611,15 +641,17 @@ class TestAnthropicWire:
         assert await _rows(test_engine, job) == []
 
     @pytest.mark.asyncio
-    async def test_a_call_with_no_response_yet_writes_no_row(
+    async def test_cancellation_before_response_headers_keeps_the_estimate(
         self, test_engine: AsyncEngine, job: UUID, run_for
     ) -> None:
         placeholder = run_for(str(job), "discovery").llm_placeholder
         body = json.dumps({"model": _PRICED_MODEL, "messages": []}).encode()
         plan = _Plan(hold_response=True)
         app = _proxy_app(_upstream_client({"/v1/messages": plan}))
-        await _drive(app, path="/v1/messages", placeholder=placeholder, body=body, timeout=0.2)
-        assert await _rows(test_engine, job) == []
+        await _drive(
+            app, path="/v1/messages", placeholder=placeholder, body=body, blocked=plan.blocked
+        )
+        assert await _rows(test_engine, job) == [_estimated_row(body)]
 
     @pytest.mark.asyncio
     async def test_an_unpriced_model_keeps_its_buckets_at_zero_cost(
@@ -695,7 +727,7 @@ class TestOpenAiChatWire:
         ]
 
     @pytest.mark.asyncio
-    async def test_a_completed_stream_without_usage_writes_the_zero_row(
+    async def test_a_completed_stream_without_usage_keeps_the_estimate(
         self, test_engine: AsyncEngine, job: UUID, run_for
     ) -> None:
         placeholder = run_for(str(job), "discovery").llm_placeholder
@@ -703,12 +735,10 @@ class TestOpenAiChatWire:
         plan = _Plan(content_type="text/event-stream", chunks=_chat_sse_chunks(None))
         app = _proxy_app(_upstream_client({"/chat/completions": plan}))
         _post(app, "/chat/completions", placeholder, body)
-        assert await _rows(test_engine, job) == [
-            ("discovery", 3, _PROVIDER, _PRICED_MODEL, 0, 0, 0, 0, 0, 0.0),
-        ]
+        assert await _rows(test_engine, job) == [_estimated_row(body)]
 
     @pytest.mark.asyncio
-    async def test_a_stream_cut_before_its_usage_writes_no_row(
+    async def test_a_stream_cut_before_usage_keeps_the_estimate(
         self, test_engine: AsyncEngine, job: UUID, run_for
     ) -> None:
         placeholder = run_for(str(job), "discovery").llm_placeholder
@@ -719,7 +749,7 @@ class TestOpenAiChatWire:
         )
         app = _proxy_app(_upstream_client({"/chat/completions": plan}))
         _post(app, "/chat/completions", placeholder, body)
-        assert await _rows(test_engine, job) == []
+        assert await _rows(test_engine, job) == [_estimated_row(body)]
 
     @pytest.mark.asyncio
     async def test_an_error_event_after_the_usage_still_writes_the_row(
@@ -752,6 +782,21 @@ class TestResponsesWire:
     """Row E, the OpenAI Responses REST SSE. Usage is reported only at
     completion, so a cut or a failed stream writes no row, and the harness's
     retry meters itself."""
+
+    async def test_compaction_records_responses_usage(self, test_engine, job, run_for):
+        placeholder = run_for(str(job), "discovery").llm_placeholder
+        usage = {
+            "input_tokens": 100,
+            "output_tokens": 25,
+            "input_tokens_details": {"cached_tokens": 20},
+            "output_tokens_details": {"reasoning_tokens": 5},
+        }
+        plan = _Plan(chunks=[json.dumps({"usage": usage}).encode()])
+        app = _proxy_app(_upstream_client({"/responses/compact": plan}))
+        _post(app, "/responses/compact", placeholder, {"model": _PRICED_MODEL})
+        rows = await _rows(test_engine, job)
+        assert len(rows) == 1
+        assert rows[0][4:9] == (80, 20, 20, 0, 5)
 
     @pytest.mark.asyncio
     async def test_a_completed_response_writes_its_row_at_its_own_model(
@@ -788,7 +833,7 @@ class TestResponsesWire:
         ]
 
     @pytest.mark.asyncio
-    async def test_a_stream_cut_before_completion_writes_no_row(
+    async def test_a_stream_cut_before_completion_keeps_the_estimate(
         self, test_engine: AsyncEngine, job: UUID, run_for
     ) -> None:
         placeholder = run_for(str(job), "discovery").llm_placeholder
@@ -797,10 +842,10 @@ class TestResponsesWire:
         plan = _Plan(content_type="text/event-stream", chunks=[created])
         app = _proxy_app(_upstream_client({"/responses": plan}))
         _post(app, "/responses", placeholder, body)
-        assert await _rows(test_engine, job) == []
+        assert await _rows(test_engine, job) == [_estimated_row(body)]
 
     @pytest.mark.asyncio
-    async def test_a_failed_response_writes_no_row(
+    async def test_a_failed_response_keeps_the_estimate(
         self, test_engine: AsyncEngine, job: UUID, run_for
     ) -> None:
         placeholder = run_for(str(job), "discovery").llm_placeholder
@@ -809,10 +854,10 @@ class TestResponsesWire:
         plan = _Plan(content_type="text/event-stream", chunks=[failed])
         app = _proxy_app(_upstream_client({"/responses": plan}))
         _post(app, "/responses", placeholder, body)
-        assert await _rows(test_engine, job) == []
+        assert await _rows(test_engine, job) == [_estimated_row(body)]
 
     @pytest.mark.asyncio
-    async def test_a_cut_stream_client_side_writes_no_row(
+    async def test_a_cut_stream_client_side_keeps_the_estimate(
         self, test_engine: AsyncEngine, job: UUID, run_for
     ) -> None:
         placeholder = run_for(str(job), "discovery").llm_placeholder
@@ -824,8 +869,10 @@ class TestResponsesWire:
             hang_after=1,
         )
         app = _proxy_app(_upstream_client({"/responses": plan}))
-        await _drive(app, path="/responses", placeholder=placeholder, body=body, timeout=0.2)
-        assert await _rows(test_engine, job) == []
+        await _drive(
+            app, path="/responses", placeholder=placeholder, body=body, blocked=plan.blocked
+        )
+        assert await _rows(test_engine, job) == [_estimated_row(body)]
 
 
 class TestBedrockWire:
@@ -876,7 +923,7 @@ class TestBedrockWire:
         ]
 
     @pytest.mark.asyncio
-    async def test_an_eventstream_cut_after_its_start_keeps_its_start_buckets(
+    async def test_an_eventstream_cut_after_its_start_keeps_the_estimate(
         self, test_engine: AsyncEngine, job: UUID, run_for
     ) -> None:
         placeholder = run_for(str(job), "discovery").llm_placeholder
@@ -891,23 +938,10 @@ class TestBedrockWire:
         plan = _Plan(content_type="application/vnd.amazon.eventstream", chunks=[start])
         app = _proxy_app(_upstream_client({path: plan}))
         _post(app, path, placeholder, body)
-        assert await _rows(test_engine, job) == [
-            (
-                "discovery",
-                3,
-                _PROVIDER,
-                _BEDROCK_MODEL,
-                100,
-                0,
-                20,
-                0,
-                0,
-                _cost(100, 0, cache_read=20),
-            ),
-        ]
+        assert await _rows(test_engine, job) == [_estimated_row(body, _BEDROCK_MODEL)]
 
     @pytest.mark.asyncio
-    async def test_an_eventstream_exception_keeps_its_start_buckets(
+    async def test_an_eventstream_exception_keeps_the_estimate(
         self, test_engine: AsyncEngine, job: UUID, run_for
     ) -> None:
         placeholder = run_for(str(job), "discovery").llm_placeholder
@@ -923,20 +957,7 @@ class TestBedrockWire:
         plan = _Plan(content_type="application/vnd.amazon.eventstream", chunks=[start, exception])
         app = _proxy_app(_upstream_client({path: plan}))
         _post(app, path, placeholder, body)
-        assert await _rows(test_engine, job) == [
-            (
-                "discovery",
-                3,
-                _PROVIDER,
-                _BEDROCK_MODEL,
-                100,
-                0,
-                20,
-                0,
-                0,
-                _cost(100, 0, cache_read=20),
-            ),
-        ]
+        assert await _rows(test_engine, job) == [_estimated_row(body, _BEDROCK_MODEL)]
 
     @pytest.mark.asyncio
     async def test_frames_pass_through_unchanged(
@@ -1007,7 +1028,7 @@ class TestVertexWire:
         ]
 
     @pytest.mark.asyncio
-    async def test_a_cut_stream_raw_predict_keeps_its_start_buckets(
+    async def test_a_cut_stream_raw_predict_keeps_the_estimate(
         self, test_engine: AsyncEngine, job: UUID, run_for
     ) -> None:
         placeholder = run_for(str(job), "discovery").llm_placeholder
@@ -1020,27 +1041,11 @@ class TestVertexWire:
         plan = _Plan(content_type="text/event-stream", chunks=chunks)
         app = _proxy_app(_upstream_client({":streamRawPredict": plan}))
         _post(app, path, placeholder, body)
-        assert await _rows(test_engine, job) == [
-            (
-                "discovery",
-                3,
-                _PROVIDER,
-                _PRICED_MODEL,
-                100,
-                0,
-                20,
-                0,
-                0,
-                _cost(100, 0, cache_read=20),
-            ),
-        ]
+        assert await _rows(test_engine, job) == [_estimated_row(body)]
 
 
 class TestResponsesWebsocket:
-    """Row F, the codex Responses websocket, one row per completed response in
-    a turn, the frames forwarded unchanged, and no row for a turn that ends
-    without a completion. The pinned codex wire carries one raw JSON event per
-    frame, and the SSE ``data:`` framing is only the REST form."""
+    """Meter completed websocket responses and retain estimates for interrupted calls."""
 
     @pytest.fixture
     async def stub_upstream(self):
@@ -1146,22 +1151,26 @@ class TestResponsesWebsocket:
         ]
 
     @pytest.mark.asyncio
-    async def test_a_turn_that_ends_without_a_completion_writes_no_row(
+    async def test_a_turn_without_completion_keeps_the_estimate(
         self, test_engine: AsyncEngine, job: UUID, run_for, stub_upstream, live_proxy
     ) -> None:
         stub_upstream.replies = [_responses_frame("response.created", {"id": "r1"})]
         stub_upstream.close_after = 1
         placeholder = run_for(str(job), "discovery").llm_placeholder
+        body = {"type": "response.create", "model": _PRICED_MODEL}
         async with ws_connect(
             f"ws://127.0.0.1:{live_proxy}/responses",
             additional_headers={"authorization": f"Bearer {placeholder}"},
             proxy=None,
         ) as connection:
-            await connection.send(json.dumps({"type": "response.create"}))
+            await connection.send(json.dumps(body))
             await connection.recv()
             with contextlib.suppress(ConnectionClosed):
                 await connection.recv()
-        assert await _rows(test_engine, job) == []
+        async with asyncio.timeout(5):
+            while not (rows := await _rows(test_engine, job)):
+                await asyncio.sleep(0.01)
+        assert rows == [_estimated_row(body)]
 
     @pytest.mark.asyncio
     async def test_raw_json_frames_meter_each_completed_response(
@@ -1284,19 +1293,30 @@ class TestNotMetered:
     catalogue answer pass through and write no row, and a dead run's
     placeholder still writes no row."""
 
+    @pytest_asyncio.fixture
+    async def counting_budget(self, test_engine: AsyncEngine):
+        await set_admin_settings_row(test_engine, max_project_spend_total_usd=0.01)
+        try:
+            yield
+        finally:
+            await reset_admin_settings_row(test_engine)
+
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("model", [_PRICED_MODEL, _UNPRICED_MODEL])
     async def test_a_count_tokens_lookup_writes_no_row(
-        self, test_engine: AsyncEngine, job: UUID, run_for
+        self, test_engine: AsyncEngine, job: UUID, run_for, model: str, counting_budget
     ) -> None:
         placeholder = run_for(str(job), "discovery").llm_placeholder
         path = (
-            "/projects/proj/locations/us-east5/publishers/anthropic/models/"
-            f"{_PRICED_MODEL}:count-tokens:rawPredict"
+            "/projects/proj/locations/us-east5/publishers/anthropic/models/count-tokens:rawPredict"
         )
-        body = {"model": _PRICED_MODEL, "input": "hi"}
+        body = {"model": model, "input": "hi"}
         plan = _Plan(chunks=[json.dumps({"input_tokens": 12}).encode()])
         app = _proxy_app(_upstream_client({":rawPredict": plan}))
-        _post(app, path, placeholder, body)
+        with TestClient(app) as client:
+            response = client.post(path, headers={"x-api-key": placeholder}, json=body)
+        assert response.status_code == 200
+        assert response.json() == {"input_tokens": 12}
         assert await _rows(test_engine, job) == []
 
     @pytest.mark.asyncio
@@ -1351,3 +1371,38 @@ class _ResponsesWebsocketStub:
             if not self.replies:
                 await connection.close()
                 break
+
+
+class TestUnreservedMetering:
+    async def test_complete_usage_without_reservation_writes_cost(self, test_engine, job):
+        from openscientist.llm_metering import _usage_decoder
+        from openscientist.llm_proxy import _meter
+
+        decoder = _usage_decoder("/v1/messages", "application/json", _PRICED_MODEL)
+        assert decoder is not None
+        decoder.feed(json.dumps({"id": "m1", "usage": _anthropic_usage()}).encode())
+        await _meter(
+            job_id=str(job),
+            kind="discovery",
+            decoder=decoder,
+            provider_id="anthropic",
+            status_code=200,
+        )("end")
+        assert await _rows(test_engine, job) == [
+            ("discovery", 3, "anthropic", _PRICED_MODEL, 100, 25, 0, 0, 0, _cost(100, 25))
+        ]
+
+    async def test_invalid_job_id_returns_unsaved(self, test_engine, job, caplog):
+        from openscientist.agent.base import TokenUsage
+        from openscientist.llm_metering import record_model_call
+
+        saved = await record_model_call(
+            job_id="invalid",
+            kind="discovery",
+            model=_PRICED_MODEL,
+            provider_id="anthropic",
+            buckets=TokenUsage(input_tokens=100, output_tokens=25),
+        )
+        assert saved is False
+        assert "job id is not a UUID" in caplog.text
+        assert await _rows(test_engine, job) == []
