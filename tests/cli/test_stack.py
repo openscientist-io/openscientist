@@ -95,7 +95,7 @@ def test_start_records_the_checkout_path_before_any_compose_call(checkout: Path,
 
 
 def test_start_records_the_digests_before_any_compose_call(checkout: Path, monkeypatch):
-    """Compose refuses to interpolate the launcher without the digests, so a
+    """Compose refuses to run any command until the two digests are set, so a
     fresh checkout holds them before the first compose command."""
     recorded: list[bool] = []
 
