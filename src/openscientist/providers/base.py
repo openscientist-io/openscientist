@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, ClassVar, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, NotRequired, TypedDict
 
 from pydantic import ValidationError
 
@@ -21,6 +21,9 @@ from openscientist.settings import ProviderSettings, get_settings
 
 from . import pricing
 from ._env_cleanup import clear_env_vars, clear_provider_mode_flags
+
+if TYPE_CHECKING:
+    import requests
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +245,28 @@ def _answers_env(values: Mapping[str, str]):
                 os.environ[key] = old_value
 
 
+# The longest provider error message a failed live check repeats.
+_REASON_MAX_CHARS = 300
+
+
+def _failure_reason(resp: requests.Response, headers: Mapping[str, str]) -> str:
+    """The provider's error message from a failed response as `` (reason)``, or
+    an empty string, with every credential the request carried redacted."""
+    try:
+        payload = resp.json()
+    except ValueError:
+        return ""
+    error = payload.get("error") if isinstance(payload, dict) else None
+    message = error.get("message") if isinstance(error, dict) else None
+    if not isinstance(message, str) or not message.strip():
+        return ""
+    for value in headers.values():
+        for secret in {value, *value.split()}:
+            if len(secret) >= 8:
+                message = message.replace(secret, "<redacted>")
+    return f" ({' '.join(message.split())[:_REASON_MAX_CHARS]})"
+
+
 def _listing_live_check(url: str, headers: dict[str, str], what: str) -> LiveCheckResult:
     """One free model-listing call: reachability plus a sane response body."""
     import requests
@@ -251,7 +276,11 @@ def _listing_live_check(url: str, headers: dict[str, str], what: str) -> LiveChe
     except requests.RequestException as exc:
         return LiveCheckResult(ok=False, detail=f"Could not reach {what}: {exc}")
     if not 200 <= resp.status_code < 300:
-        return LiveCheckResult(ok=False, detail=f"{what} listing returned HTTP {resp.status_code}.")
+        return LiveCheckResult(
+            ok=False,
+            detail=f"{what} listing returned HTTP {resp.status_code}"
+            f"{_failure_reason(resp, headers)}.",
+        )
     try:
         payload = resp.json()
     except ValueError:
@@ -273,7 +302,10 @@ def _completion_live_check(
     except requests.RequestException as exc:
         return LiveCheckResult(ok=False, detail=f"Could not reach {what}: {exc}")
     if not 200 <= resp.status_code < 300:
-        return LiveCheckResult(ok=False, detail=f"{what} check returned HTTP {resp.status_code}.")
+        return LiveCheckResult(
+            ok=False,
+            detail=f"{what} check returned HTTP {resp.status_code}{_failure_reason(resp, headers)}.",
+        )
     return LiveCheckResult(ok=True, detail=f"Reached {what} with a one-token completion.")
 
 
