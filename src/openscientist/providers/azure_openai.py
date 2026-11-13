@@ -7,6 +7,7 @@ Anthropic models through Azure AI Foundry.
 from __future__ import annotations
 
 import os
+import re
 
 from openscientist.providers.base import (
     LLM_PROXY_URL_ENV,
@@ -22,6 +23,9 @@ from openscientist.providers.base import (
     env_from_pairs,
 )
 from openscientist.settings import ProviderSettings, get_settings
+
+# A dated version such as 2025-04-01-preview, which the v1 surface refuses.
+_DATED_API_VERSION = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 class AzureOpenAIProvider(CodexCompatible):
@@ -62,6 +66,13 @@ class AzureOpenAIProvider(CodexCompatible):
             errors.append(
                 "OPENSCIENTIST_MODEL is required (the Azure deployment name, which "
                 "Azure routes on as the request-body model)."
+            )
+        version = provider.azure_openai_api_version
+        if version and _DATED_API_VERSION.match(version):
+            errors.append(
+                f"AZURE_OPENAI_API_VERSION={version} is a dated version, which Azure's "
+                "v1 surface refuses with HTTP 400 (API version not supported). Remove it, "
+                "or set it to preview for preview features."
             )
         return errors
 
