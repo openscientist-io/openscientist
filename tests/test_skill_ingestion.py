@@ -39,6 +39,64 @@ def build_repo_tarball(files: dict[str, str], root: str = "owner-repo-sha") -> b
     return buffer.getvalue()
 
 
+def skill_markdown(name: str, *, category: str | None = None, slug: str | None = None) -> str:
+    """A SKILL.md whose category and slug come from its directory unless given."""
+    front = [f"name: {name}"]
+    if category:
+        front.append(f"category: {category}")
+    if slug:
+        front.append(f"slug: {slug}")
+    return "---\n" + "\n".join(front) + f"\n---\n\n# {name}\n"
+
+
+async def sync_github_files(
+    db_session: AsyncSession, source: SkillSource, files: dict[str, str], commit_sha: str
+) -> dict[str, int]:
+    """Sync ``source`` against a repository holding ``files`` at ``commit_sha``."""
+    tarball = build_repo_tarball(files)
+
+    def respond(url: str, **_kwargs: object) -> MagicMock:
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        if "commits" in url:
+            response.json.return_value = {"sha": commit_sha}
+        else:
+            response.content = tarball
+        return response
+
+    ingester = GitHubSkillIngester()
+    with patch.object(ingester, "_get_client") as get_client:
+        client = AsyncMock()
+        client.get.side_effect = respond
+        get_client.return_value = client
+        try:
+            return await ingester.sync_source(db_session, source)
+        finally:
+            await ingester.close()
+
+
+async def github_source(db_session: AsyncSession, name: str, skills_path: str) -> SkillSource:
+    source = SkillSource(
+        name=name,
+        source_type="github",
+        url="https://github.com/K-Dense-AI/scientific-agent-skills",
+        branch="main",
+        skills_path=skills_path,
+        is_enabled=True,
+    )
+    db_session.add(source)
+    await db_session.commit()
+    await db_session.refresh(source)
+    return source
+
+
+async def source_skills(db_session: AsyncSession, source: SkillSource) -> dict[str, Skill]:
+    result = await db_session.execute(
+        select(Skill).where(Skill.source_id == source.id).execution_options(populate_existing=True)
+    )
+    return {skill.slug: skill for skill in result.scalars().all()}
+
+
 class TestSkillParser:
     """Tests for SkillParser."""
 
@@ -563,6 +621,140 @@ Access PubChem compound data.
             assert mock_client.get.call_count == 2
 
         await ingester.close()
+
+    @pytest.mark.asyncio
+    async def test_a_renamed_skills_path_moves_existing_skills_in_place(
+        self, db_session: AsyncSession
+    ):
+        source = await github_source(db_session, "Renamed Path", "scientific-skills")
+        names = {"biopython": "BioPython", "pubchem": "PubChem"}
+        await sync_github_files(
+            db_session,
+            source,
+            {f"scientific-skills/{d}/SKILL.md": skill_markdown(n) for d, n in names.items()},
+            "sha-before-rename",
+        )
+        ids = {slug: skill.id for slug, skill in (await source_skills(db_session, source)).items()}
+
+        source.skills_path = "skills"
+        source.last_commit_sha = None
+        await db_session.commit()
+        stats = await sync_github_files(
+            db_session,
+            source,
+            {f"skills/{d}/SKILL.md": skill_markdown(n) for d, n in names.items()},
+            "sha-after-rename",
+        )
+
+        assert (stats["created"], stats["updated"], stats["errors"]) == (0, 2, 0)
+        skills = await source_skills(db_session, source)
+        assert {slug: skill.id for slug, skill in skills.items()} == ids
+        assert {skill.source_path for skill in skills.values()} == {
+            "skills/biopython/SKILL.md",
+            "skills/pubchem/SKILL.md",
+        }
+        assert {(skill.is_enabled, skill.version) for skill in skills.values()} == {(True, 1)}
+        assert source.last_commit_sha == "sha-after-rename"
+
+    @pytest.mark.asyncio
+    async def test_an_edited_skill_updates_in_place_with_a_new_version(
+        self, db_session: AsyncSession
+    ):
+        source = await github_source(db_session, "Edited Source", "skills")
+        await sync_github_files(
+            db_session, source, {"skills/rdkit/SKILL.md": skill_markdown("RDKit")}, "sha-1"
+        )
+        before = (await source_skills(db_session, source))["rdkit"]
+        before_id = before.id
+
+        stats = await sync_github_files(
+            db_session, source, {"skills/rdkit/SKILL.md": skill_markdown("RDKit 2")}, "sha-2"
+        )
+
+        assert (stats["updated"], stats["unchanged"]) == (1, 0)
+        after = (await source_skills(db_session, source))["rdkit"]
+        assert (after.id, after.name, after.version, after.commit_sha) == (
+            before_id,
+            "RDKit 2",
+            2,
+            "sha-2",
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_colliding_file_is_an_error_and_the_rest_still_sync(
+        self, db_session: AsyncSession
+    ):
+        other = await github_source(db_session, "Other Source", "skills")
+        await sync_github_files(
+            db_session, other, {"skills/pubchem/SKILL.md": skill_markdown("PubChem")}, "sha-other"
+        )
+        source = await github_source(db_session, "Colliding Source", "skills")
+
+        stats = await sync_github_files(
+            db_session,
+            source,
+            {
+                "skills/biopython/SKILL.md": skill_markdown("BioPython"),
+                "skills/pubchem/SKILL.md": skill_markdown("PubChem again"),
+                "skills/rdkit/SKILL.md": skill_markdown("RDKit"),
+            },
+            "sha-collision",
+        )
+
+        assert (stats["created"], stats["errors"]) == (2, 1)
+        assert set(await source_skills(db_session, source)) == {"biopython", "rdkit"}
+        assert (await source_skills(db_session, other))["pubchem"].name == "PubChem"
+        assert source.last_commit_sha == "sha-collision"
+
+    @pytest.mark.asyncio
+    async def test_two_files_naming_one_skill_never_trade_the_row(self, db_session: AsyncSession):
+        source = await github_source(db_session, "Duplicate Names", "skills")
+        files = {
+            "skills/a/SKILL.md": skill_markdown("First", category="tools", slug="shared"),
+            "skills/b/SKILL.md": skill_markdown("Second", category="tools", slug="shared"),
+        }
+
+        first = await sync_github_files(db_session, source, files, "sha-1")
+        owner = (await source_skills(db_session, source))["shared"]
+        second = await sync_github_files(db_session, source, files, "sha-2")
+
+        assert (first["created"], first["errors"]) == (1, 1)
+        assert (second["updated"], second["errors"]) == (0, 1)
+        after = (await source_skills(db_session, source))["shared"]
+        assert (after.id, after.source_path) == (owner.id, owner.source_path)
+
+    @pytest.mark.asyncio
+    async def test_a_skill_gone_from_the_commit_is_disabled_until_it_returns(
+        self, db_session: AsyncSession
+    ):
+        source = await github_source(db_session, "Shrinking Source", "skills")
+        everything = {
+            "skills/biopython/SKILL.md": skill_markdown("BioPython"),
+            "skills/pubchem/SKILL.md": skill_markdown("PubChem"),
+            "skills/rdkit/SKILL.md": skill_markdown("RDKit"),
+        }
+        await sync_github_files(db_session, source, everything, "sha-all")
+        ids = {slug: skill.id for slug, skill in (await source_skills(db_session, source)).items()}
+
+        await sync_github_files(
+            db_session,
+            source,
+            {
+                "skills/biopython/SKILL.md": skill_markdown("BioPython"),
+                "skills/rdkit/SKILL.md": "no frontmatter, so this file fails to parse",
+            },
+            "sha-without-pubchem",
+        )
+        enabled = {
+            slug: s.is_enabled for slug, s in (await source_skills(db_session, source)).items()
+        }
+        assert enabled == {"biopython": True, "pubchem": False, "rdkit": True}
+
+        await sync_github_files(db_session, source, everything, "sha-all-again")
+        skills = await source_skills(db_session, source)
+        assert {slug: (s.id, s.is_enabled) for slug, s in skills.items()} == {
+            slug: (skill_id, True) for slug, skill_id in ids.items()
+        }
 
 
 class TestLocalSkillIngester:
