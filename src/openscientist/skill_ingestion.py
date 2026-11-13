@@ -13,11 +13,12 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import yaml
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database.models import Skill, SkillSource
@@ -360,54 +361,48 @@ class GitHubSkillIngester(BaseSkillIngester):
         )
 
         stats = {"created": 0, "updated": 0, "unchanged": 0, "errors": 0}
+        archive_paths = {file_info["path"] for file_info in skill_files}
 
         # Session is expected to be an admin session (bypasses RLS)
         for file_info in skill_files:
+            path = file_info["path"]
             try:
-                content = file_info["content_bytes"].decode("utf-8")
-                parsed = self.parser.parse_content(content, file_info["path"])
-
-                stmt = select(Skill).where(
-                    Skill.source_id == source.id,
-                    Skill.source_path == file_info["path"],
-                )
-                result = await session.execute(stmt)
-                existing = result.scalar_one_or_none()
-
-                if existing:
-                    if existing.content_hash == parsed.content_hash:
-                        stats["unchanged"] += 1
-                        continue
-
-                    existing.name = parsed.name
-                    existing.slug = parsed.slug
-                    existing.category = parsed.category
-                    existing.description = parsed.description
-                    existing.content = parsed.content
-                    existing.tags = parsed.tags
-                    existing.content_hash = parsed.content_hash
-                    existing.commit_sha = commit_sha
-                    existing.version = existing.version + 1
-                    stats["updated"] += 1
-                else:
-                    skill = Skill(
-                        name=parsed.name,
-                        slug=parsed.slug,
-                        category=parsed.category,
-                        description=parsed.description,
-                        content=parsed.content,
-                        tags=parsed.tags,
-                        source_id=source.id,
-                        source_path=file_info["path"],
-                        content_hash=parsed.content_hash,
-                        commit_sha=commit_sha,
-                    )
-                    session.add(skill)
-                    stats["created"] += 1
-
+                parsed = self.parser.parse_content(file_info["content_bytes"].decode("utf-8"), path)
             except (SkillParseError, UnicodeDecodeError) as e:
                 stats["errors"] += 1
-                logger.warning("Error processing %s: %s", file_info["path"], e)
+                logger.warning("Error processing %s: %s", path, e)
+                continue
+            try:
+                # One file that cannot be stored rolls back only its own savepoint.
+                async with session.begin_nested():
+                    outcome = await self._store_skill(
+                        session, source, parsed, commit_sha, archive_paths
+                    )
+            except IntegrityError as e:
+                stats["errors"] += 1
+                logger.warning("Could not store %s: %s", path, e.orig)
+                continue
+            stats[outcome] += 1
+
+        disabled = (
+            await session.scalars(
+                update(Skill)
+                .where(
+                    Skill.source_id == source.id,
+                    Skill.is_enabled.is_(True),
+                    Skill.source_path.not_in(archive_paths),
+                )
+                .values(is_enabled=False)
+                .returning(Skill.id)
+            )
+        ).all()
+        if disabled:
+            logger.info(
+                "Disabled %d skills of %s that commit %s no longer holds",
+                len(disabled),
+                source.name,
+                commit_sha[:12],
+            )
 
         source.last_synced_at = datetime.now(UTC)
         source.last_commit_sha = commit_sha
@@ -416,6 +411,72 @@ class GitHubSkillIngester(BaseSkillIngester):
         await session.commit()
 
         return stats
+
+    @staticmethod
+    async def _store_skill(
+        session: AsyncSession,
+        source: SkillSource,
+        parsed: ParsedSkill,
+        commit_sha: str,
+        archive_paths: set[str],
+    ) -> Literal["created", "updated", "unchanged"]:
+        """Write one parsed file to the source's skill at its path, or to the
+        source's skill of the same category and slug whose own file is gone, so a
+        moved file keeps its skill id. A disabled skill is enabled again."""
+        existing = await session.scalar(
+            select(Skill).where(
+                Skill.source_id == source.id, Skill.source_path == parsed.source_path
+            )
+        )
+        if existing is None:
+            moved = await session.scalar(
+                select(Skill).where(
+                    Skill.source_id == source.id,
+                    Skill.category == parsed.category,
+                    Skill.slug == parsed.slug,
+                )
+            )
+            if moved is not None and moved.source_path not in archive_paths:
+                existing = moved
+        if existing is None:
+            session.add(
+                Skill(
+                    name=parsed.name,
+                    slug=parsed.slug,
+                    category=parsed.category,
+                    description=parsed.description,
+                    content=parsed.content,
+                    tags=parsed.tags,
+                    source_id=source.id,
+                    source_path=parsed.source_path,
+                    content_hash=parsed.content_hash,
+                    commit_sha=commit_sha,
+                )
+            )
+            await session.flush()
+            return "created"
+
+        content_changed = existing.content_hash != parsed.content_hash
+        if (
+            not content_changed
+            and existing.source_path == parsed.source_path
+            and existing.is_enabled
+        ):
+            return "unchanged"
+        if content_changed:
+            existing.name = parsed.name
+            existing.slug = parsed.slug
+            existing.category = parsed.category
+            existing.description = parsed.description
+            existing.content = parsed.content
+            existing.tags = parsed.tags
+            existing.content_hash = parsed.content_hash
+            existing.version = existing.version + 1
+        existing.source_path = parsed.source_path
+        existing.is_enabled = True
+        existing.commit_sha = commit_sha
+        await session.flush()
+        return "updated"
 
 
 class LocalSkillIngester(BaseSkillIngester):
