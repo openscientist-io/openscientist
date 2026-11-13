@@ -84,19 +84,6 @@ def build_images(run: CommandRunner, root: Path) -> int:
         f"BUILD_TIME={datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')}",
     )
     code = run(
-        (
-            "docker",
-            "compose",
-            "-f",
-            COMPOSE_FILE,
-            "build",
-            *build_args,
-        ),
-        build_env,
-    )
-    if code:
-        return _failed("the web image", code)
-    code = run(
         ("docker", "build", "-f", "Dockerfile.executor", "-t", executor_image, *build_args, "."),
         build_env,
     )
@@ -112,6 +99,20 @@ def build_images(run: CommandRunner, root: Path) -> int:
     if code:
         console.print("[red]Recording the image digests failed.[/red]")
         return code
+    # After the digests, because compose refuses to read its file without them.
+    code = run(
+        (
+            "docker",
+            "compose",
+            "-f",
+            COMPOSE_FILE,
+            "build",
+            *build_args,
+        ),
+        build_env,
+    )
+    if code:
+        return _failed("the web image", code)
     return 0
 
 
