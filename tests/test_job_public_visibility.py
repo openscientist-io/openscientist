@@ -523,6 +523,7 @@ async def test_public_html_does_not_fall_back_to_persisted_inputs(
                 assert (secret in response.content) is (token == owner_token)
 
 
+@pytest.mark.requires_weasyprint
 @pytest.mark.asyncio
 @pytest.mark.parametrize("surface", ["api", "web"])
 async def test_public_pdf_render_failure_does_not_serve_cached_report(
@@ -595,6 +596,7 @@ async def test_owner_report_render_failure_downloads_markdown(
     assert not (job_dir / "final_report.pdf").exists()
 
 
+@pytest.mark.requires_weasyprint
 @pytest.mark.asyncio
 @pytest.mark.parametrize("surface", ["api", "web"])
 async def test_public_pdf_is_rendered_without_cached_uploads(

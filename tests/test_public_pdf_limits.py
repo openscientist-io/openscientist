@@ -72,6 +72,7 @@ def write_table(job_dir: Path, rows: int) -> None:
     )
 
 
+@pytest.mark.requires_weasyprint
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("rows", "deadline"), [(1500, 1.0), (1500, 3.0)])
 async def test_pathological_report_deadline_keeps_web_responsive(
@@ -101,6 +102,7 @@ async def test_pathological_report_deadline_keeps_web_responsive(
         os.kill(renderers[0].pid, 0)
 
 
+@pytest.mark.requires_weasyprint
 @pytest.mark.asyncio
 async def test_public_report_concurrency_is_shared_between_requests(
     reader: httpx.AsyncClient,
@@ -125,6 +127,7 @@ async def test_public_report_concurrency_is_shared_between_requests(
     assert (await reader.get("/report")).status_code == 200
 
 
+@pytest.mark.requires_weasyprint
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("setting", "value"),
@@ -157,6 +160,7 @@ async def test_public_report_resource_limit_reaches_reader(
     assert "rendering limits" in response.json()["detail"]
 
 
+@pytest.mark.requires_weasyprint
 @pytest.mark.asyncio
 async def test_isolated_public_report_keeps_figures_without_uploaded_images(
     reader: httpx.AsyncClient,
@@ -180,6 +184,7 @@ async def test_isolated_public_report_keeps_figures_without_uploaded_images(
     assert not (tmp_path / "final_report.pdf").exists()
 
 
+@pytest.mark.requires_weasyprint
 @pytest.mark.asyncio
 async def test_cancelled_public_report_kills_renderer_and_releases_capacity(
     reader: httpx.AsyncClient,
@@ -267,6 +272,7 @@ async def test_worker_import_failure_reaches_reader(
     assert "worker dependency unavailable" not in response.text
 
 
+@pytest.mark.requires_weasyprint
 @pytest.mark.asyncio
 async def test_exited_renderer_cleanup_is_harmless(
     reader: httpx.AsyncClient,
@@ -285,6 +291,7 @@ async def test_exited_renderer_cleanup_is_harmless(
     assert response.status_code == 200
 
 
+@pytest.mark.requires_weasyprint
 @pytest.mark.asyncio
 async def test_markdown_removed_before_worker_starts_returns_not_found(
     reader: httpx.AsyncClient,
@@ -311,6 +318,7 @@ async def test_markdown_removed_before_worker_starts_returns_not_found(
     assert response.json()["detail"] == "Report not found"
 
 
+@pytest.mark.requires_weasyprint
 @pytest.mark.asyncio
 async def test_parent_rejects_pdf_larger_than_output_limit(
     reader: httpx.AsyncClient,

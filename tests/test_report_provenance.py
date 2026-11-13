@@ -56,6 +56,7 @@ async def test_a_report_for_an_unknown_job_still_renders(tmp_path: Path) -> None
     assert "Run environment" not in (job_dir / "final_report.html").read_text(encoding="utf-8")
 
 
+@pytest.mark.requires_weasyprint
 @pytest.mark.asyncio
 @pytest.mark.parametrize("input_dir", ["data", "previews"])
 async def test_persisted_reports_withhold_uploaded_images(tmp_path: Path, input_dir: str) -> None:
@@ -86,6 +87,7 @@ async def test_persisted_reports_withhold_uploaded_images(tmp_path: Path, input_
     assert (19, 23) in image_sizes
 
 
+@pytest.mark.requires_weasyprint
 def test_public_pdf_fetches_only_embedded_data(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
