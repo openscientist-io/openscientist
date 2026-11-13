@@ -37,13 +37,13 @@ def test_start_runs_the_four_builds_then_up_in_order(checkout: Path, monkeypatch
         ".",
     )
     assert calls[0][1]["DOCKER_DEFAULT_PLATFORM"] == "linux/amd64"
-    assert argvs[1][:5] == ("docker", "compose", "-f", "docker-compose.yml", "build")
-    assert calls[1][1]["DOCKER_DEFAULT_PLATFORM"] == "linux/amd64"
-    assert argvs[1].count("--build-arg") == 2
-    assert any(arg.startswith("OPENSCIENTIST_COMMIT=") for arg in argvs[1])
-    assert any(arg.startswith("BUILD_TIME=") for arg in argvs[1])
-    build_args = tuple(argvs[1][5:])
-    assert argvs[2] == (
+    assert argvs[3][:5] == ("docker", "compose", "-f", "docker-compose.yml", "build")
+    assert calls[3][1]["DOCKER_DEFAULT_PLATFORM"] == "linux/amd64"
+    assert argvs[3].count("--build-arg") == 2
+    assert any(arg.startswith("OPENSCIENTIST_COMMIT=") for arg in argvs[3])
+    assert any(arg.startswith("BUILD_TIME=") for arg in argvs[3])
+    build_args = tuple(argvs[3][5:])
+    assert argvs[1] == (
         "docker",
         "build",
         "-f",
@@ -53,7 +53,7 @@ def test_start_runs_the_four_builds_then_up_in_order(checkout: Path, monkeypatch
         *build_args,
         ".",
     )
-    assert argvs[3] == (
+    assert argvs[2] == (
         "docker",
         "build",
         "-f",
@@ -92,6 +92,25 @@ def test_start_records_the_checkout_path_before_any_compose_call(checkout: Path,
     monkeypatch.setattr(stack, "_image_id", lambda image: "sha256:" + "f" * 64)
     assert stack.start(checkout, run) == 0
     assert recorded_at_first_call == [str(checkout.resolve())]
+
+
+def test_start_records_the_digests_before_any_compose_call(checkout: Path, monkeypatch):
+    """Compose refuses to interpolate the launcher without the digests, so a
+    fresh checkout holds them before the first compose command."""
+    recorded: list[bool] = []
+
+    def run(argv: tuple[str, ...], env: Mapping[str, str]) -> int:
+        if argv[:2] == ("docker", "compose"):
+            values = stack.envfiles.file_values(checkout, "env")
+            recorded.append(
+                bool(values.get("AGENT_IMAGE_DIGESTS") and values.get("EXECUTOR_IMAGE_DIGESTS"))
+            )
+        return 0
+
+    monkeypatch.setattr(stack, "wait_for_health", lambda url, timeout=300.0, interval=3.0: True)
+    monkeypatch.setattr(stack, "_image_id", lambda image: "sha256:" + "f" * 64)
+    assert stack.start(checkout, run) == 0
+    assert recorded == [True, True]
 
 
 def _jobs_group_command(
@@ -285,13 +304,14 @@ def test_run_command_runs_with_exactly_the_environment_it_gets(checkout: Path):
 
 
 @pytest.mark.parametrize("failing_call", [1, 2, 4])
-def test_build_images_stops_at_the_failing_build(checkout: Path, failing_call: int):
+def test_build_images_stops_at_the_failing_build(checkout: Path, monkeypatch, failing_call: int):
     calls: list[tuple[str, ...]] = []
 
     def run(argv: tuple[str, ...], env: Mapping[str, str]) -> int:
         calls.append(argv)
         return 3 if len(calls) == failing_call else 0
 
+    monkeypatch.setattr(stack, "_image_id", lambda image: "sha256:" + "f" * 64)
     assert stack.build_images(run, checkout) == 3
     assert len(calls) == failing_call
 
