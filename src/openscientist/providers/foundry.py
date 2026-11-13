@@ -151,7 +151,7 @@ class FoundryProvider(ClaudeCompatible):
             "max_tokens": 1,
             "messages": [{"role": "user", "content": "ping"}],
         }
-        headers = {"x-api-key": token}
+        headers = {"x-api-key": token, "anthropic-version": "2023-06-01"}
         return _completion_live_check(url, headers, body, cls.display_name)
 
     @classmethod

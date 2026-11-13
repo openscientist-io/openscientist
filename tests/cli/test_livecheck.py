@@ -634,7 +634,7 @@ def test_foundry_live_check_posts_a_one_token_completion(monkeypatch):
     assert result.ok
     url, headers, body = calls[0]
     assert url == "https://f.example.com/anthropic/v1/messages"
-    assert headers == {"x-api-key": "fk"}
+    assert headers == {"x-api-key": "fk", "anthropic-version": "2023-06-01"}
     assert body["max_tokens"] == 1
 
 
