@@ -41,12 +41,14 @@ from openscientist.llm_proxy import (
 from openscientist.providers import get_provider
 from openscientist.providers.base import AirgapEgress, LlmUpstream, StaticHeadersSigning
 from openscientist.providers.bedrock import SigV4Signing
+from openscientist.providers.foundry import EntraTokenSigning
 from openscientist.providers.openai import ChatgptSigning
 from openscientist.providers.vertex import GoogleAdcSigning
 from openscientist.settings import Settings, get_settings
 from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 from tests.test_budget import job_with_costs
 from tests.test_provider_bedrock import verify_sigv4
+from tests.test_provider_foundry import FakeAzureCredential
 from tests.test_provider_vertex import FakeVertexCredentials
 
 
@@ -848,6 +850,35 @@ class TestProxyForwarding:
         with TestClient(app) as client:
             resp = client.post("/v1/messages", headers={"x-api-key": placeholder}, content=b"{}")
         assert resp.status_code == 502
+
+
+def test_foundry_entra_calls_reach_foundry_with_the_bearer_and_no_placeholder(placeholder_for):
+    """The container sends its placeholder as x-api-key, the Claude CLI's
+    Foundry header. Foundry reads x-api-key only as a resource key, so the
+    forwarded request carries the Entra ID token as a bearer and no x-api-key."""
+    placeholder = placeholder_for("job-1")
+    recorded: list[dict] = []
+    upstream = LlmUpstream(
+        "https://res.services.ai.azure.com/anthropic", EntraTokenSigning(FakeAzureCredential())
+    )
+    app = create_llm_proxy_app(
+        upstream=lambda: upstream,
+        client=_recording_upstream(recorded),
+        provider_id=lambda: "foundry",
+    )
+    with TestClient(app) as client:
+        resp = client.post(
+            "/v1/messages",
+            headers={"x-api-key": placeholder, "anthropic-version": "2023-06-01"},
+            json={"model": "claude-haiku-4-5", "max_tokens": 1, "messages": []},
+        )
+    assert resp.status_code == 200
+    forwarded = recorded[0]
+    assert forwarded["host"] == "res.services.ai.azure.com"
+    assert forwarded["path"] == "/anthropic/v1/messages"
+    assert forwarded["headers"]["authorization"] == "Bearer entra-1"
+    assert "x-api-key" not in forwarded["headers"]
+    assert placeholder not in forwarded["headers"].values()
 
 
 class TestVertexProxyForwarding:

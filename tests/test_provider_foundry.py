@@ -1,8 +1,91 @@
 """Tests for Azure Foundry provider."""
 
+import time
 from unittest.mock import MagicMock, patch
 
-from openscientist.providers.foundry import FoundryProvider
+import pytest
+from azure.core.credentials import AccessToken
+from azure.core.exceptions import ClientAuthenticationError
+
+from openscientist.providers import foundry
+from openscientist.providers.base import StaticHeadersSigning, UpstreamCredentialError
+from openscientist.providers.foundry import EntraTokenSigning, FoundryProvider
+
+
+class FakeAzureCredential:
+    """Stands in for ``DefaultAzureCredential`` at the token-minting boundary,
+    recording the scopes of every mint."""
+
+    def __init__(self, lifetime: float = 3600.0) -> None:
+        self.lifetime = lifetime
+        self.scopes: list[tuple[str, ...]] = []
+
+    def get_token(self, *scopes: str, **_kwargs: object) -> AccessToken:
+        self.scopes.append(scopes)
+        return AccessToken(f"entra-{len(self.scopes)}", int(time.time() + self.lifetime))
+
+
+def _sign(signing: object) -> dict[str, str]:
+    assert isinstance(signing, EntraTokenSigning)
+    return signing.credential_headers(method="POST", path="/v1/messages", query="", body=b"{}")
+
+
+class TestEntraTokenSigning:
+    """Foundry takes an Entra ID token only as a bearer token for the ai.azure.com audience."""
+
+    def test_signs_with_a_bearer_token_for_the_foundry_audience(self) -> None:
+        credential = FakeAzureCredential()
+        assert _sign(EntraTokenSigning(credential)) == {"authorization": "Bearer entra-1"}
+        assert credential.scopes == [("https://ai.azure.com/.default",)]
+
+    def test_reuses_the_token_until_it_nears_expiry(self) -> None:
+        lasting = FakeAzureCredential(lifetime=3600)
+        signing = EntraTokenSigning(lasting)
+        assert [_sign(signing) for _ in range(3)] == [{"authorization": "Bearer entra-1"}] * 3
+
+        expiring = FakeAzureCredential(lifetime=60)
+        signing = EntraTokenSigning(expiring)
+        assert _sign(signing) == {"authorization": "Bearer entra-1"}
+        assert _sign(signing) == {"authorization": "Bearer entra-2"}
+
+    def test_a_failed_mint_refuses_the_request(self) -> None:
+        class _Rejecting:
+            def get_token(self, *scopes: str, **_kwargs: object) -> AccessToken:
+                raise ClientAuthenticationError("no account signed in")
+
+        with pytest.raises(UpstreamCredentialError):
+            _sign(EntraTokenSigning(_Rejecting()))
+
+
+def test_without_an_api_key_the_proxy_signs_with_one_cached_entra_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    built: list[FakeAzureCredential] = []
+
+    def default_credential() -> FakeAzureCredential:
+        built.append(FakeAzureCredential())
+        return built[-1]
+
+    monkeypatch.setattr("azure.identity.DefaultAzureCredential", default_credential)
+    monkeypatch.setattr(foundry, "_entra_signing", None)
+    with patch(
+        "openscientist.providers.foundry.get_settings",
+        return_value=_mock_settings(api_key=None),
+    ):
+        # The proxy resolves the upstream for every forwarded request.
+        first = FoundryProvider().llm_upstream()
+        second = FoundryProvider().llm_upstream()
+    assert first is not None and second is not None
+    assert first.base_url == "https://my-foundry-res.services.ai.azure.com/anthropic"
+    assert _sign(first.signing) == _sign(second.signing) == {"authorization": "Bearer entra-1"}
+    assert len(built) == 1
+
+
+def test_with_an_api_key_the_proxy_signs_with_the_key() -> None:
+    with patch("openscientist.providers.foundry.get_settings", return_value=_mock_settings()):
+        upstream = FoundryProvider().llm_upstream()
+    assert upstream is not None
+    assert upstream.signing == StaticHeadersSigning({"x-api-key": "foundry-key"})
 
 
 def _mock_settings(
