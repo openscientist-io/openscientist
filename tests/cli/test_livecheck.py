@@ -206,6 +206,61 @@ def test_anthropic_live_check_surfaces_the_error_without_the_secret(monkeypatch)
     assert "sk-secret-123" not in result.detail
 
 
+def test_a_failed_listing_shows_the_providers_reason(monkeypatch):
+    # Azure's answer to a dated api-version on the v1 surface.
+    reason = {"error": {"code": "BadRequest", "message": "API version not supported"}}
+    monkeypatch.setattr("requests.get", lambda *args, **kwargs: _FakeResponse(400, reason))
+    result = provider_class("azure-openai").live_check(
+        "azure-openai", {"AZURE_OPENAI_RESOURCE": "res1", "AZURE_OPENAI_API_KEY": "az-key"}
+    )
+    assert not result.ok
+    assert "HTTP 400" in result.detail
+    assert "API version not supported" in result.detail
+
+
+def test_a_failed_completion_shows_the_providers_reason(monkeypatch):
+    # The Messages API's answer to a request without its version header.
+    reason = {
+        "type": "error",
+        "error": {
+            "type": "invalid_request_error",
+            "message": "anthropic-version: header is required",
+        },
+    }
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: _FakeResponse(400, reason))
+    result = provider_class("foundry").live_check(
+        "foundry",
+        {
+            "ANTHROPIC_FOUNDRY_BASE_URL": "https://f.example.com/anthropic",
+            "ANTHROPIC_FOUNDRY_API_KEY": "fk",
+        },
+    )
+    assert not result.ok
+    assert "anthropic-version: header is required" in result.detail
+
+
+def test_a_reason_echoing_the_credential_never_shows_it(monkeypatch):
+    reason = {"error": {"message": "Key sk-secret-123456 is not valid for this resource"}}
+    monkeypatch.setattr("requests.get", lambda *args, **kwargs: _FakeResponse(401, reason))
+    result = provider_class("openai").live_check("openai", {"OPENAI_API_KEY": "sk-secret-123456"})
+    assert not result.ok
+    assert "is not valid for this resource" in result.detail
+    assert "sk-secret-123456" not in result.detail
+
+
+def test_a_failure_without_a_json_reason_shows_only_the_status(monkeypatch):
+    class _GatewayPage:
+        status_code = 502
+
+        def json(self):
+            raise ValueError("an HTML error page")
+
+    monkeypatch.setattr("requests.get", lambda *args, **kwargs: _GatewayPage())
+    result = provider_class("openai").live_check("openai", {"OPENAI_API_KEY": "sk-test"})
+    assert not result.ok
+    assert result.detail == "OpenAI API listing returned HTTP 502."
+
+
 def test_vllm_live_check_reports_an_unreachable_server(monkeypatch):
     def raise_connection_error(*args, **kwargs):
         raise requests.ConnectionError("connection refused")
