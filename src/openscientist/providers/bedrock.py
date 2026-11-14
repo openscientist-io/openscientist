@@ -9,6 +9,7 @@ from openscientist.exceptions import ProviderError
 from openscientist.providers.base import (
     AirgapEgress,
     AirgapPosture,
+    Alternatives,
     ClaudeCompatible,
     CostInfo,
     LiveCheckResult,
@@ -127,7 +128,7 @@ class BedrockProvider(ClaudeCompatible):
         )
 
     def validate_required_config(self) -> list[str]:
-        return self.required_config_errors(get_settings().provider)
+        return self.config_errors(get_settings().provider)
 
     @classmethod
     def required_config_errors(cls, provider: ProviderSettings) -> list[str]:
@@ -155,6 +156,16 @@ class BedrockProvider(ClaudeCompatible):
             SetupQuestion(
                 "OPENSCIENTIST_MODEL",
                 help="Bedrock model id, e.g. us.anthropic.claude-sonnet-5-5-v2:0",
+            ),
+        )
+
+    @classmethod
+    def setup_alternatives(cls) -> Alternatives:
+        return (
+            (
+                ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+                ("AWS_PROFILE",),
+                ("AWS_BEARER_TOKEN_BEDROCK",),
             ),
         )
 

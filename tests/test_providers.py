@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from openscientist.exceptions import ProviderError
-from openscientist.providers import get_provider, provider_ids
+from openscientist.providers import get_provider, provider_class, provider_ids
 from openscientist.providers.anthropic import AnthropicProvider
 from openscientist.providers.base import CostInfo, Provider
 from openscientist.providers.bedrock import BedrockProvider
@@ -506,11 +506,14 @@ def provider_credentials(monkeypatch, tmp_path):
     for key, value in {
         "ANTHROPIC_BASE_URL": "https://api.cborg.lbl.gov",
         "ANTHROPIC_FOUNDRY_RESOURCE": "foundry-resource",
+        "ANTHROPIC_FOUNDRY_BASE_URL": "https://foundry-resource.services.ai.azure.com/anthropic",
         "AZURE_OPENAI_RESOURCE": "azure-resource",
         "ANTHROPIC_VERTEX_PROJECT_ID": "vertex-project",
         "GCP_BILLING_ACCOUNT_ID": "012345-ABCDEF",
         "CLOUD_ML_REGION": "us-east5",
         "AWS_REGION": "us-east-1",
+        "AWS_PROFILE": "bedrock-profile",
+        "CODEX_AUTH_HOST_PATH": str(tmp_path / "codex-auth.json"),
     }.items():
         monkeypatch.setenv(key, value)
     monkeypatch.delenv("OPENSCIENTIST_MODEL", raising=False)
@@ -519,14 +522,39 @@ def provider_credentials(monkeypatch, tmp_path):
     clear_settings_cache()
 
 
-@pytest.mark.parametrize("provider_id", provider_ids())
+def _alternative_choices() -> list[object]:
+    """Every provider once per member of its alternatives, so each credential path is checked."""
+    return [
+        pytest.param(provider_id, keep, id=f"{provider_id}-{keep}")
+        for provider_id in provider_ids()
+        for keep in range(
+            max(
+                (len(group) for group in provider_class(provider_id).setup_alternatives()),
+                default=1,
+            )
+        )
+    ]
+
+
+def _keep_one_alternative(monkeypatch, provider_id: str, keep: int) -> None:
+    """Unset every alternative but member ``keep`` of each group, since a provider refuses several together."""
+    for group in provider_class(provider_id).setup_alternatives():
+        for index, member in enumerate(group):
+            if index != keep % len(group):
+                for alias in member:
+                    monkeypatch.delenv(alias, raising=False)
+    clear_settings_cache()
+
+
+@pytest.mark.parametrize(("provider_id", "keep"), _alternative_choices())
 @pytest.mark.parametrize("proxy_mode", ["routed", "no-route", "credential-override"])
 def test_proxied_container_env_excludes_every_real_credential(
-    monkeypatch, provider_credentials, provider_id, proxy_mode
+    monkeypatch, provider_credentials, provider_id, keep, proxy_mode
 ):
     monkeypatch.setenv("OPENSCIENTIST_PROVIDER", provider_id)
     if provider_id in ("vllm", "llamacpp", "azure-openai"):
         monkeypatch.setenv("OPENSCIENTIST_MODEL", "served-model")
+    _keep_one_alternative(monkeypatch, provider_id, keep)
     provider = get_provider()
     if proxy_mode == "no-route":
         monkeypatch.setattr(provider, "proxy_env_overrides", lambda **kwargs: {})
@@ -555,8 +583,7 @@ def test_proxied_anthropic_credentials_reach_both_harnesses(
     monkeypatch, provider_credentials, provider_id, oauth_only, container_key, harness_key
 ):
     monkeypatch.setenv("OPENSCIENTIST_PROVIDER", provider_id)
-    if oauth_only:
-        monkeypatch.delenv("ANTHROPIC_API_KEY")
+    _keep_one_alternative(monkeypatch, provider_id, 1 if oauth_only else 0)
     provider = get_provider()
     proxy = "http://proxy:8081"
     env = provider.proxied_container_env(proxy_base_url=proxy, placeholder="job-placeholder")

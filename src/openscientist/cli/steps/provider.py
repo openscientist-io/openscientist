@@ -3,6 +3,7 @@
 from openscientist.cli import livecheck
 from openscientist.cli.step import Question, Step
 from openscientist.providers import provider_class, provider_ids
+from openscientist.providers.base import Alternatives
 
 
 class ProviderStep(Step):
@@ -55,3 +56,9 @@ class ProviderStep(Step):
         for provider_id in provider_ids():
             envs.update(question.env for question in provider_class(provider_id).setup_questions())
         return frozenset(envs)
+
+    def alternatives(self, answers: dict[str, str]) -> Alternatives:
+        provider_id = answers.get("OPENSCIENTIST_PROVIDER", "")
+        if provider_id not in provider_ids():
+            return ()
+        return provider_class(provider_id).setup_alternatives()

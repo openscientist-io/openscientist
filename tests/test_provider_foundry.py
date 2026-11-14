@@ -157,12 +157,19 @@ class TestFoundryClaudeCompatible:
             "ANTHROPIC_FOUNDRY_API_KEY": "k2",
         }
 
-    def test_claude_sdk_env_resource_wins_over_base_url(self) -> None:
+    def test_resource_and_base_url_together_are_refused(self) -> None:
         settings = _mock_settings(
             resource="res-b", base_url="https://ignored.example.com", api_key="k3"
         )
-        with patch("openscientist.providers.foundry.get_settings", return_value=settings):
-            env = FoundryProvider().claude_sdk_env()
+        with (
+            patch("openscientist.providers.foundry.get_settings", return_value=settings),
+            pytest.raises(
+                ValueError, match="ANTHROPIC_FOUNDRY_RESOURCE and ANTHROPIC_FOUNDRY_BASE_URL"
+            ),
+        ):
+            FoundryProvider()
+        # Claude Code refuses both, so the container env never carries the two together.
+        env = FoundryProvider.container_env(settings.provider)
         assert env["ANTHROPIC_FOUNDRY_RESOURCE"] == "res-b"
         assert "ANTHROPIC_FOUNDRY_BASE_URL" not in env
 
