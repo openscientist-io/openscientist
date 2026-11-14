@@ -18,6 +18,9 @@ from openscientist.providers import provider_class, provider_ids
 
 console = Console()
 
+#: The answer that clears a saved value, where Enter would keep it.
+CLEAR = "-"
+
 
 def run_setup(root: Path, write_answers: Path | None = None) -> None:
     """Ask the steps, write the env files and generate the missing secrets."""
@@ -59,10 +62,15 @@ def run_setup_from_answers(
 
 
 def _write_env_files(root: Path, answers: dict[str, str], env_file: dict[str, str]) -> None:
-    """The answers into the env files the steps put them in, the missing secrets generated."""
+    """The answers into the env files the steps put them in, the missing secrets generated.
+
+    An empty answer is written as ``KEY=`` only when it clears a saved value,
+    so a commented example line stays commented.
+    """
+    saved = envfiles.current_values(root)
     by_file: dict[str, dict[str, str]] = {}
     for env, value in answers.items():
-        if value and env in env_file:
+        if env in env_file and (value or saved.get(env)):
             by_file.setdefault(env_file[env], {})[env] = value
     # The cookie's Secure flag follows APP_URL, so the wizard writes it from the asked address.
     base_url = answers.get("OPENSCIENTIST_BASE_URL", "")
@@ -232,16 +240,22 @@ def ask(question: Question, current: str | None) -> str:
         # Never show a secret as the prompt default, and let Enter mean "keep
         # the current" or "leave empty", which click's prompt would re-ask for.
         if current:
-            text += " (Enter keeps the current value)"
+            text += f" (Enter keeps the current value, {CLEAR} clears it)"
         value = click.prompt(text, default=default or "", hide_input=True, show_default=False)
+        if value == CLEAR:
+            return ""
         return value if value else (current or "")
     if question.kind in ("int", "port"):
         if default is None:
             return click.prompt(text) or ""
         value = click.prompt(text, default=default, type=int)
         return "" if value is None else str(value)
+    if current:
+        console.print(f"[dim]Enter keeps it, {CLEAR} clears it.[/dim]")
     while True:
         value = click.prompt(text, default=default or "", show_default=default is not None)
+        if value == CLEAR:
+            value = ""
         if value or not question.required:
             break
         console.print("[red]This one is required.[/red]")
