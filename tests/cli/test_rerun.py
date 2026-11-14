@@ -5,7 +5,8 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from openscientist.cli import app as cli_app
-from openscientist.cli import envfiles
+from openscientist.cli import envfiles, livecheck
+from openscientist.providers.base import LiveCheckResult
 from openscientist.settings import AirgapSettings, DevSettings
 from tests.cli.conftest import env_value, wizard_input, wizard_tail
 
@@ -58,13 +59,30 @@ def test_switching_anthropic_from_api_key_to_oauth_token_keeps_only_the_token(ch
     assert env_value(checkout, ".env", "CLAUDE_CODE_OAUTH_TOKEN") == "oauth-token"
 
 
-def test_switching_bedrock_from_bearer_token_to_access_keys_keeps_only_the_keys(checkout: Path):
+def test_a_fix_round_switches_against_the_answers_it_started_from(checkout: Path, monkeypatch):
+    _setup(wizard_input("1", ["sk-test", "", ""]))
+    monkeypatch.setattr(
+        livecheck,
+        "perform_live_check",
+        lambda provider_id, answers: LiveCheckResult(ok=False, detail="refused"),
+    )
+    # Round one switches to a token and fixes. Round two types the key back and
+    # keeps the token with Enter, then saves anyway.
+    _rerun(["", "bad-oauth", "", "f", "sk-test", "", "", "s"])
+    assert env_value(checkout, ".env", "ANTHROPIC_API_KEY") == "sk-test"
+    assert env_value(checkout, ".env", "CLAUDE_CODE_OAUTH_TOKEN") == ""
+
+
+def test_switching_bedrock_from_a_profile_to_access_keys_keeps_the_keys_and_the_bearer_token(
+    checkout: Path,
+):
     model = "us.anthropic.claude-sonnet-5-5-v2:0"
-    _setup(wizard_input("4", ["us-east-1", "", "", "", "bearer", model]))
+    _setup(wizard_input("4", ["us-east-1", "", "", "dev", "bearer", model]))
     _rerun(["", "AKIATEST", "secret", "", "", ""])
-    assert env_value(checkout, ".env", "AWS_BEARER_TOKEN_BEDROCK") == ""
+    assert env_value(checkout, ".env", "AWS_PROFILE") == ""
     assert env_value(checkout, ".env", "AWS_ACCESS_KEY_ID") == "AKIATEST"
     assert env_value(checkout, ".env", "AWS_SECRET_ACCESS_KEY") == "secret"
+    assert env_value(checkout, ".env", "AWS_BEARER_TOKEN_BEDROCK") == "bearer"
 
 
 def test_switching_openai_from_api_key_to_chatgpt_login_keeps_only_the_login(

@@ -161,13 +161,8 @@ class BedrockProvider(ClaudeCompatible):
 
     @classmethod
     def setup_alternatives(cls) -> Alternatives:
-        return (
-            (
-                ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
-                ("AWS_PROFILE",),
-                ("AWS_BEARER_TOKEN_BEDROCK",),
-            ),
-        )
+        # Cost Explorer signs with the keys or profile, so the bearer token stays out of the group.
+        return ((("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"), ("AWS_PROFILE",)),)
 
     @classmethod
     def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:

@@ -88,7 +88,6 @@ def run_steps(
     """Drive the applicable steps, returning the answers, each answer's env file
     and the live check's outcome when the provider ran one."""
     answers = envfiles.current_values(root)
-    saved = dict(answers)
     env_file: dict[str, str] = {}
     outcome: LiveCheckOutcome | None = None
     for step in STEPS:
@@ -96,6 +95,8 @@ def run_steps(
             continue
         console.rule(step.title)
         while True:
+            # A fix round after a failed check switches against what that round started from.
+            round_start = dict(answers)
             answered_here: set[str] = set()
             # A step's questions can depend on its own answers (the provider
             # choice unlocks the provider's questions), so ask to a fixed point.
@@ -107,7 +108,9 @@ def run_steps(
                     answers[question.env] = ask(question, answers.get(question.env))
                     answered_here.add(question.env)
                     env_file[question.env] = question.file
-            changed = {env for env, value in answers.items() if value and value != saved.get(env)}
+            changed = {
+                env for env, value in answers.items() if value and value != round_start.get(env)
+            }
             _settle_alternatives(step.alternatives(answers), answers, changed)
             errors = step.validate(answers)
             if errors:

@@ -46,10 +46,11 @@ def test_every_alternative_is_fed_by_a_setup_question(provider_id: str):
             "bedrock",
             {
                 "AWS_REGION": "us-east-1",
+                "AWS_ACCESS_KEY_ID": "AKIATEST",
+                "AWS_SECRET_ACCESS_KEY": "secret",
                 "AWS_PROFILE": "dev",
-                "AWS_BEARER_TOKEN_BEDROCK": "bearer",
             },
-            ("AWS_PROFILE", "AWS_BEARER_TOKEN_BEDROCK"),
+            ("AWS_ACCESS_KEY_ID", "AWS_PROFILE"),
         ),
     ],
 )
@@ -58,6 +59,17 @@ def test_two_alternatives_together_are_refused(
 ):
     errors = provider_class(provider_id).setup_answers_errors(provider_id, answers)
     assert any(all(key in error for key in named) for error in errors), errors
+
+
+def test_a_bedrock_bearer_token_beside_sigv4_credentials_is_accepted():
+    # The bearer token serves inference and Cost Explorer signs with the keys or profile.
+    cls = provider_class("bedrock")
+    for credentials in (
+        {"AWS_ACCESS_KEY_ID": "AKIATEST", "AWS_SECRET_ACCESS_KEY": "secret"},
+        {"AWS_PROFILE": "dev"},
+    ):
+        answers = {"AWS_REGION": "us-east-1", "AWS_BEARER_TOKEN_BEDROCK": "bearer", **credentials}
+        assert cls.setup_answers_errors("bedrock", answers) == [], credentials
 
 
 def test_vllm_requires_the_served_model():
