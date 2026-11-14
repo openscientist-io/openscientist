@@ -10,6 +10,7 @@ from openscientist.cli import answers as answers_io
 from openscientist.cli import app as cli_app
 from openscientist.cli import livecheck
 from openscientist.providers.base import LiveCheckResult
+from openscientist.settings import DevSettings
 from tests.cli.conftest import ANTHROPIC_SETUP_ANSWERS, env_value, wizard_tail
 
 runner = CliRunner()
@@ -171,6 +172,27 @@ def test_a_missing_optional_secret_keeps_the_current_value_and_succeeds(checkout
     assert env_value(checkout, ".env", "VLLM_API_KEY") == ""
 
 
+def test_an_empty_answer_on_a_saved_setting_with_a_default_restores_the_default(
+    checkout: Path, monkeypatch
+):
+    tables = _foundry_tables()
+    tables["address"]["base_url"] = "http://127.0.0.1:9000"
+    tables["login"]["google_client_id"] = "google-id"
+    tables["login"]["google_client_secret"] = "google-secret"
+    first = runner.invoke(cli_app.app, ["setup", "--answers", str(_write(checkout, tables))])
+    assert first.exit_code == 0, first.output
+    assert env_value(checkout, ".env", "OPENSCIENTIST_DEV_MODE") == "true"
+
+    tables["address"]["base_url"] = ""
+    tables["login"]["dev_mode"] = ""
+    second = runner.invoke(cli_app.app, ["setup", "--answers", str(_write(checkout, tables))])
+    assert second.exit_code == 0, second.output
+
+    assert env_value(checkout, ".env", "OPENSCIENTIST_BASE_URL") == "http://localhost:8080"
+    monkeypatch.delenv("OPENSCIENTIST_DEV_MODE", raising=False)
+    assert DevSettings().dev_mode is False
+
+
 def test_a_missing_answers_file_fails_and_writes_nothing(checkout: Path):
     result = runner.invoke(cli_app.app, ["setup", "--answers", str(checkout / "absent.toml")])
     assert result.exit_code != 0
@@ -322,6 +344,35 @@ def test_the_skip_key_skips_the_billed_live_check(checkout: Path, monkeypatch):
     assert result.exit_code == 0
     assert calls == []
     assert env_value(checkout, ".env", "OPENSCIENTIST_PROVIDER") == "foundry"
+
+
+def test_an_empty_answer_clears_the_saved_alternative(checkout: Path):
+    tables = _foundry_tables()
+    tables["provider"]["skip_live_check"] = True
+    first = runner.invoke(cli_app.app, ["setup", "--answers", str(_write(checkout, tables))])
+    assert first.exit_code == 0, first.output
+    tables["provider"]["anthropic_foundry_resource"] = ""
+    tables["provider"]["anthropic_foundry_base_url"] = "https://res.services.ai.azure.com/anthropic"
+    second = runner.invoke(cli_app.app, ["setup", "--answers", str(_write(checkout, tables))])
+    assert second.exit_code == 0, second.output
+    assert env_value(checkout, ".env", "ANTHROPIC_FOUNDRY_RESOURCE") == ""
+    assert (
+        env_value(checkout, ".env", "ANTHROPIC_FOUNDRY_BASE_URL")
+        == "https://res.services.ai.azure.com/anthropic"
+    )
+
+
+def test_a_file_giving_both_alternatives_is_refused_and_writes_nothing(checkout: Path):
+    tables = _foundry_tables()
+    tables["provider"]["skip_live_check"] = True
+    first = runner.invoke(cli_app.app, ["setup", "--answers", str(_write(checkout, tables))])
+    assert first.exit_code == 0, first.output
+    before = (checkout / ".env").read_bytes()
+    tables["provider"]["anthropic_foundry_base_url"] = "https://res.services.ai.azure.com/anthropic"
+    second = runner.invoke(cli_app.app, ["setup", "--answers", str(_write(checkout, tables))])
+    assert second.exit_code == 1
+    assert "ANTHROPIC_FOUNDRY_RESOURCE and ANTHROPIC_FOUNDRY_BASE_URL" in second.output
+    assert (checkout / ".env").read_bytes() == before
 
 
 def test_the_skip_key_as_a_truthy_string_skips_the_billed_live_check(checkout: Path, monkeypatch):

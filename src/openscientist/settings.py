@@ -370,7 +370,7 @@ class ProviderSettings(BaseSettings):
             )
             return self
 
-        for warning in provider_cls.required_config_errors(self):
+        for warning in provider_cls.config_errors(self):
             logger.warning("Provider config: %s", warning)
 
         model_error = provider_cls.validate_model_format(self.model)

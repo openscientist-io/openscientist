@@ -6,7 +6,7 @@ import os
 import re
 import secrets
 import tempfile
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 
 #: The wizard's file names and the examples they start from.
@@ -120,19 +120,26 @@ def migrate_owner_launcher_keys(root: Path) -> None:
     )
 
 
-def parse_values(lines: Iterable[str]) -> dict[str, str]:
-    """Uncommented KEY=VALUE pairs, last one wins, with trailing comments dropped."""
-    values: dict[str, str] = {}
+def _assignments(lines: Iterable[str]) -> Iterator[tuple[str, str]]:
+    """Every uncommented KEY=VALUE pair in order, empty values included, with trailing comments dropped."""
     for line in lines:
         stripped = line.lstrip()
         if not stripped or stripped.startswith("#") or "=" not in line:
             continue
         key, _, rest = line.partition("=")
         match = _TRAILING_COMMENT.match(rest)
-        value = (match.group(1) if match else rest).strip()
-        if key.strip() and value:
-            values[key.strip()] = value
-    return values
+        if key.strip():
+            yield key.strip(), (match.group(1) if match else rest).strip()
+
+
+def parse_values(lines: Iterable[str]) -> dict[str, str]:
+    """Uncommented KEY=VALUE pairs, last one wins, with trailing comments dropped."""
+    return {key: value for key, value in _assignments(lines) if value}
+
+
+def assigned_keys(lines: Iterable[str]) -> set[str]:
+    """Every key with an uncommented assignment, an empty ``KEY=`` included."""
+    return {key for key, _ in _assignments(lines)}
 
 
 def write_file(path: Path, lines: list[str]) -> None:
@@ -190,7 +197,7 @@ def docker_env(root: Path, overlay: Mapping[str, str] | None = None) -> dict[str
     for file in ENV_FILES:
         path = _file_path(root, file)
         if path.is_file():
-            defined.update(parse_values(path.read_text(encoding="utf-8").splitlines()))
+            defined.update(assigned_keys(path.read_text(encoding="utf-8").splitlines()))
     env = {key: value for key, value in os.environ.items() if key not in defined}
     env.update(overlay or {})
     return env

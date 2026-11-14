@@ -77,6 +77,7 @@ def test_valid_with_codex_auth_host_path(tmp_path: Path) -> None:
     with patch("openscientist.providers.openai.Path.home", return_value=tmp_path):
         with patch("openscientist.providers.openai.get_settings") as mock_settings:
             mock_settings.return_value.provider.codex_auth_host_path = "/host/auth.json"
+            mock_settings.return_value.provider.openai_api_key = None
             assert OpenAIDirectProvider().validate_required_config() == []
 
 
