@@ -165,8 +165,14 @@ class FoundryProvider(ClaudeCompatible):
     @classmethod
     def setup_questions(cls) -> tuple[SetupQuestion, ...]:
         return (
-            SetupQuestion("ANTHROPIC_FOUNDRY_RESOURCE", help="Foundry resource name"),
-            SetupQuestion("ANTHROPIC_FOUNDRY_BASE_URL", help="or the full Foundry endpoint URL"),
+            SetupQuestion(
+                "ANTHROPIC_FOUNDRY_RESOURCE",
+                help="Foundry resource name. Leave empty to give the full endpoint URL instead",
+            ),
+            SetupQuestion(
+                "ANTHROPIC_FOUNDRY_BASE_URL",
+                help="full Foundry endpoint URL. Leave empty if you gave the resource name",
+            ),
             SetupQuestion("ANTHROPIC_FOUNDRY_API_KEY", kind="secret"),
             *super().setup_questions(),
         )
