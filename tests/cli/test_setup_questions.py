@@ -53,3 +53,18 @@ def test_azure_openai_requires_key_resource_and_model():
         )
         == []
     )
+
+
+def test_azure_openai_refuses_a_dated_api_version_from_an_existing_env_file():
+    """The wizard's answers carry every value of an existing env file."""
+    errors = provider_class("azure-openai").setup_answers_errors(
+        "azure-openai",
+        {
+            "AZURE_OPENAI_API_KEY": "key",
+            "AZURE_OPENAI_RESOURCE": "res",
+            "OPENSCIENTIST_MODEL": "deploy",
+            "AZURE_OPENAI_API_VERSION": "2025-04-01-preview",
+        },
+    )
+    assert len(errors) == 1
+    assert "AZURE_OPENAI_API_VERSION" in errors[0]

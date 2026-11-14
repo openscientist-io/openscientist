@@ -70,13 +70,22 @@ def test_config_overrides_use_v1_responses_surface() -> None:
 def test_api_version_pinned_only_when_configured() -> None:
     with patch(
         "openscientist.providers.azure_openai.get_settings",
-        return_value=_settings(api_version="2025-04-01-preview"),
+        return_value=_settings(api_version="preview"),
     ):
         cfg = tomllib.loads("\n".join(AzureOpenAIProvider().codex_config_overrides()))
-    assert (
-        cfg["model_providers"]["azure-openai"]["query_params"]["api-version"]
-        == "2025-04-01-preview"
-    )
+    assert cfg["model_providers"]["azure-openai"]["query_params"]["api-version"] == "preview"
+
+
+@pytest.mark.parametrize("api_version", ["2025-04-01-preview", "2024-10-21"])
+def test_a_dated_api_version_is_refused(api_version: str) -> None:
+    """Azure's v1 surface answers every request carrying a dated api-version
+    with 400 "API version not supported"."""
+    with patch(
+        "openscientist.providers.azure_openai.get_settings",
+        return_value=_settings(api_version=api_version),
+    ):
+        with pytest.raises(ValueError, match=f"AZURE_OPENAI_API_VERSION={api_version}"):
+            AzureOpenAIProvider()
 
 
 def test_model_name_is_the_configured_model() -> None:
