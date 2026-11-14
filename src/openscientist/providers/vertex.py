@@ -14,6 +14,7 @@ from openscientist.providers.base import (
     AirgapPosture,
     ClaudeCompatible,
     CostInfo,
+    HostMount,
     LiveCheckResult,
     LlmUpstream,
     OmpModelCatalog,
@@ -123,7 +124,8 @@ class VertexProvider(ClaudeCompatible):
             creds_env = provider.google_application_credentials
             if not creds_env:
                 errors.append(
-                    "GOOGLE_APPLICATION_CREDENTIALS not set (path to service account JSON)"
+                    "GOOGLE_APPLICATION_CREDENTIALS not set (set GCP_CREDENTIALS_FILE to the "
+                    "host path of the service account JSON, which compose mounts)"
                 )
             elif not os.path.exists(os.path.expanduser(creds_env)):
                 errors.append(
@@ -152,9 +154,10 @@ class VertexProvider(ClaudeCompatible):
         return (
             SetupQuestion("ANTHROPIC_VERTEX_PROJECT_ID", help="GCP project ID"),
             SetupQuestion(
-                "GOOGLE_APPLICATION_CREDENTIALS",
+                "GCP_CREDENTIALS_FILE",
                 kind="path",
                 help="host path to the GCP service account JSON",
+                mount=HostMount("GOOGLE_APPLICATION_CREDENTIALS", "/app/gcp-credentials.json"),
             ),
             SetupQuestion("GCP_BILLING_ACCOUNT_ID", help="GCP billing account for cost tracking"),
             SetupQuestion("CLOUD_ML_REGION", help="region, e.g. us-east5"),

@@ -25,8 +25,7 @@ def provider_airgap_posture(provider_id: str, answers: Mapping[str, str]) -> Air
     provider settings (not the full app), so it runs before the database and the
     master secret exist.
     """
-    values = dict(answers)
-    values["OPENSCIENTIST_PROVIDER"] = provider_id
+    values = provider_class(provider_id).settings_values(provider_id, answers)
     settings_logger = logging.getLogger("openscientist.settings")
     previous_level = settings_logger.level
     settings_logger.setLevel(logging.ERROR)

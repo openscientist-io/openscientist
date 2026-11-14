@@ -42,7 +42,7 @@ def test_airgap_offered_for_a_chatgpt_login(checkout: Path):
     lines = [
         "6",  # OpenAI API
         "",  # OPENAI_API_KEY
-        "/tmp/codex-auth.json",  # CODEX_AUTH_HOST_PATH
+        "/tmp/codex-auth.json",  # CODEX_AUTH_FILE
         "",  # OPENSCIENTIST_MODEL
         "",  # OPENSCIENTIST_BASE_URL
         "",  # PORT

@@ -173,6 +173,10 @@ services:
       PHENIX_PATH: ${PHENIX_HOST_PATH:+/opt/phenix}
       PHENIX_HOST_PATH: ${PHENIX_HOST_PATH:-}
 
+      # Vertex AI: GCP_CREDENTIALS_FILE is the service account JSON on the host,
+      # mounted read-only below. The web signs the Vertex calls with it.
+      GOOGLE_APPLICATION_CREDENTIALS: ${GCP_CREDENTIALS_FILE:+/app/gcp-credentials.json}
+
       # Codex (OpenAI) auth: CODEX_AUTH_FILE is the codex CLI auth.json on the host
       # (ChatGPT login). It is mounted read-only into this web container, which copies
       # it into each per-job CODEX_HOME for the agent. Unused when OPENAI_API_KEY is set.

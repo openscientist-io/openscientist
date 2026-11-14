@@ -33,6 +33,7 @@ class ProviderStep(Step):
                 file="env",
                 kind=question.kind,
                 help=question.help,
+                mount=question.mount,
             )
             for question in provider_cls.setup_questions()
         ]
@@ -54,11 +55,21 @@ class ProviderStep(Step):
     def declared_envs(self) -> frozenset[str]:
         envs = {"OPENSCIENTIST_PROVIDER"}
         for provider_id in provider_ids():
-            envs.update(question.env for question in provider_class(provider_id).setup_questions())
+            for question in provider_class(provider_id).setup_questions():
+                envs.add(question.env)
+                if question.mount:
+                    envs.add(question.mount.alias)
         return frozenset(envs)
 
     def alternatives(self, answers: dict[str, str]) -> Alternatives:
+        """The provider's alternatives, each setting named by the env variable
+        the wizard asks for it."""
         provider_id = answers.get("OPENSCIENTIST_PROVIDER", "")
         if provider_id not in provider_ids():
             return ()
-        return provider_class(provider_id).setup_alternatives()
+        provider_cls = provider_class(provider_id)
+        asked = {q.mount.alias: q.env for q in provider_cls.setup_questions() if q.mount}
+        return tuple(
+            tuple(tuple(asked.get(alias, alias) for alias in member) for member in group)
+            for group in provider_cls.setup_alternatives()
+        )

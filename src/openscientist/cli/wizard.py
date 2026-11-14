@@ -104,6 +104,7 @@ def run_steps(
                 if not batch:
                     break
                 for question in batch:
+                    _adopt_host_path(question, answers, saved, env_file)
                     answers[question.env] = ask(question, answers.get(question.env))
                     answered_here.add(question.env)
                     env_file[question.env] = question.file
@@ -131,6 +132,7 @@ def _run_steps_from_answers(
     """The applicable steps against the file's tables: the answers, each answer's
     env file and the missing or invalid answers, each named."""
     answers = envfiles.current_values(root)
+    saved = dict(answers)
     env_file: dict[str, str] = {}
     errors: list[str] = []
     # The file states every answer, so each non-empty one counts as given, changed or not.
@@ -143,6 +145,7 @@ def _run_steps_from_answers(
             if not batch:
                 break
             for question in batch:
+                _adopt_host_path(question, answers, saved, env_file)
                 env_file[question.env] = question.file
                 key = answers_io.question_key(step.key, question.key)
                 table = tables.get(step.key)
@@ -171,6 +174,25 @@ def _run_steps_from_answers(
         _settle_alternatives(step.alternatives(answers), answers, supplied)
         errors.extend(step.validate(answers))
     return answers, env_file, errors
+
+
+def _adopt_host_path(
+    question: Question, answers: dict[str, str], saved: dict[str, str], env_file: dict[str, str]
+) -> None:
+    """Move a host path an earlier wizard saved under the mounted setting to
+    the host variable compose mounts, clearing the setting.
+
+    A setting that already holds the container path is left as it is.
+    """
+    mount = question.mount
+    if mount is None or answers.get(question.env):
+        return
+    old = answers.get(mount.alias, "")
+    if not old or old == mount.container_path:
+        return
+    answers[question.env] = saved[question.env] = old
+    answers[mount.alias] = ""
+    env_file[mount.alias] = question.file
 
 
 def _settle_alternatives(

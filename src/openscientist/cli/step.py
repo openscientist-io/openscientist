@@ -11,7 +11,7 @@ from pydantic_core import PydanticUndefined
 from pydantic_settings import BaseSettings
 
 from openscientist.cli.livecheck import LiveCheckOutcome
-from openscientist.providers.base import Alternatives
+from openscientist.providers.base import Alternatives, HostMount
 from openscientist.settings import (
     AgentSettings,
     AirgapSettings,
@@ -60,7 +60,8 @@ class Question:
     """One wizard question and the env variable its answer lands in.
 
     ``kind`` is choice, text, secret, flag, path, port or int. ``file`` is the
-    env file the answer goes to: env, db or owner.
+    env file the answer goes to: env, db or owner. ``mount`` is set when the
+    answer is a host path compose mounts and hands the web as another setting.
     """
 
     key: str
@@ -72,6 +73,7 @@ class Question:
     default: str | None = None
     help: str | None = None
     required: bool = False
+    mount: HostMount | None = None
 
     @classmethod
     def for_env(
@@ -86,6 +88,7 @@ class Question:
         default: str | None = None,
         help: str | None = None,
         required: bool = False,
+        mount: HostMount | None = None,
     ) -> Question:
         """A question for ``env``, taking help and default from the settings field when not given."""
         info = settings_field_info(env)
@@ -110,6 +113,7 @@ class Question:
             default=default,
             help=help,
             required=required,
+            mount=mount,
         )
 
 

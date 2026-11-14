@@ -206,12 +206,26 @@ LLM_PROXY_URL_ENV = "OPENSCIENTIST_LLM_PROXY_URL"
 
 
 @dataclass(frozen=True)
+class HostMount:
+    """A host path compose mounts into the web at ``container_path`` and hands
+    the web as the ``alias`` setting."""
+
+    alias: str
+    container_path: str
+
+
+@dataclass(frozen=True)
 class SetupQuestion:
-    """One env variable the setup wizard asks about this provider, in ask order."""
+    """One env variable the setup wizard asks about this provider, in ask order.
+
+    A question with ``mount`` asks the host path compose mounts, and its answer
+    stands for the mounted setting wherever the host validates or checks it.
+    """
 
     env: str
     kind: str = "text"  # text, secret or path
     help: str | None = None
+    mount: HostMount | None = None
 
 
 #: Groups of settings aliases that exclude each other, each member a tuple of
@@ -389,12 +403,14 @@ class Provider(abc.ABC):
 
     @classmethod
     def alternatives_errors(cls, provider: ProviderSettings) -> list[str]:
-        """One error per alternatives group with more than one member set."""
+        """One error per alternatives group with more than one member set,
+        naming the keys an operator edits in .env."""
         fields = {info.alias: name for name, info in ProviderSettings.model_fields.items()}
+        env_names = {q.mount.alias: q.env for q in cls.setup_questions() if q.mount}
         errors = []
         for group in cls.setup_alternatives():
             set_members = [
-                " with ".join(member)
+                " with ".join(env_names.get(alias, alias) for alias in member)
                 for member in group
                 if any(getattr(provider, fields[alias]) for alias in member)
             ]
@@ -407,14 +423,24 @@ class Provider(abc.ABC):
         return errors
 
     @classmethod
+    def settings_values(cls, provider_id: str, answers: Mapping[str, str]) -> dict[str, str]:
+        """The wizard's answers as the settings read them on the host, a mounted
+        host path standing for its setting."""
+        values = dict(answers)
+        values["OPENSCIENTIST_PROVIDER"] = provider_id
+        for question in cls.setup_questions():
+            if question.mount:
+                values[question.mount.alias] = answers.get(question.env, "")
+        return values
+
+    @classmethod
     def setup_answers_errors(cls, provider_id: str, answers: Mapping[str, str]) -> list[str]:
         """This provider's config errors against a setup wizard's answer set.
 
         Runs the validation the web runs at startup, holding the answers in the
         process environment for the duration of the check.
         """
-        values = dict(answers)
-        values["OPENSCIENTIST_PROVIDER"] = provider_id
+        values = cls.settings_values(provider_id, answers)
         # The settings build logs the same errors the wizard will show, so the
         # wizard's caller only sees its own copy.
         settings_logger = logging.getLogger("openscientist.settings")
@@ -448,8 +474,7 @@ class Provider(abc.ABC):
         Holds the wizard's answers in the process environment only for the
         duration of the call, then runs the provider-specific check.
         """
-        values = dict(answers)
-        values["OPENSCIENTIST_PROVIDER"] = provider_id
+        values = cls.settings_values(provider_id, answers)
         settings_logger = logging.getLogger("openscientist.settings")
         previous_level = settings_logger.level
         settings_logger.setLevel(logging.ERROR)

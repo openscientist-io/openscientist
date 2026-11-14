@@ -25,6 +25,7 @@ from openscientist.providers.base import (
     Alternatives,
     CodexCompatible,
     CostInfo,
+    HostMount,
     LiveCheckResult,
     LlmUpstream,
     SetupQuestion,
@@ -334,9 +335,10 @@ class OpenAIDirectProvider(CodexCompatible):
             return []
         return [
             "OpenAI provider needs auth: set OPENAI_API_KEY, set "
-            "CODEX_AUTH_HOST_PATH to the codex auth.json (`codex login`) the "
-            "web signs the ChatGPT calls with, or set OMP_AUTH_HOST_PATH to "
-            "the omp vault of an `omp login`."
+            "CODEX_AUTH_FILE to the host path of the codex auth.json (`codex login`), "
+            "which compose mounts as CODEX_AUTH_HOST_PATH for the web to sign the "
+            "ChatGPT calls with, or set OMP_AUTH_HOST_PATH to the omp vault of an "
+            "`omp login`."
         ]
 
     @classmethod
@@ -344,9 +346,10 @@ class OpenAIDirectProvider(CodexCompatible):
         return (
             SetupQuestion("OPENAI_API_KEY", kind="secret"),
             SetupQuestion(
-                "CODEX_AUTH_HOST_PATH",
+                "CODEX_AUTH_FILE",
                 kind="path",
                 help="or the host path of the codex auth.json from `codex login`",
+                mount=HostMount("CODEX_AUTH_HOST_PATH", "/app/codex-auth.json"),
             ),
             SetupQuestion(
                 "OPENSCIENTIST_MODEL", help="model id, or leave empty for the codex account default"

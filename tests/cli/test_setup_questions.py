@@ -9,13 +9,14 @@ from openscientist.providers import provider_class, provider_ids
 @pytest.mark.parametrize("provider_id", provider_ids())
 def test_setup_questions_are_settings_aliases(provider_id: str):
     for question in provider_class(provider_id).setup_questions():
-        assert settings_field_info(question.env) is not None, (provider_id, question.env)
+        alias = question.mount.alias if question.mount else question.env
+        assert settings_field_info(alias) is not None, (provider_id, alias)
 
 
 @pytest.mark.parametrize("provider_id", provider_ids())
 def test_every_alternative_is_fed_by_a_setup_question(provider_id: str):
     cls = provider_class(provider_id)
-    fed = {question.env for question in cls.setup_questions()}
+    fed = {q.mount.alias if q.mount else q.env for q in cls.setup_questions()}
     for group in cls.setup_alternatives():
         for member in group:
             assert set(member) <= fed, (provider_id, member)
@@ -39,8 +40,8 @@ def test_every_alternative_is_fed_by_a_setup_question(provider_id: str):
         ),
         (
             "openai",
-            {"OPENAI_API_KEY": "sk-test", "CODEX_AUTH_HOST_PATH": "/home/me/.codex/auth.json"},
-            ("OPENAI_API_KEY", "CODEX_AUTH_HOST_PATH"),
+            {"OPENAI_API_KEY": "sk-test", "CODEX_AUTH_FILE": "/home/me/.codex/auth.json"},
+            ("OPENAI_API_KEY", "CODEX_AUTH_FILE"),
         ),
         (
             "bedrock",

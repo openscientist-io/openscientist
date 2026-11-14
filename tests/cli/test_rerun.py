@@ -1,7 +1,8 @@
-"""Setup re-runs: switching between alternative answers and clearing saved values."""
+"""Setup re-runs: switching between alternative answers, clearing saved values, host paths."""
 
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from openscientist.cli import app as cli_app
@@ -74,7 +75,20 @@ def test_switching_openai_from_api_key_to_chatgpt_login_keeps_only_the_login(
     _setup(wizard_input("6", ["sk-openai", "", ""]))
     _rerun(["", str(auth), ""])
     assert env_value(checkout, ".env", "OPENAI_API_KEY") == ""
-    assert env_value(checkout, ".env", "CODEX_AUTH_HOST_PATH") == str(auth)
+    assert env_value(checkout, ".env", "CODEX_AUTH_FILE") == str(auth)
+
+
+def test_switching_openai_from_chatgpt_login_to_api_key_clears_the_login_for_compose(
+    checkout: Path, tmp_path: Path, monkeypatch
+):
+    auth = tmp_path / "auth.json"
+    auth.write_text("{}")
+    _setup(wizard_input("6", ["", str(auth), ""]))
+    _rerun(["sk-openai", "", ""])
+    assert env_value(checkout, ".env", "CODEX_AUTH_FILE") == ""
+    assert _assigned(checkout, "CODEX_AUTH_FILE")
+    monkeypatch.setenv("CODEX_AUTH_FILE", str(auth))
+    assert "CODEX_AUTH_FILE" not in envfiles.docker_env(checkout)
 
 
 def _phenix_install(tmp_path: Path) -> Path:
@@ -121,3 +135,56 @@ def test_both_foundry_endpoints_saved_are_rejected_until_one_is_cleared(checkout
     assert "Those answers do not validate" in output
     assert env_value(checkout, ".env", "ANTHROPIC_FOUNDRY_RESOURCE") == ""
     assert env_value(checkout, ".env", "ANTHROPIC_FOUNDRY_BASE_URL") == FOUNDRY_URL
+
+
+def _vertex_env(checkout: Path, credentials: str, host_file: str | None) -> None:
+    """A saved Vertex setup as an earlier wizard or a hand edit left it."""
+    _setup(wizard_input("1", ["sk-test", "", ""]))
+    for key, value in {
+        "OPENSCIENTIST_PROVIDER": "vertex",
+        "ANTHROPIC_API_KEY": "",
+        "ANTHROPIC_VERTEX_PROJECT_ID": "proj",
+        "GOOGLE_APPLICATION_CREDENTIALS": credentials,
+        "GCP_BILLING_ACCOUNT_ID": "AAAAAA-BBBBBB-CCCCCC",
+        "CLOUD_ML_REGION": "us-east5",
+    }.items():
+        envfiles.set_file_value(checkout, "env", key, value)
+    if host_file is not None:
+        envfiles.set_file_value(checkout, "env", "GCP_CREDENTIALS_FILE", host_file)
+
+
+@pytest.fixture
+def service_account(tmp_path: Path) -> Path:
+    path = tmp_path / "sa.json"
+    path.write_text("{}")
+    return path
+
+
+def test_vertex_asks_the_host_path_compose_mounts(checkout: Path, service_account: Path):
+    _setup(
+        wizard_input(
+            "3", ["proj", str(service_account), "AAAAAA-BBBBBB-CCCCCC", "us-east5", "", "n"]
+        )
+    )
+    assert env_value(checkout, ".env", "GCP_CREDENTIALS_FILE") == str(service_account)
+    assert env_value(checkout, ".env", "GOOGLE_APPLICATION_CREDENTIALS") == ""
+
+
+def test_a_host_path_the_old_wizard_saved_moves_to_the_mounted_variable(
+    checkout: Path, service_account: Path
+):
+    _vertex_env(checkout, str(service_account), None)
+    output = _rerun(["", "", "", "", "", "n"])
+    assert f"GCP_CREDENTIALS_FILE [{service_account}]" in output
+    assert env_value(checkout, ".env", "GCP_CREDENTIALS_FILE") == str(service_account)
+    assert env_value(checkout, ".env", "GOOGLE_APPLICATION_CREDENTIALS") == ""
+    assert _assigned(checkout, "GOOGLE_APPLICATION_CREDENTIALS")
+
+
+def test_a_container_path_saved_by_hand_is_kept(checkout: Path, service_account: Path):
+    _vertex_env(checkout, "/app/gcp-credentials.json", str(service_account))
+    _rerun(["", "", "", "", "", "n"])
+    assert env_value(checkout, ".env", "GCP_CREDENTIALS_FILE") == str(service_account)
+    assert (
+        env_value(checkout, ".env", "GOOGLE_APPLICATION_CREDENTIALS") == "/app/gcp-credentials.json"
+    )

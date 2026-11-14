@@ -136,7 +136,7 @@ def test_a_chatgpt_login_sets_up_with_the_airgap_step(checkout: Path):
     tables = _vllm_tables()
     tables["provider"] = {
         "id": "openai",
-        "codex_auth_host_path": str(checkout / "codex"),
+        "codex_auth_file": str(checkout / "codex"),
         "openscientist_model": "gpt-5.2-codex",
     }
     tables["airgap"] = {"enabled": "false"}
