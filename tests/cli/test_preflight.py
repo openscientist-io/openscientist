@@ -267,6 +267,19 @@ def test_a_mounted_path_that_exists_passes(checkout: Path, free_ports: None) -> 
     assert preflight.start_findings(checkout, _host()) == []
 
 
+@pytest.mark.parametrize(
+    "key", ["GCP_CREDENTIALS_FILE", "CODEX_AUTH_FILE", "OMP_AUTH_DIR", "PHENIX_HOST_PATH"]
+)
+def test_a_mounted_path_under_the_home_tilde_that_exists_passes(
+    checkout: Path, free_ports: None, monkeypatch: pytest.MonkeyPatch, key: str
+) -> None:
+    # Compose expands a leading ~ in a mount source, so the check expands it too.
+    monkeypatch.setenv("HOME", str(checkout))
+    (checkout / "mounted").write_text("{}")
+    envfiles.set_file_value(checkout, "env", key, "~/mounted")
+    assert preflight.start_findings(checkout, _host()) == []
+
+
 # --- where the CLI runs them --------------------------------------------------
 
 

@@ -302,7 +302,7 @@ def _git(root: Path, host: Host) -> list[Finding]:
 
 def _mounted_paths(values: dict[str, str]) -> list[Finding]:
     """Docker creates an empty directory for a missing mount source, which the
-    provider later fails on, so a set path must exist."""
+    provider later fails on, so a set path must exist, with ``~`` expanded as compose does."""
     return [
         Finding(
             True,
@@ -310,7 +310,7 @@ def _mounted_paths(values: dict[str, str]) -> list[Finding]:
             "`uv run openscientist setup`.",
         )
         for key in MOUNTED_PATHS
-        if values.get(key) and not Path(values[key]).exists()
+        if values.get(key) and not Path(values[key]).expanduser().exists()
     ]
 
 
