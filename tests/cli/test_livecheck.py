@@ -752,3 +752,28 @@ def test_foundry_live_check_reports_a_failed_entra_token(monkeypatch):
         "foundry", {"ANTHROPIC_FOUNDRY_BASE_URL": "https://f.example.com/anthropic"}
     )
     assert not result.ok
+
+
+def test_foundry_live_check_sends_an_entra_token_as_a_bearer(monkeypatch):
+    """Foundry reads x-api-key only as a resource key, so an Entra ID token
+    belongs in Authorization, minted for the ai.azure.com audience."""
+    import azure.identity
+    from azure.core.credentials import AccessToken
+
+    scopes: list[tuple[str, ...]] = []
+
+    class _Credential:
+        def get_token(self, *requested, **kwargs):
+            scopes.append(requested)
+            return AccessToken("entra-token", 4102444800)
+
+    monkeypatch.setattr(azure.identity, "DefaultAzureCredential", _Credential)
+    calls = _capture_post(monkeypatch, _FakeResponse(200, {}))
+    result = provider_class("foundry").live_check(
+        "foundry", {"ANTHROPIC_FOUNDRY_BASE_URL": "https://f.example.com/anthropic"}
+    )
+    assert result.ok, result.detail
+    headers = calls[0][1]
+    assert headers["authorization"] == "Bearer entra-token"
+    assert "x-api-key" not in headers
+    assert scopes == [("https://ai.azure.com/.default",)]

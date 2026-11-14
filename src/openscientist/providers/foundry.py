@@ -2,8 +2,10 @@
 
 import logging
 import os
+import threading
+import time
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from openscientist.providers.base import (
     AirgapEgress,
@@ -14,13 +16,69 @@ from openscientist.providers.base import (
     LlmUpstream,
     SetupQuestion,
     StaticHeadersSigning,
+    UpstreamCredentialError,
+    UpstreamSigning,
     _completion_live_check,
 )
 from openscientist.settings import ProviderSettings, get_settings
 
 from ._env_cleanup import VERTEX_PROVIDER_ENV_VARS, clear_empty_env_vars
 
+if TYPE_CHECKING:
+    from azure.core.credentials import AccessToken, TokenCredential
+
 logger = logging.getLogger(__name__)
+
+# Foundry accepts an Entra ID token only for this audience, and only as a bearer token.
+ENTRA_SCOPE = "https://ai.azure.com/.default"
+
+# A cached token is minted again once it has less than this left to live.
+_ENTRA_REFRESH_MARGIN_SECONDS = 300
+
+
+class EntraTokenSigning(UpstreamSigning):
+    """Signs each forwarded request with a Microsoft Entra ID token from the
+    web's credential. The token is cached and minted again near its expiry,
+    under a lock so concurrent requests share one mint."""
+
+    def __init__(self, credential: "TokenCredential") -> None:
+        self._credential = credential
+        self._lock = threading.Lock()
+        self._token: AccessToken | None = None
+
+    def credential_headers(
+        self, *, method: str, path: str, query: str, body: bytes
+    ) -> dict[str, str]:
+        return {"authorization": f"Bearer {self._access_token()}"}
+
+    def _access_token(self) -> str:
+        from azure.core.exceptions import ClientAuthenticationError  # noqa: PLC0415
+
+        with self._lock:
+            token = self._token
+            if token is None or token.expires_on - time.time() < _ENTRA_REFRESH_MARGIN_SECONDS:
+                try:
+                    token = self._credential.get_token(ENTRA_SCOPE)
+                except ClientAuthenticationError as exc:
+                    raise UpstreamCredentialError(f"Entra ID token failed: {exc}") from exc
+                self._token = token
+            return token.token
+
+
+_entra_signing: EntraTokenSigning | None = None
+_entra_signing_lock = threading.Lock()
+
+
+def entra_signing() -> EntraTokenSigning:
+    """The web-side Entra ID signing over Azure's default credential chain,
+    built once per process."""
+    global _entra_signing
+    from azure.identity import DefaultAzureCredential  # noqa: PLC0415
+
+    with _entra_signing_lock:
+        if _entra_signing is None:
+            _entra_signing = EntraTokenSigning(DefaultAzureCredential())
+        return _entra_signing
 
 
 def _query_azure_cost_usd(
@@ -127,7 +185,7 @@ class FoundryProvider(ClaudeCompatible):
         else:
             return LiveCheckResult(ok=True, detail="No Foundry endpoint to check with; skipped.")
         if p.anthropic_foundry_api_key:
-            token = p.anthropic_foundry_api_key
+            auth = {"x-api-key": p.anthropic_foundry_api_key}
         else:
             # No API key, so mint a short-lived Entra ID token via the default chain.
             try:
@@ -138,20 +196,17 @@ class FoundryProvider(ClaudeCompatible):
                     detail="No Foundry API key and azure-identity is not installed.",
                 )
             try:
-                token = (
-                    DefaultAzureCredential()
-                    .get_token("https://cognitiveservices.azure.com/.default")
-                    .token
-                )
+                token = DefaultAzureCredential().get_token(ENTRA_SCOPE).token
             except Exception as exc:  # noqa: BLE001 - surface any credential error
                 return LiveCheckResult(ok=False, detail=f"Foundry Entra ID token failed: {exc}")
+            auth = {"authorization": f"Bearer {token}"}
         url = f"{base_url.rstrip('/')}/v1/messages"
         body = {
             "model": p.model or "claude-sonnet-4-5",
             "max_tokens": 1,
             "messages": [{"role": "user", "content": "ping"}],
         }
-        headers = {"x-api-key": token, "anthropic-version": "2023-06-01"}
+        headers = {**auth, "anthropic-version": "2023-06-01"}
         return _completion_live_check(url, headers, body, cls.display_name)
 
     @classmethod
@@ -171,14 +226,15 @@ class FoundryProvider(ClaudeCompatible):
         return type(self).container_env(get_settings().provider)
 
     def llm_upstream(self) -> LlmUpstream | None:
-        # Foundry authenticates with x-api-key (API key or minted Entra ID token).
         p = get_settings().provider
         if not (p.anthropic_foundry_base_url or p.anthropic_foundry_resource):
             return None
-        return LlmUpstream(
-            self._resolve_base_url(),
-            StaticHeadersSigning({"x-api-key": self._resolve_api_key()}),
+        signing: UpstreamSigning = (
+            StaticHeadersSigning({"x-api-key": p.anthropic_foundry_api_key})
+            if p.anthropic_foundry_api_key
+            else entra_signing()
         )
+        return LlmUpstream(self._resolve_base_url(), signing)
 
     def proxy_env_overrides(self, *, proxy_base_url: str, placeholder: str) -> dict[str, str]:
         p = get_settings().provider
@@ -271,22 +327,6 @@ class FoundryProvider(ClaudeCompatible):
     def _build_base_url_from_resource(resource: str) -> str:
         """Build Azure Foundry Anthropic endpoint URL from resource name."""
         return f"https://{resource}.services.ai.azure.com/anthropic"
-
-    def _resolve_api_key(self) -> str:
-        """Return the bearer token for the Anthropic client.
-
-        Uses the configured API key if present, else a short-lived Entra ID
-        token via Azure's default credential chain.
-        """
-        settings = get_settings()
-        api_key = settings.provider.anthropic_foundry_api_key
-        if api_key:
-            return api_key
-        from azure.identity import DefaultAzureCredential  # noqa: PLC0415
-
-        credential = DefaultAzureCredential()
-        token = credential.get_token("https://cognitiveservices.azure.com/.default")
-        return token.token
 
     def _resolve_base_url(self) -> str:
         """Resolve Foundry base URL from explicit URL or resource name."""
