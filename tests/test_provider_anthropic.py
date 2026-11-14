@@ -160,12 +160,13 @@ class TestAnthropicClaudeCompatible:
             provider = AnthropicProvider()
             assert provider.claude_sdk_env() == {"CLAUDE_CODE_OAUTH_TOKEN": "oauth-abc"}
 
-    def test_claude_sdk_env_api_key_wins_when_both_set(self) -> None:
-        """API key takes precedence over an OAuth token when both are present."""
+    def test_api_key_and_oauth_token_together_are_refused(self) -> None:
         settings = _mock_settings(api_key="sk-ant-both", oauth="oauth-both")
-        with patch("openscientist.providers.anthropic.get_settings", return_value=settings):
-            provider = AnthropicProvider()
-            assert provider.claude_sdk_env() == {"ANTHROPIC_API_KEY": "sk-ant-both"}
+        with (
+            patch("openscientist.providers.anthropic.get_settings", return_value=settings),
+            pytest.raises(ValueError, match="ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN"),
+        ):
+            AnthropicProvider()
 
     def test_claude_sdk_env_empty_when_neither_set(self) -> None:
         # Construct with a valid config, then re-point settings to unset both.

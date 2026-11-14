@@ -264,8 +264,7 @@ class TestBedrockClaudeCompatible:
             profile="bedrock-prof",
             bearer="bt-real",
         )
-        with patch("openscientist.providers.bedrock.get_settings", return_value=settings):
-            env = BedrockProvider().claude_sdk_env()
+        env = BedrockProvider.container_env(settings.provider)
         assert env == {
             "CLAUDE_CODE_USE_BEDROCK": "1",
             "AWS_REGION": "us-east-1",

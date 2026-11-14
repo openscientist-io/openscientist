@@ -237,8 +237,6 @@ class TestProxiedContainerEnv:
             OPENSCIENTIST_PROVIDER="bedrock",
             AWS_REGION="us-east-1",
             AWS_BEARER_TOKEN_BEDROCK="bt-real",
-            AWS_ACCESS_KEY_ID="leaky-ak",
-            AWS_SECRET_ACCESS_KEY="leaky-sk",
         )
         env = provider.proxied_container_env(
             proxy_base_url="http://openscientist:8081", placeholder="job-1.tok"
@@ -248,7 +246,6 @@ class TestProxiedContainerEnv:
         assert "bt-real" not in env.values()
         assert "AWS_ACCESS_KEY_ID" not in env
         assert "AWS_SECRET_ACCESS_KEY" not in env
-        assert "leaky-ak" not in env.values()
 
     def test_bedrock_sigv4_routes_the_container_through_the_proxy(self, active_provider):
         """The container reaches Bedrock only through the proxy and holds no AWS

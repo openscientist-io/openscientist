@@ -50,7 +50,7 @@ class AzureOpenAIProvider(CodexCompatible):
         )
 
     def validate_required_config(self) -> list[str]:
-        return self.required_config_errors(get_settings().provider)
+        return self.config_errors(get_settings().provider)
 
     @classmethod
     def required_config_errors(cls, provider: ProviderSettings) -> list[str]:

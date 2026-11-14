@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from pathlib import Path
 
 import click
@@ -15,8 +15,12 @@ from openscientist.cli.step import Question, Step
 from openscientist.cli.steps import STEPS
 from openscientist.cli.steps.provider import ProviderStep
 from openscientist.providers import provider_class, provider_ids
+from openscientist.providers.base import Alternatives
 
 console = Console()
+
+#: The answer that clears a saved value, where Enter would keep it.
+CLEAR = "-"
 
 
 def run_setup(root: Path, write_answers: Path | None = None) -> None:
@@ -59,10 +63,15 @@ def run_setup_from_answers(
 
 
 def _write_env_files(root: Path, answers: dict[str, str], env_file: dict[str, str]) -> None:
-    """The answers into the env files the steps put them in, the missing secrets generated."""
+    """The answers into the env files the steps put them in, the missing secrets generated.
+
+    An empty answer is written as ``KEY=`` only when it clears a saved value,
+    so a commented example line stays commented.
+    """
+    saved = envfiles.current_values(root)
     by_file: dict[str, dict[str, str]] = {}
     for env, value in answers.items():
-        if value and env in env_file:
+        if env in env_file and (value or saved.get(env)):
             by_file.setdefault(env_file[env], {})[env] = value
     # The cookie's Secure flag follows APP_URL, so the wizard writes it from the asked address.
     base_url = answers.get("OPENSCIENTIST_BASE_URL", "")
@@ -79,6 +88,7 @@ def run_steps(
     """Drive the applicable steps, returning the answers, each answer's env file
     and the live check's outcome when the provider ran one."""
     answers = envfiles.current_values(root)
+    saved = dict(answers)
     env_file: dict[str, str] = {}
     outcome: LiveCheckOutcome | None = None
     for step in STEPS:
@@ -97,6 +107,8 @@ def run_steps(
                     answers[question.env] = ask(question, answers.get(question.env))
                     answered_here.add(question.env)
                     env_file[question.env] = question.file
+            changed = {env for env, value in answers.items() if value and value != saved.get(env)}
+            _settle_alternatives(step.alternatives(answers), answers, changed)
             errors = step.validate(answers)
             if errors:
                 for error in errors:
@@ -121,6 +133,8 @@ def _run_steps_from_answers(
     answers = envfiles.current_values(root)
     env_file: dict[str, str] = {}
     errors: list[str] = []
+    # The file states every answer, so each non-empty one counts as given, changed or not.
+    supplied: set[str] = set()
     for step in STEPS:
         if not step.applies(answers):
             continue
@@ -148,12 +162,33 @@ def _run_steps_from_answers(
                     answers[question.env] = str(value)
                 elif isinstance(value, str):
                     answers[question.env] = value
+                    if value:
+                        supplied.add(question.env)
                 else:
                     errors.append(
                         f"Invalid answer: {question.key} must be a string, got {type(value).__name__}."
                     )
+        _settle_alternatives(step.alternatives(answers), answers, supplied)
         errors.extend(step.validate(answers))
     return answers, env_file, errors
+
+
+def _settle_alternatives(
+    groups: Alternatives, answers: dict[str, str], given: Collection[str]
+) -> None:
+    """Empty the other members of each group once exactly one member is among
+    the ``given`` answers, so switching between alternatives keeps only the new one.
+
+    Several members given at once are left for the validation to refuse.
+    """
+    for group in groups:
+        given_members = [member for member in group if any(env in given for env in member)]
+        if len(given_members) != 1:
+            continue
+        for member in group:
+            if member != given_members[0]:
+                for env in member:
+                    answers[env] = ""
 
 
 def _live_check_from_answers(
@@ -232,16 +267,22 @@ def ask(question: Question, current: str | None) -> str:
         # Never show a secret as the prompt default, and let Enter mean "keep
         # the current" or "leave empty", which click's prompt would re-ask for.
         if current:
-            text += " (Enter keeps the current value)"
+            text += f" (Enter keeps the current value, {CLEAR} clears it)"
         value = click.prompt(text, default=default or "", hide_input=True, show_default=False)
+        if value == CLEAR:
+            return ""
         return value if value else (current or "")
     if question.kind in ("int", "port"):
         if default is None:
             return click.prompt(text) or ""
         value = click.prompt(text, default=default, type=int)
         return "" if value is None else str(value)
+    if current:
+        console.print(f"[dim]Enter keeps it, {CLEAR} clears it.[/dim]")
     while True:
         value = click.prompt(text, default=default or "", show_default=default is not None)
+        if value == CLEAR:
+            value = ""
         if value or not question.required:
             break
         console.print("[red]This one is required.[/red]")

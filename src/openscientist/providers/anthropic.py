@@ -11,6 +11,7 @@ from ._env_cleanup import VERTEX_PROVIDER_ENV_VARS
 from .base import (
     AirgapEgress,
     AirgapPosture,
+    Alternatives,
     ClaudeCompatible,
     CostInfo,
     LiveCheckResult,
@@ -35,7 +36,7 @@ class AnthropicProvider(ClaudeCompatible):
     credential_env_keys = ANTHROPIC_CREDENTIAL_ENV_KEYS
 
     def validate_required_config(self) -> list[str]:
-        return self.required_config_errors(get_settings().provider)
+        return self.config_errors(get_settings().provider)
 
     def _validate_optional_config(self) -> list[str]:
         warnings = super()._validate_optional_config()
@@ -75,6 +76,10 @@ class AnthropicProvider(ClaudeCompatible):
             ),
             *super().setup_questions(),
         )
+
+    @classmethod
+    def setup_alternatives(cls) -> Alternatives:
+        return ((("ANTHROPIC_API_KEY",), ("CLAUDE_CODE_OAUTH_TOKEN",)),)
 
     @classmethod
     def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:
