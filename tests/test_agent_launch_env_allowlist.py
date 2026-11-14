@@ -3,16 +3,17 @@
 The web builds the launch env from the provider settings and the per-run
 values, and the launcher refuses the whole launch on the first key outside
 its allow-list. These tests build that env for every provider and harness
-with every provider setting filled in, with and without the host login files,
-and again with each provider in every one of its auth variants, so a branch
-that only shows up when one credential is missing cannot hide a key. The
-drift test takes the union of every key those combinations emit and refuses
-an allow-list key that no combination sends, so the list cannot widen past
-what the web actually puts into a container.
+with every provider setting filled in, one of each set of alternatives, with
+and without the host login files, and again with each provider in every one
+of its auth variants, so a branch that only shows up when one credential is
+missing cannot hide a key. The drift test takes the union of every key those
+combinations emit and refuses an allow-list key that no combination sends, so
+the list cannot widen past what the web actually puts into a container.
 """
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -20,7 +21,7 @@ import pytest
 
 from openscientist.job_container.runner import JobContainerRunner
 from openscientist.job_container.secrets import RunCredentials
-from openscientist.providers import get_provider, provider_ids
+from openscientist.providers import get_provider, provider_class, provider_ids
 from openscientist.settings import (
     _VALID_HARNESSES,
     ProviderSettings,
@@ -113,6 +114,7 @@ def _launch_env(
             monkeypatch.setenv(alias, str(vault))
         else:
             monkeypatch.setenv(alias, value)
+    _keep_first_alternative(monkeypatch, provider_id)
     clear_settings_cache()
     try:
         refusal = get_provider().prelaunch_routing_error()
@@ -137,6 +139,15 @@ def _launch_env(
         )
     finally:
         clear_settings_cache()
+
+
+def _keep_first_alternative(monkeypatch: pytest.MonkeyPatch, provider_id: str) -> None:
+    """Unset every alternative after the first one set, since a provider refuses several together."""
+    for group in provider_class(provider_id).setup_alternatives():
+        set_members = [member for member in group if any(os.environ.get(a) for a in member)]
+        for member in set_members[1:]:
+            for alias in member:
+                monkeypatch.delenv(alias, raising=False)
 
 
 @pytest.mark.parametrize("host_logins", [True, False])
@@ -182,7 +193,7 @@ _VAULT_PROVIDER = {"anthropic": "anthropic", "openai": "openai-codex"}
 #: single-method providers emit the same container env in every branch, so a
 #: variant with no overrides is their whole table.
 _VARIANTS: dict[str, tuple[tuple[str, dict[str, str | None]], ...]] = {
-    # The api key beats the OAuth token, which beats the vault (llm_upstream).
+    # The vault serves only when neither the api key nor the OAuth token is set.
     "anthropic": (
         (
             "api_key",
@@ -220,8 +231,11 @@ _VARIANTS: dict[str, tuple[tuple[str, dict[str, str | None]], ...]] = {
     # The bearer token takes the static-header branch, and the access keys the
     # SigV4 branch (proxy_env_overrides).
     "bedrock": (
-        ("sigv4_access_key", {"aws_bearer_token_bedrock": None}),
-        ("bearer_token", {}),
+        ("sigv4_access_key", {"aws_bearer_token_bedrock": None, "aws_profile": None}),
+        (
+            "bearer_token",
+            {"aws_access_key_id": None, "aws_secret_access_key": None, "aws_profile": None},
+        ),
     ),
     # Resource and base URL are mutually exclusive endpoint alternatives
     # (container_env and proxy_env_overrides).

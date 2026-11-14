@@ -214,6 +214,11 @@ class SetupQuestion:
     help: str | None = None
 
 
+#: Groups of settings aliases that exclude each other, each member a tuple of
+#: aliases set together.
+Alternatives = tuple[tuple[tuple[str, ...], ...], ...]
+
+
 @dataclass(frozen=True)
 class LiveCheckResult:
     """The setup wizard's live check outcome.
@@ -360,7 +365,12 @@ class Provider(abc.ABC):
 
     @abc.abstractmethod
     def validate_required_config(self) -> list[str]:
-        """Config errors raised at construction. Forwards to ``required_config_errors``."""
+        """Config errors raised at construction. Forwards to ``config_errors``."""
+
+    @classmethod
+    def config_errors(cls, provider: ProviderSettings) -> list[str]:
+        """Every config error for a settings snapshot, the provider's own and its alternatives'."""
+        return [*cls.required_config_errors(provider), *cls.alternatives_errors(provider)]
 
     @classmethod
     def required_config_errors(cls, provider: ProviderSettings) -> list[str]:
@@ -371,6 +381,30 @@ class Provider(abc.ABC):
     def setup_questions(cls) -> tuple[SetupQuestion, ...]:
         """Env variables the setup wizard asks for this provider, in order."""
         return ()
+
+    @classmethod
+    def setup_alternatives(cls) -> Alternatives:
+        """The settings this provider takes one of, never several together."""
+        return ()
+
+    @classmethod
+    def alternatives_errors(cls, provider: ProviderSettings) -> list[str]:
+        """One error per alternatives group with more than one member set."""
+        fields = {info.alias: name for name, info in ProviderSettings.model_fields.items()}
+        errors = []
+        for group in cls.setup_alternatives():
+            set_members = [
+                " with ".join(member)
+                for member in group
+                if any(getattr(provider, fields[alias]) for alias in member)
+            ]
+            if len(set_members) > 1:
+                errors.append(
+                    f"{' and '.join(set_members)} are alternatives, so only one may be set. "
+                    "Clear the others in .env, or run `uv run openscientist setup` "
+                    "and answer - to clear them."
+                )
+        return errors
 
     @classmethod
     def setup_answers_errors(cls, provider_id: str, answers: Mapping[str, str]) -> list[str]:
@@ -394,7 +428,7 @@ class Provider(abc.ABC):
                     return [
                         str(error["msg"]).removeprefix("Value error, ") for error in exc.errors()
                     ]
-                errors = list(cls.required_config_errors(settings))
+                errors = cls.config_errors(settings)
                 model_error = cls.validate_model_format(settings.model)
                 if model_error:
                     errors.append(model_error)
@@ -746,7 +780,7 @@ class SelfHostedOpenAiWire(OpenAiWireCompatible, abc.ABC):
         return {"OPENAI_BASE_URL": self._base_url(), "OPENAI_API_KEY": self._api_key() or self.id}
 
     def validate_required_config(self) -> list[str]:
-        return self.required_config_errors(get_settings().provider)
+        return self.config_errors(get_settings().provider)
 
     @classmethod
     def required_config_errors(cls, provider: ProviderSettings) -> list[str]:

@@ -11,6 +11,7 @@ from pydantic_core import PydanticUndefined
 from pydantic_settings import BaseSettings
 
 from openscientist.cli.livecheck import LiveCheckOutcome
+from openscientist.providers.base import Alternatives
 from openscientist.settings import (
     AgentSettings,
     AirgapSettings,
@@ -137,3 +138,8 @@ class Step(abc.ABC):
     def declared_envs(self) -> frozenset[str]:
         """Every env variable this step can ask for, for the drift test."""
         return frozenset()
+
+    def alternatives(self, answers: dict[str, str]) -> Alternatives:
+        """Groups of this step's env variables that exclude each other, each
+        member a tuple of variables answered together."""
+        return ()

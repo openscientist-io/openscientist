@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from openscientist.providers.base import (
     AirgapEgress,
     AirgapPosture,
+    Alternatives,
     ClaudeCompatible,
     CostInfo,
     LiveCheckResult,
@@ -136,7 +137,7 @@ class FoundryProvider(ClaudeCompatible):
         return None
 
     def validate_required_config(self) -> list[str]:
-        return self.required_config_errors(get_settings().provider)
+        return self.config_errors(get_settings().provider)
 
     @classmethod
     def required_config_errors(cls, provider: ProviderSettings) -> list[str]:
@@ -176,6 +177,10 @@ class FoundryProvider(ClaudeCompatible):
             SetupQuestion("ANTHROPIC_FOUNDRY_API_KEY", kind="secret"),
             *super().setup_questions(),
         )
+
+    @classmethod
+    def setup_alternatives(cls) -> Alternatives:
+        return ((("ANTHROPIC_FOUNDRY_RESOURCE",), ("ANTHROPIC_FOUNDRY_BASE_URL",)),)
 
     @classmethod
     def live_check_billed(cls) -> bool:

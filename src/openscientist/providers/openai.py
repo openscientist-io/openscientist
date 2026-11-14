@@ -22,6 +22,7 @@ from openscientist.providers.base import (
     LLM_PROXY_URL_ENV,
     AirgapEgress,
     AirgapPosture,
+    Alternatives,
     CodexCompatible,
     CostInfo,
     LiveCheckResult,
@@ -310,7 +311,7 @@ class OpenAIDirectProvider(CodexCompatible):
         return env_from_pairs([("OPENAI_API_KEY", provider.openai_api_key)])
 
     def validate_required_config(self) -> list[str]:
-        return self.required_config_errors(get_settings().provider)
+        return self.config_errors(get_settings().provider)
 
     def _validate_optional_config(self) -> list[str]:
         warnings = super()._validate_optional_config()
@@ -351,6 +352,10 @@ class OpenAIDirectProvider(CodexCompatible):
                 "OPENSCIENTIST_MODEL", help="model id, or leave empty for the codex account default"
             ),
         )
+
+    @classmethod
+    def setup_alternatives(cls) -> Alternatives:
+        return ((("OPENAI_API_KEY",), ("CODEX_AUTH_HOST_PATH",)),)
 
     @classmethod
     def _live_check(cls, p: ProviderSettings) -> LiveCheckResult:
