@@ -155,6 +155,9 @@ def _run_steps_from_answers(
                         continue
                     answers[question.env] = str(value)
                 elif isinstance(value, str):
+                    # An empty answer clears a saved value back to the question's default.
+                    if not value and answers.get(question.env):
+                        value = question.default or ""
                     answers[question.env] = value
                 else:
                     errors.append(
@@ -251,11 +254,12 @@ def ask(question: Question, current: str | None) -> str:
         value = click.prompt(text, default=default, type=int)
         return "" if value is None else str(value)
     if current:
-        console.print(f"[dim]Enter keeps it, {CLEAR} clears it.[/dim]")
+        reset = f"resets it to {question.default}" if question.default else "clears it"
+        console.print(f"[dim]Enter keeps it, {CLEAR} {reset}.[/dim]")
     while True:
         value = click.prompt(text, default=default or "", show_default=default is not None)
         if value == CLEAR:
-            value = ""
+            value = question.default or ""
         if value or not question.required:
             break
         console.print("[red]This one is required.[/red]")

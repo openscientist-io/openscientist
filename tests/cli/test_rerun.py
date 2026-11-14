@@ -6,6 +6,7 @@ from typer.testing import CliRunner
 
 from openscientist.cli import app as cli_app
 from openscientist.cli import envfiles
+from openscientist.settings import AirgapSettings, DevSettings
 from tests.cli.conftest import env_value, wizard_tail
 
 runner = CliRunner()
@@ -63,3 +64,21 @@ def test_a_dash_clears_saved_text_path_and_secret_answers(
     # A Phenix path still exported in the shell never reaches compose over the cleared one.
     monkeypatch.setenv("PHENIX_HOST_PATH", str(phenix))
     assert "PHENIX_HOST_PATH" not in envfiles.docker_env(checkout)
+
+
+def test_a_dash_on_a_setting_with_a_default_restores_the_default(checkout: Path, monkeypatch):
+    tail = wizard_tail()
+    tail[0] = "http://127.0.0.1:9000"  # OPENSCIENTIST_BASE_URL
+    tail[6], tail[7] = "google-id", "google-secret"  # GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+    _setup("\n".join(["5", "res", "", "key", "claude-x", "n", *tail]) + "\n")
+    assert env_value(checkout, ".env", "OPENSCIENTIST_DEV_MODE") == "true"
+
+    rerun_tail = [""] * len(tail)
+    rerun_tail[0], rerun_tail[12], rerun_tail[14] = "-", "-", "-"
+    _rerun(["", "", "", "", "n"], rerun_tail)
+
+    assert env_value(checkout, ".env", "OPENSCIENTIST_BASE_URL") == "http://localhost:8080"
+    for key in ("OPENSCIENTIST_DEV_MODE", "OPENSCIENTIST_AIRGAPPED"):
+        monkeypatch.delenv(key, raising=False)
+    assert DevSettings().dev_mode is False
+    assert AirgapSettings().enabled is False
