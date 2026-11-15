@@ -32,6 +32,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from openscientist.admin_settings import AdminSettingsValues, current_admin_settings_sync
+from openscientist.artifact_packager import AGENT_CONTAINER_LOG_FILE
 from openscientist.database.retry import CONTAINER_DB_RETRY_SECONDS
 from openscientist.exceptions import MissingImageError
 from openscientist.exec_broker_client import (
@@ -476,7 +477,7 @@ class JobContainerRunner:
             if log_dir is not None:
                 try:
                     logs = self.client.logs(entry["id"])
-                    write_job_file(log_dir, "agent-container.log", logs)
+                    write_job_file(log_dir, AGENT_CONTAINER_LOG_FILE, logs)
                 except (LauncherError, OSError) as error:
                     if not isinstance(error, LauncherNotFoundError):
                         logger.warning(

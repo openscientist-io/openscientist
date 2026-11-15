@@ -21,6 +21,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from openscientist.agent.base import AbstractAgent, AgentConfig, IterationResult, TurnOutcome
+from openscientist.artifact_packager import artifact_file
 from openscientist.database.models import CostRecord, Job, JobChatMessage, User
 from openscientist.database.rls import set_current_user
 from openscientist.exceptions import BudgetExceededError
@@ -981,6 +982,56 @@ async def test_run_chat_turn_async_writes_reply(temp_jobs_dir: Path):
     assert captured["config"].system_prompt == "You are helpful."
     assert captured["config"].chat
     assert not (job_dir / ".claude" / "CLAUDE.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_no_chat_turn_file_is_downloadable_while_the_turn_runs(temp_jobs_dir: Path):
+    """The request, the knowledge snapshot and the response of a running chat
+    turn sit in the job directory, so no reader may download any of them."""
+    job_dir = temp_jobs_dir / "chat-turn"
+    job_dir.mkdir()
+    request_path, _response_path = _chat_turn_files(job_dir, "t1")
+    request_path.write_text(
+        json.dumps(
+            {
+                "system_prompt": "You are helpful.",
+                "model_override": None,
+                "prompt": "hi",
+                "knowledge_state": json.dumps({"data_summary": {"files": ["cohort.csv"]}}),
+            }
+        )
+    )
+    result = IterationResult(
+        outcome=TurnOutcome.COMPLETED, output="reply", tool_calls=0, transcript=[]
+    )
+    downloadable: dict[str, tuple[bool, bool]] = {}
+
+    async def run_iteration(prompt: str, reset_session: bool = False) -> IterationResult:
+        for path in job_dir.iterdir():
+            if path.name.startswith(".chat_"):
+                downloadable[path.name] = (
+                    artifact_file(job_dir, path.name) is not None,
+                    artifact_file(job_dir, path.name, public_reader=True) is not None,
+                )
+        return result
+
+    captured: dict[str, AgentConfig] = {}
+    build = _build_agent_recorder(captured, result)
+
+    def build_with_inspection(config: AgentConfig, provider: Provider) -> AbstractAgent[Provider]:
+        agent = build(config, provider)
+        agent.run_iteration = run_iteration  # type: ignore[method-assign]
+        return agent
+
+    with (
+        patch("openscientist.providers.get_provider", return_value=_ChatProvider()),
+        patch("openscientist.agent.factory.build_agent", build_with_inspection),
+    ):
+        status = await run_chat_turn_async(job_dir, "t1", "00000000-0000-0000-0000-000000000001")
+
+    assert status["status"] == "completed"
+    assert {".chat_request_t1.json", ".chat_context_t1.json"} <= downloadable.keys()
+    assert downloadable == dict.fromkeys(downloadable, (False, False))
 
 
 @pytest.mark.asyncio
