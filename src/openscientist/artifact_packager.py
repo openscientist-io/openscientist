@@ -31,6 +31,7 @@ PROVENANCE_FILE = "provenance.json"
 # agent's raw tool output, which carries uploaded files verbatim.
 PUBLIC_WITHHELD_DIRS = frozenset({"data", "previews"})
 ITERATION_LOG_FILE = "claude_iterations.log"
+AGENT_CONTAINER_LOG_FILE = "agent-container.log"
 TRANSCRIPT_SUFFIX = "_transcript.json"
 
 # Agent working directories are never artifacts, and they hold credentials: the
@@ -47,9 +48,9 @@ _EXCLUDE_DIRS = {
 _EXCLUDE_FILES = {"config.json", EXCLUDED_FILES_MANIFEST}
 
 # Chat turn files exchange one turn's conversation between the web and the chat
-# container, and the request holds the owner's prior messages, so no viewer may
-# download them.
-_EXCLUDE_FILE_PREFIXES = (".chat_request_", ".chat_response_")
+# container. The request holds the owner's prior messages and the context holds
+# the job's knowledge snapshot, so no viewer may download them.
+_EXCLUDE_FILE_PREFIXES = (".chat_request_", ".chat_response_", ".chat_context_")
 
 MAX_ARTIFACT_FILE_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
 
@@ -101,7 +102,10 @@ def _withheld_from_public(parts: tuple[str, ...]) -> bool:
     if parts[0] in PUBLIC_WITHHELD_DIRS:
         return True
     if len(parts) == 1:
-        return parts[0] in PERSISTED_REPORT_FILES or parts[0] == ITERATION_LOG_FILE
+        return parts[0] in PERSISTED_REPORT_FILES or parts[0] in (
+            ITERATION_LOG_FILE,
+            AGENT_CONTAINER_LOG_FILE,
+        )
     return len(parts) == 2 and parts[0] == "provenance" and parts[1].endswith(TRANSCRIPT_SUFFIX)
 
 

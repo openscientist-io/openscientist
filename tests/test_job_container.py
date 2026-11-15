@@ -20,6 +20,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from openscientist.artifact_packager import artifact_file
 from openscientist.exceptions import MissingImageError
 from openscientist.exec_broker_client import EXEC_TOKEN_ENV
 from openscientist.job_container import runner as runner_module
@@ -296,6 +297,21 @@ class TestContainerDatabaseLogin:
         assert (tmp_path / "agent-container.log").read_text() == "log saved"
         client.remove.assert_called_once_with("d" * 64)
         agent_login.closed.assert_called_once_with(_LOGIN.role)
+
+    def test_the_saved_log_reaches_owners_but_not_public_readers(
+        self, tmp_path: Path, agent_login
+    ) -> None:
+        """The container log holds tracebacks, model names and internal paths,
+        so a reader who has the job only because it is public never gets it."""
+        runner, client = _runner_with_client()
+        client.list_containers.return_value = [_listed_entry({AGENT_LOGIN_LABEL: _LOGIN.role})]
+        client.logs.return_value = 'File "/app/src/openscientist/orchestrator/discovery.py"'
+        runner.cleanup("job-123", tmp_path)
+        written = [path.name for path in tmp_path.iterdir()]
+        assert written
+        for name in written:
+            assert artifact_file(tmp_path, name) is not None
+            assert artifact_file(tmp_path, name, public_reader=True) is None
 
     def test_cleanup_replaces_a_log_symlink_without_writing_to_another_job(
         self, tmp_path: Path, agent_login: SimpleNamespace

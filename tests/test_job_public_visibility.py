@@ -417,6 +417,8 @@ async def test_web_artifacts_zip_omits_uploads_for_public_viewers(
     (job_dir / "provenance" / "figure.png").write_bytes(b"generated figure")
     for name in _DIRECT_ONLY_FILES:
         (job_dir / name).write_bytes(b"EMBEDDED-UPLOADED-INPUT")
+    (job_dir / "agent-container.log").write_text('File "/app/src/openscientist/agent/base.py"')
+    (job_dir / ".chat_context_ab12cd34.json").write_text('{"data_summary": {"files": []}}')
 
     names: dict[str, set[str]] = {}
     tokens = {"owner": owner_token, "viewer": viewer_token}
@@ -440,6 +442,9 @@ async def test_web_artifacts_zip_omits_uploads_for_public_viewers(
     for name in _DIRECT_ONLY_FILES:
         assert name in names["owner"]
         assert name not in names["viewer"]
+    assert "agent-container.log" in names["owner"]
+    assert "agent-container.log" not in names["viewer"]
+    assert not any(name.startswith(".chat_") for name in names["owner"] | names["viewer"])
 
 
 @pytest.mark.asyncio
