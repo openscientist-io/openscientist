@@ -121,10 +121,10 @@ def _create_page_dialogs(
     job_id: str, job_manager: Any, user_id: str, is_owner: bool
 ) -> tuple[Any, Any, Any]:
     share_dialog = render_share_dialog(job_id) if is_owner else None
-    delete_dialog = render_delete_dialog(
-        job_id,
-        job_manager,
-        on_deleted=lambda: ui.navigate.to("/jobs"),
+    delete_dialog = (
+        render_delete_dialog(job_id, job_manager, on_deleted=lambda: ui.navigate.to("/jobs"))
+        if is_owner
+        else None
     )
     notifications_dialog = render_notifications_dialog(job_id, user_id)
     return share_dialog, delete_dialog, notifications_dialog
