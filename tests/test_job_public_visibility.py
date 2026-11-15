@@ -40,8 +40,9 @@ from openscientist.webapp_components.components import dialogs as dialog_module
 from openscientist.webapp_components.pages.job_detail import _owner_name, timeline
 from tests.helpers import enable_rls, fake_admin_session
 
-# Saved reports that may inline uploads and the agent's raw tool output, which
-# only the owner and share recipients receive.
+# Saved reports that may inline uploads, the agent's raw tool output, and the
+# agent container's log and final error, which only the owner and share
+# recipients receive.
 _DIRECT_ONLY_FILES = (
     "final_report.pdf",
     "final_report.html",
@@ -49,6 +50,8 @@ _DIRECT_ONLY_FILES = (
     "provenance/iter1_transcript.json",
     "provenance/report_transcript.json",
     "claude_iterations.log",
+    "agent-container.log",
+    "agent-error.txt",
 )
 
 
@@ -417,7 +420,6 @@ async def test_web_artifacts_zip_omits_uploads_for_public_viewers(
     (job_dir / "provenance" / "figure.png").write_bytes(b"generated figure")
     for name in _DIRECT_ONLY_FILES:
         (job_dir / name).write_bytes(b"EMBEDDED-UPLOADED-INPUT")
-    (job_dir / "agent-container.log").write_text('File "/app/src/openscientist/agent/base.py"')
     (job_dir / ".chat_context_ab12cd34.json").write_text('{"data_summary": {"files": []}}')
 
     names: dict[str, set[str]] = {}
@@ -442,8 +444,6 @@ async def test_web_artifacts_zip_omits_uploads_for_public_viewers(
     for name in _DIRECT_ONLY_FILES:
         assert name in names["owner"]
         assert name not in names["viewer"]
-    assert "agent-container.log" in names["owner"]
-    assert "agent-container.log" not in names["viewer"]
     assert not any(name.startswith(".chat_") for name in names["owner"] | names["viewer"])
 
 
