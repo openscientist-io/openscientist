@@ -19,11 +19,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import delete, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.api.auth import hash_secret
-from openscientist.database.models import Administrator, APIKey, Job, User
+from openscientist.database.models import Administrator, APIKey, Job, JobShare, User
 from openscientist.database.rls import use_app_role
 from openscientist.exceptions import FileTooBigError
 from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
@@ -1817,35 +1817,9 @@ class TestJobSharingEndpoints:
         test_job_db: Job,
     ):
         """Share a job with another user."""
-        from contextlib import asynccontextmanager
-        from unittest.mock import patch
-
-        from fastapi import FastAPI
-
-        from openscientist.api.auth import get_current_user_from_api_key
-        from openscientist.api.router import api_router as router
-        from openscientist.database.rls import set_current_user
-        from openscientist.database.session import get_session
-
         _, full_key = test_api_key_db
-
-        app = FastAPI()
-
-        async def override_get_session():
-            await set_current_user(db_session, test_user_db.id)
-            yield db_session
-
-        async def override_get_user():
-            return test_user_db
-
-        @asynccontextmanager
-        async def mock_get_admin_session():
-            """Mock admin session that uses test db_session."""
-            yield db_session
-
-        app.dependency_overrides[get_session] = override_get_session
-        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
-        app.include_router(router)
+        app = self._lookup_app(db_session, test_user_db)
+        mock_get_admin_session = self._admin_role_session(db_session)
 
         with patch("openscientist.api.endpoints.shares.get_admin_session", mock_get_admin_session):
             async with AsyncClient(
@@ -1899,6 +1873,21 @@ class TestJobSharingEndpoints:
         app.dependency_overrides[get_current_user_from_api_key] = override_get_user
         app.include_router(router)
         return app
+
+    @staticmethod
+    def _admin_role_session(db_session: AsyncSession):
+        """A stand-in for ``get_admin_session`` that runs ``db_session`` as
+        openscientist_admin, so user lookups see every account."""
+
+        @asynccontextmanager
+        async def admin_role_session():
+            await db_session.execute(text("SET ROLE openscientist_admin"))
+            try:
+                yield db_session
+            finally:
+                await db_session.execute(text("RESET ROLE"))
+
+        return admin_role_session
 
     @pytest.mark.asyncio
     async def test_lookup_share_target_exact_email_returns_id_and_name_only(
@@ -2054,6 +2043,47 @@ class TestJobSharingEndpoints:
         assert response.status_code == 403
 
     @pytest.mark.asyncio
+    async def test_share_job_refuses_unapproved_caller_for_any_email(
+        self,
+        db_session: AsyncSession,
+        test_user_db: User,
+        test_user2_db: User,
+        test_api_key_db: tuple[APIKey, str],
+        test_job_db: Job,
+    ):
+        """An unapproved owner gets the same 403 for a known and an unknown
+        email, so creating a share cannot tell which accounts exist."""
+        _, full_key = test_api_key_db
+        test_user_db.is_approved = False
+        await db_session.commit()
+        app = self._lookup_app(db_session, test_user_db)
+
+        mock_get_admin_session = self._admin_role_session(db_session)
+
+        with patch("openscientist.api.endpoints.shares.get_admin_session", mock_get_admin_session):
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://test",
+            ) as client:
+                responses = [
+                    await client.post(
+                        "/api/v1/shares",
+                        json={
+                            "job_id": str(test_job_db.id),
+                            "shared_with_email": email,
+                            "permission_level": "view",
+                        },
+                        headers={"Authorization": f"Bearer {full_key}"},
+                    )
+                    for email in (test_user2_db.email, "nobody@example.invalid")
+                ]
+
+        assert [response.status_code for response in responses] == [403, 403]
+        assert responses[0].json() == responses[1].json()
+        shares = await db_session.execute(select(JobShare).where(JobShare.job_id == test_job_db.id))
+        assert shares.all() == []
+
+    @pytest.mark.asyncio
     async def test_share_job_with_inactive_user_returns_404(
         self,
         db_session: AsyncSession,
@@ -2063,40 +2093,14 @@ class TestJobSharingEndpoints:
         test_job_db: Job,
     ):
         """Sharing to an inactive user should be rejected as not found."""
-        from contextlib import asynccontextmanager
-        from unittest.mock import patch
-
-        from fastapi import FastAPI
-        from sqlalchemy import select
-
-        from openscientist.api.auth import get_current_user_from_api_key
-        from openscientist.api.router import api_router as router
-        from openscientist.database.models import JobShare
-        from openscientist.database.rls import set_current_user
-        from openscientist.database.session import get_session
-
         _, full_key = test_api_key_db
 
         test_user2_db.is_active = False
         await db_session.commit()
         await db_session.refresh(test_user2_db)
 
-        app = FastAPI()
-
-        async def override_get_session():
-            await set_current_user(db_session, test_user_db.id)
-            yield db_session
-
-        async def override_get_user():
-            return test_user_db
-
-        @asynccontextmanager
-        async def mock_get_admin_session():
-            yield db_session
-
-        app.dependency_overrides[get_session] = override_get_session
-        app.dependency_overrides[get_current_user_from_api_key] = override_get_user
-        app.include_router(router)
+        app = self._lookup_app(db_session, test_user_db)
+        mock_get_admin_session = self._admin_role_session(db_session)
 
         with patch("openscientist.api.endpoints.shares.get_admin_session", mock_get_admin_session):
             async with AsyncClient(
