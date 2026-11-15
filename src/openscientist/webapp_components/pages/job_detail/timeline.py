@@ -166,7 +166,11 @@ def _render_research_question_card(context: _JobDetailContext) -> None:
                 if context.is_owner and context.share_dialog is not None
                 else None
             )
-            on_delete = context.delete_dialog.open if context.is_owner else None
+            on_delete = (
+                context.delete_dialog.open
+                if context.is_owner and context.delete_dialog is not None
+                else None
+            )
             render_job_action_buttons(
                 on_share=on_share,
                 on_delete=on_delete,
