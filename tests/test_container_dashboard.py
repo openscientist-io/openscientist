@@ -17,6 +17,7 @@ from openscientist.webapp_components.utils.container_dashboard import (
     _parse_container_stats,
     collect_dashboard_data,
 )
+from openscientist.webapp_components.utils.permissions import AdminAccess
 from tests.helpers import fake_admin_session
 from tests.launcher import (
     EXECUTOR_IMAGE,
@@ -27,6 +28,7 @@ from tests.launcher import (
 )
 
 LAUNCHER_PATCH = "openscientist.webapp_components.utils.container_dashboard.LauncherClient"
+ADMIN_SESSION_PATCH = "openscientist.webapp_components.utils.permissions.get_admin_session"
 
 
 class TestFormatUptime:
@@ -153,7 +155,7 @@ class TestCollectDashboardLauncherDown:
             "unavailable", "the launcher could not be reached"
         )
         with patch(LAUNCHER_PATCH, return_value=client):
-            data = await collect_dashboard_data()
+            data = await collect_dashboard_data(AdminAccess())
 
         assert data.docker_available is False
         assert data.error_message is not None
@@ -184,16 +186,11 @@ class TestCollectDashboardGrouping:
         client.health.return_value = {"docker": True, "images": {"agent": True, "executor": True}}
         client.list_containers.return_value = [agent, executor]
 
-        # _get_active_jobs_map imports get_admin_session at call time, so patch
-        # the source module
         with (
-            patch(
-                "openscientist.database.session.get_admin_session",
-                fake_admin_session(db_session),
-            ),
+            patch(ADMIN_SESSION_PATCH, fake_admin_session(db_session)),
             patch(LAUNCHER_PATCH, return_value=client),
         ):
-            data = await collect_dashboard_data(include_stats=False)
+            data = await collect_dashboard_data(AdminAccess(), include_stats=False)
 
         client.list_containers.assert_called_once_with(["openscientist.type"])
         assert data.docker_available is True
@@ -234,13 +231,10 @@ class TestCollectDashboardGrouping:
         client.list_containers.return_value = [orphan, grouped]
 
         with (
-            patch(
-                "openscientist.database.session.get_admin_session",
-                fake_admin_session(db_session),
-            ),
+            patch(ADMIN_SESSION_PATCH, fake_admin_session(db_session)),
             patch(LAUNCHER_PATCH, return_value=client),
         ):
-            data = await collect_dashboard_data(include_stats=False)
+            data = await collect_dashboard_data(AdminAccess(), include_stats=False)
 
         assert len(data.orphan_containers) == 1
         orphan_info = data.orphan_containers[0]
@@ -316,11 +310,8 @@ class TestCollectDashboardLauncherIntegration:
         try:
             monkeypatch.setenv("OPENSCIENTIST_LAUNCHER_SOCKET_PATH", str(launcher.socket_path))
             clear_settings_cache()
-            with patch(
-                "openscientist.database.session.get_admin_session",
-                fake_admin_session(db_session),
-            ):
-                data = await collect_dashboard_data(include_stats=False)
+            with patch(ADMIN_SESSION_PATCH, fake_admin_session(db_session)):
+                data = await collect_dashboard_data(AdminAccess(), include_stats=False)
         finally:
             clear_settings_cache()
             foreign.remove(force=True)

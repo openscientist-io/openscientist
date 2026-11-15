@@ -399,14 +399,8 @@ async def test_orphaned_jobs_sorted_by_creation(db_session: AsyncSession):
 
 
 @pytest.mark.asyncio
-async def test_set_user_approval_status_can_remove_approval(
-    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-):
+async def test_set_user_approval_status_can_remove_approval(db_session: AsyncSession):
     """Admin helper can remove approval from an approved user."""
-    monkeypatch.setattr(
-        "openscientist.webapp_components.pages.admin.get_admin_session",
-        fake_admin_session(db_session),
-    )
 
     user = User(
         email="approved@example.com",
@@ -417,7 +411,7 @@ async def test_set_user_approval_status_can_remove_approval(
     await db_session.commit()
     await db_session.refresh(user)
 
-    success, message = await set_user_approval_status(user.id, is_approved=False)
+    success, message = await set_user_approval_status(db_session, user.id, is_approved=False)
 
     assert success is True
     assert message == "User approval removed successfully"
@@ -431,10 +425,6 @@ async def test_set_user_approval_status_rejects_self_unapprove(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ):
     """Admin helper should reject removing approval from the current user."""
-    monkeypatch.setattr(
-        "openscientist.webapp_components.pages.admin.get_admin_session",
-        fake_admin_session(db_session),
-    )
 
     user = User(
         email="self@example.com",
@@ -450,7 +440,7 @@ async def test_set_user_approval_status_rejects_self_unapprove(
         lambda: str(user.id),
     )
 
-    success, message = await set_user_approval_status(user.id, is_approved=False)
+    success, message = await set_user_approval_status(db_session, user.id, is_approved=False)
 
     assert success is False
     assert message == "You cannot remove your own approval"
@@ -460,14 +450,8 @@ async def test_set_user_approval_status_rejects_self_unapprove(
 
 
 @pytest.mark.asyncio
-async def test_set_user_approval_status_noop_when_already_pending(
-    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-):
+async def test_set_user_approval_status_noop_when_already_pending(db_session: AsyncSession):
     """Admin helper should report noop when user is already pending."""
-    monkeypatch.setattr(
-        "openscientist.webapp_components.pages.admin.get_admin_session",
-        fake_admin_session(db_session),
-    )
 
     user = User(
         email="pending@example.com",
@@ -478,23 +462,16 @@ async def test_set_user_approval_status_noop_when_already_pending(
     await db_session.commit()
     await db_session.refresh(user)
 
-    success, message = await set_user_approval_status(user.id, is_approved=False)
+    success, message = await set_user_approval_status(db_session, user.id, is_approved=False)
 
     assert success is False
     assert message == "User is already pending"
 
 
 @pytest.mark.asyncio
-async def test_set_user_approval_status_handles_missing_user(
-    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-):
+async def test_set_user_approval_status_handles_missing_user(db_session: AsyncSession):
     """Admin helper should return not found for unknown user IDs."""
-    monkeypatch.setattr(
-        "openscientist.webapp_components.pages.admin.get_admin_session",
-        fake_admin_session(db_session),
-    )
-
-    success, message = await set_user_approval_status(uuid4(), is_approved=False)
+    success, message = await set_user_approval_status(db_session, uuid4(), is_approved=False)
 
     assert success is False
     assert message == "User not found"
@@ -503,17 +480,13 @@ async def test_set_user_approval_status_handles_missing_user(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("is_priority", [True, False])
 async def test_set_user_priority_status_sets_and_clears_the_flag(
-    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch, is_priority: bool
+    db_session: AsyncSession, is_priority: bool
 ):
-    monkeypatch.setattr(
-        "openscientist.webapp_components.pages.admin.get_admin_session",
-        fake_admin_session(db_session),
-    )
     user = User(email=f"priority-{uuid4().hex}@example.com", name="P", is_priority=not is_priority)
     db_session.add(user)
     await db_session.commit()
 
-    success, _ = await set_user_priority_status(user.id, is_priority=is_priority)
+    success, _ = await set_user_priority_status(db_session, user.id, is_priority=is_priority)
 
     assert success is True
     await db_session.refresh(user)
@@ -521,18 +494,12 @@ async def test_set_user_priority_status_sets_and_clears_the_flag(
 
 
 @pytest.mark.asyncio
-async def test_set_user_priority_status_reports_no_change(
-    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-):
-    monkeypatch.setattr(
-        "openscientist.webapp_components.pages.admin.get_admin_session",
-        fake_admin_session(db_session),
-    )
+async def test_set_user_priority_status_reports_no_change(db_session: AsyncSession):
     user = User(email=f"priority-{uuid4().hex}@example.com", name="P", is_priority=True)
     db_session.add(user)
     await db_session.commit()
 
-    success, _ = await set_user_priority_status(user.id, is_priority=True)
+    success, _ = await set_user_priority_status(db_session, user.id, is_priority=True)
 
     assert success is False
     await db_session.refresh(user)
@@ -540,14 +507,8 @@ async def test_set_user_priority_status_reports_no_change(
 
 
 @pytest.mark.asyncio
-async def test_set_user_priority_status_handles_missing_user(
-    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-):
-    monkeypatch.setattr(
-        "openscientist.webapp_components.pages.admin.get_admin_session",
-        fake_admin_session(db_session),
-    )
-    success, message = await set_user_priority_status(uuid4(), is_priority=True)
+async def test_set_user_priority_status_handles_missing_user(db_session: AsyncSession):
+    success, message = await set_user_priority_status(db_session, uuid4(), is_priority=True)
     assert success is False
     assert message == "User not found"
 
@@ -576,11 +537,11 @@ async def test_the_priority_buttons_change_a_users_priority(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setattr(
-        "openscientist.webapp_components.pages.admin.get_admin_session",
+        "openscientist.webapp_components.utils.permissions.get_admin_session",
         fake_admin_session(db_session),
     )
     monkeypatch.setattr(
-        "openscientist.webapp_components.pages.admin.revalidate_admin_session",
+        "openscientist.webapp_components.utils.permissions.revalidate_admin_session",
         AsyncMock(return_value=True),
     )
     user = User(email=f"buttons-{uuid4().hex}@example.com", name="B")
@@ -605,11 +566,11 @@ async def test_a_priority_click_without_a_valid_user_changes_nothing(args: dict[
     with (
         patch("openscientist.webapp_components.pages.admin.ui") as mock_ui,
         patch(
-            "openscientist.webapp_components.pages.admin.get_admin_session",
+            "openscientist.webapp_components.utils.permissions.get_admin_session",
             side_effect=AssertionError("no user, so no database write"),
         ),
         patch(
-            "openscientist.webapp_components.pages.admin.revalidate_admin_session",
+            "openscientist.webapp_components.utils.permissions.revalidate_admin_session",
             AsyncMock(return_value=True),
         ),
     ):
@@ -629,7 +590,11 @@ async def test_a_failed_priority_change_tells_the_admin():
             side_effect=RuntimeError("database down"),
         ),
         patch(
-            "openscientist.webapp_components.pages.admin.revalidate_admin_session",
+            "openscientist.webapp_components.utils.permissions.get_admin_session",
+            fake_admin_session(MagicMock()),
+        ),
+        patch(
+            "openscientist.webapp_components.utils.permissions.revalidate_admin_session",
             AsyncMock(return_value=True),
         ),
     ):
@@ -671,19 +636,15 @@ def test_admin_page_defaults_to_users_tab():
 
 
 @pytest.mark.asyncio
-async def test_delete_user_removes_user(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch):
+async def test_delete_user_removes_user(db_session: AsyncSession):
     """delete_user should remove the user from the database."""
-    monkeypatch.setattr(
-        "openscientist.webapp_components.pages.admin.get_admin_session",
-        fake_admin_session(db_session),
-    )
 
     user = User(email="deleteme@example.com", name="Delete Me")
     db_session.add(user)
     await db_session.commit()
     await db_session.refresh(user)
 
-    success, message = await delete_user(user.id)
+    success, message = await delete_user(db_session, user.id)
 
     assert success is True
     assert message == "User deleted successfully"
@@ -697,10 +658,6 @@ async def test_delete_user_rejects_self_delete(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ):
     """delete_user should prevent admins from deleting themselves."""
-    monkeypatch.setattr(
-        "openscientist.webapp_components.pages.admin.get_admin_session",
-        fake_admin_session(db_session),
-    )
 
     user = User(email="selfadmin@example.com", name="Self Admin")
     db_session.add(user)
@@ -712,7 +669,7 @@ async def test_delete_user_rejects_self_delete(
         lambda: str(user.id),
     )
 
-    success, message = await delete_user(user.id)
+    success, message = await delete_user(db_session, user.id)
 
     assert success is False
     assert message == "You cannot delete your own account"
@@ -722,28 +679,17 @@ async def test_delete_user_rejects_self_delete(
 
 
 @pytest.mark.asyncio
-async def test_delete_user_handles_missing_user(
-    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
-):
+async def test_delete_user_handles_missing_user(db_session: AsyncSession):
     """delete_user should return not found for unknown user IDs."""
-    monkeypatch.setattr(
-        "openscientist.webapp_components.pages.admin.get_admin_session",
-        fake_admin_session(db_session),
-    )
-
-    success, message = await delete_user(uuid4())
+    success, message = await delete_user(db_session, uuid4())
 
     assert success is False
     assert message == "User not found"
 
 
 @pytest.mark.asyncio
-async def test_delete_user_orphans_jobs(db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch):
+async def test_delete_user_orphans_jobs(db_session: AsyncSession):
     """Deleting a user should orphan their jobs (SET NULL on owner_id)."""
-    monkeypatch.setattr(
-        "openscientist.webapp_components.pages.admin.get_admin_session",
-        fake_admin_session(db_session),
-    )
 
     user = User(email="jobowner@example.com", name="Job Owner")
     db_session.add(user)
@@ -761,7 +707,7 @@ async def test_delete_user_orphans_jobs(db_session: AsyncSession, monkeypatch: p
     await db_session.refresh(job)
     job_id = job.id
 
-    success, _ = await delete_user(user.id)
+    success, _ = await delete_user(db_session, user.id)
     assert success is True
 
     result = await db_session.execute(select(Job).where(Job.id == job_id))
@@ -804,16 +750,11 @@ async def _create_redeemed_reviewer(
 async def test_revoke_review_token_ends_the_reviewer_sessions(
     db_session: AsyncSession,
     test_admin_user: User,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Revoking a redeemed token deletes the reviewer's live sessions."""
-    monkeypatch.setattr(
-        "openscientist.webapp_components.pages.admin.get_admin_session",
-        fake_admin_session(db_session),
-    )
     reviewer, token = await _create_redeemed_reviewer(db_session, test_admin_user)
 
-    success, _ = await revoke_review_token(token.id)
+    success, _ = await revoke_review_token(db_session, token.id)
 
     assert success is True
     await db_session.refresh(token)
@@ -826,16 +767,11 @@ async def test_revoke_review_token_ends_the_reviewer_sessions(
 async def test_delete_user_revokes_their_review_token(
     db_session: AsyncSession,
     test_admin_user: User,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Deleting a redeemed reviewer revokes the token, so it cannot mint a new account."""
-    monkeypatch.setattr(
-        "openscientist.webapp_components.pages.admin.get_admin_session",
-        fake_admin_session(db_session),
-    )
     reviewer, token = await _create_redeemed_reviewer(db_session, test_admin_user)
 
-    success, _ = await delete_user(reviewer.id)
+    success, _ = await delete_user(db_session, reviewer.id)
 
     assert success is True
     await db_session.refresh(token)

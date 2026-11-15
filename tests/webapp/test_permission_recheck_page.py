@@ -201,7 +201,8 @@ async def test_submit_job_is_refused_once_the_user_is_demoted(
 
         # An admin demotes the user while the tab stays open.
         storage.request_contextvar.set(None)
-        ok, message = await admin_page.set_user_approval_status(user.id, False)
+        async with AsyncSession(test_engine) as db:
+            ok, message = await admin_page.set_user_approval_status(db, user.id, False)
         assert ok, message
 
         question.value = "Why do corals bleach when the water warms?"

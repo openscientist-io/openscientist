@@ -28,6 +28,8 @@ from openscientist.settings import (
     Settings,
 )
 from openscientist.webapp_components.pages import settings_panel
+from openscientist.webapp_components.utils import permissions
+from openscientist.webapp_components.utils.permissions import AdminAccess
 from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 from tests.helpers import fake_admin_session
 
@@ -93,10 +95,16 @@ def _floor(monkeypatch: pytest.MonkeyPatch, enabled: bool) -> None:
     )
 
 
+@pytest.fixture(autouse=True)
+def _admin_rights_hold(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The caller's session and admin role survive every recheck."""
+    monkeypatch.setattr(permissions, "revalidate_admin_session", AsyncMock(return_value=True))
+
+
 def _admin(monkeypatch: pytest.MonkeyPatch, db_session: AsyncSession, user: User) -> None:
     monkeypatch.setattr(settings_panel, "is_current_user_admin", lambda: True)
     monkeypatch.setattr(settings_panel, "get_current_user_id", lambda: str(user.id))
-    monkeypatch.setattr(settings_panel, "get_admin_session", fake_admin_session(db_session))
+    monkeypatch.setattr(permissions, "get_admin_session", fake_admin_session(db_session))
 
 
 async def _change_pairs(db_session: AsyncSession) -> list[tuple[str, str | None, str | None]]:
@@ -131,7 +139,7 @@ async def test_a_save_records_only_the_changed_settings(
     _floor(monkeypatch, False)
 
     success, _ = await settings_panel.save_admin_settings(
-        _values(agent_cpu=4.0, max_project_spend_24h_usd=None, airgapped=True)
+        AdminAccess(), _values(agent_cpu=4.0, max_project_spend_24h_usd=None, airgapped=True)
     )
 
     assert success is True
@@ -163,7 +171,7 @@ async def test_an_unchanged_save_writes_no_history(
     _admin(monkeypatch, db_session, user)
     _floor(monkeypatch, False)
 
-    success, _ = await settings_panel.save_admin_settings(_values())
+    success, _ = await settings_panel.save_admin_settings(AdminAccess(), _values())
 
     assert success is True
     row = await _row(db_session)
@@ -186,7 +194,7 @@ async def test_a_save_that_changes_a_value_picks_the_queue(
 
     manager = SimpleNamespace(_start_next_queued_job=MagicMock(return_value=False))
     with patch("openscientist.web_app.get_job_manager", return_value=manager):
-        success, _ = await settings_panel.save_admin_settings(_values(agent_cpu=4.0))
+        success, _ = await settings_panel.save_admin_settings(AdminAccess(), _values(agent_cpu=4.0))
 
     assert success is True
     manager._start_next_queued_job.assert_called_once_with()
@@ -206,7 +214,7 @@ async def test_a_save_with_no_changes_does_not_pick_the_queue(
 
     manager = SimpleNamespace(_start_next_queued_job=MagicMock(return_value=False))
     with patch("openscientist.web_app.get_job_manager", return_value=manager):
-        success, _ = await settings_panel.save_admin_settings(_values())
+        success, _ = await settings_panel.save_admin_settings(AdminAccess(), _values())
 
     assert success is True
     manager._start_next_queued_job.assert_not_called()
@@ -225,7 +233,9 @@ async def test_an_out_of_bounds_value_is_refused_and_writes_nothing(
     user = User(email="admin@example.com", name="Admin", id=user_id)
     _admin(monkeypatch, db_session, user)
     _floor(monkeypatch, False)
-    success, message = await settings_panel.save_admin_settings(_values(agent_cpu=0.0))
+    success, message = await settings_panel.save_admin_settings(
+        AdminAccess(), _values(agent_cpu=0.0)
+    )
 
     assert success is False
     assert "Agent CPU" in message
@@ -248,7 +258,7 @@ async def test_the_airgap_switch_cannot_be_turned_off_while_the_floor_locks_it(
     _admin(monkeypatch, db_session, user)
     _floor(monkeypatch, True)
 
-    success, _ = await settings_panel.save_admin_settings(_values(airgapped=False))
+    success, _ = await settings_panel.save_admin_settings(AdminAccess(), _values(airgapped=False))
 
     assert success is False
     row = await _row(db_session)
@@ -268,10 +278,10 @@ async def test_a_non_admin_cannot_save(
     await db_session.refresh(user)
     await _write_row(db_session)
     monkeypatch.setattr(settings_panel, "is_current_user_admin", lambda: False)
-    monkeypatch.setattr(settings_panel, "get_admin_session", fake_admin_session(db_session))
+    monkeypatch.setattr(permissions, "get_admin_session", fake_admin_session(db_session))
     _floor(monkeypatch, False)
 
-    success, _ = await settings_panel.save_admin_settings(_values(agent_cpu=4.0))
+    success, _ = await settings_panel.save_admin_settings(AdminAccess(), _values(agent_cpu=4.0))
 
     assert success is False
     row = await _row(db_session)
@@ -358,7 +368,7 @@ async def test_the_airgap_switch_is_disabled_exactly_when_the_floor_locks_it(
         "current_admin_settings",
         AsyncMock(return_value=_panel_values(airgap_locked)),
     )
-    monkeypatch.setattr(settings_panel, "get_admin_session", _history_session())
+    monkeypatch.setattr(permissions, "get_admin_session", _history_session())
     mock_ui = _panel_ui_mock()
     with (
         patch.object(settings_panel, "ui", mock_ui),
@@ -386,7 +396,7 @@ async def test_each_field_shows_the_description_from_settings(
         "current_admin_settings",
         AsyncMock(return_value=_panel_values(airgap_locked=False)),
     )
-    monkeypatch.setattr(settings_panel, "get_admin_session", _history_session())
+    monkeypatch.setattr(permissions, "get_admin_session", _history_session())
     mock_ui = _panel_ui_mock()
     with (
         patch.object(settings_panel, "ui", mock_ui),
@@ -461,7 +471,7 @@ async def test_a_save_reports_that_the_row_is_missing(
     _admin(monkeypatch, db_session, user)
     _floor(monkeypatch, False)
 
-    success, _ = await settings_panel.save_admin_settings(_values(agent_cpu=4.0))
+    success, _ = await settings_panel.save_admin_settings(AdminAccess(), _values(agent_cpu=4.0))
 
     assert success is False
     assert await _change_pairs(db_session) == []
@@ -559,7 +569,6 @@ async def test_a_successful_save_stores_the_values_and_writes_history(
         patch.object(settings_panel, "ui", mock_ui),
         patch.object(settings_panel, "render_empty_state", MagicMock()),
         patch.object(settings_panel, "render_alert_banner", MagicMock()),
-        patch.object(settings_panel, "revalidate_admin_session", AsyncMock(return_value=True)),
     ):
         await settings_panel.render_settings_panel()
         on_click = mock_ui.button.call_args.kwargs["on_click"]
@@ -631,7 +640,6 @@ async def test_a_rejected_save_changes_nothing(
         patch.object(settings_panel, "ui", mock_ui),
         patch.object(settings_panel, "render_empty_state", MagicMock()),
         patch.object(settings_panel, "render_alert_banner", MagicMock()),
-        patch.object(settings_panel, "revalidate_admin_session", AsyncMock(return_value=True)),
     ):
         await settings_panel.render_settings_panel()
         on_click = mock_ui.button.call_args.kwargs["on_click"]
@@ -682,7 +690,7 @@ async def test_the_change_history_lists_each_change_with_its_changer(
         "current_admin_settings",
         AsyncMock(return_value=_panel_values(False)),
     )
-    monkeypatch.setattr(settings_panel, "get_admin_session", fake_admin_session(db_session))
+    monkeypatch.setattr(permissions, "get_admin_session", fake_admin_session(db_session))
     mock_ui = _panel_ui_mock()
     with (
         patch.object(settings_panel, "ui", mock_ui),
@@ -707,7 +715,7 @@ async def test_an_empty_history_shows_the_empty_state(
         "current_admin_settings",
         AsyncMock(return_value=_panel_values(False)),
     )
-    monkeypatch.setattr(settings_panel, "get_admin_session", fake_admin_session(db_session))
+    monkeypatch.setattr(permissions, "get_admin_session", fake_admin_session(db_session))
     empty = MagicMock()
     mock_ui = _panel_ui_mock()
     with (

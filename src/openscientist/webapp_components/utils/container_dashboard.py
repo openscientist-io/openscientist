@@ -11,7 +11,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from openscientist.budget import job_spends
@@ -20,6 +20,9 @@ from openscientist.job_container.launcher_client import (
     LauncherClient,
     LauncherError,
 )
+
+if TYPE_CHECKING:
+    from openscientist.webapp_components.utils.permissions import AdminAccess
 
 logger = logging.getLogger(__name__)
 
@@ -180,10 +183,11 @@ def _build_container_info(
     )
 
 
-async def collect_dashboard_data(include_stats: bool = True) -> DashboardData:
+async def collect_dashboard_data(access: AdminAccess, include_stats: bool = True) -> DashboardData:
     """Collect all data needed for the container dashboard.
 
     Args:
+        access: The caller's rechecked admin rights, which open the job query's session.
         include_stats: Whether to fetch per-container CPU/memory stats.
             Set to False for faster polling when stats aren't needed.
 
@@ -196,7 +200,7 @@ async def collect_dashboard_data(include_stats: bool = True) -> DashboardData:
     if client is None:
         return data
 
-    fetch_result = await _fetch_dashboard_sources(client)
+    fetch_result = await _fetch_dashboard_sources(client, access)
     if fetch_result is None:
         data.error_message = "Error collecting container data. Check server logs."
         return data
@@ -220,12 +224,12 @@ async def _prepare_dashboard_client(data: DashboardData) -> LauncherClient | Non
 
 
 async def _fetch_dashboard_sources(
-    client: LauncherClient,
+    client: LauncherClient, access: AdminAccess
 ) -> tuple[list[ContainerEntry], dict[str, dict[str, Any]]] | None:
     try:
         containers_list, job_map = await asyncio.gather(
             asyncio.to_thread(_list_launcher_containers, client),
-            _get_active_jobs_map(),
+            _get_active_jobs_map(access),
         )
     except Exception as exc:
         logger.error("Failed to collect dashboard data: %s", exc, exc_info=True)
@@ -328,7 +332,7 @@ def _compute_dashboard_totals(
     return totals
 
 
-async def _get_active_jobs_map() -> dict[str, dict[str, Any]]:
+async def _get_active_jobs_map(access: AdminAccess) -> dict[str, dict[str, Any]]:
     """Query the database for running/queued/pending jobs.
 
     Returns:
@@ -337,12 +341,11 @@ async def _get_active_jobs_map() -> dict[str, dict[str, Any]]:
     from sqlalchemy import select
 
     from openscientist.database.models import Job, User
-    from openscientist.database.session import get_admin_session
 
     result_map: dict[str, dict[str, Any]] = {}
 
     try:
-        async with get_admin_session() as session:
+        async with access.session() as session:
             stmt = (
                 select(Job, User.email)
                 .outerjoin(User, Job.owner_id == User.id)

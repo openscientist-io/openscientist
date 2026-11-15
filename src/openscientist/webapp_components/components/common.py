@@ -10,8 +10,8 @@ from nicegui import ui
 from sqlalchemy import select
 
 from openscientist.database.models import User
-from openscientist.database.session import get_admin_session
 from openscientist.job.types import JobStatus
+from openscientist.webapp_components.utils.permissions import admin_access
 
 logger = logging.getLogger(__name__)
 
@@ -286,9 +286,13 @@ async def render_user_search(
             results_container.clear()
             return
 
+        access = await admin_access()
+        if access is None:
+            results_container.clear()
+            return
+
         try:
-            # Use admin session to search all users
-            async with get_admin_session() as session:
+            async with access.session() as session:
                 stmt = (
                     select(User)
                     .where(User.email.ilike(f"%{query}%") | User.name.ilike(f"%{query}%"))

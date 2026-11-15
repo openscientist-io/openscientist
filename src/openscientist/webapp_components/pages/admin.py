@@ -12,13 +12,13 @@ from uuid import UUID
 
 from nicegui import app, ui
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.admin.orphan_jobs import assign_orphaned_job, list_orphaned_jobs
 from openscientist.auth.fastapi_routes import _hash_token, generate_review_token
 from openscientist.auth.middleware import get_current_user_id, require_admin, require_auth
 from openscientist.budget import format_spend
 from openscientist.database.models import Job, ReviewToken, Session, User
-from openscientist.database.session import get_admin_session
 from openscientist.job.types import JobStatus
 from openscientist.settings import get_settings
 from openscientist.webapp_components.components.badges import render_job_id_badge
@@ -39,10 +39,7 @@ from openscientist.webapp_components.components.navigation import render_navigat
 from openscientist.webapp_components.pages.billing import render_billing_panel
 from openscientist.webapp_components.pages.settings_panel import render_settings_panel
 from openscientist.webapp_components.utils import session_checked_timer
-from openscientist.webapp_components.utils.permissions import (
-    refuse_stale_admin_session,
-    revalidate_admin_session,
-)
+from openscientist.webapp_components.utils.permissions import admin_access
 
 if TYPE_CHECKING:
     from openscientist.webapp_components.utils.container_dashboard import (
@@ -62,64 +59,67 @@ def _filter_users_for_admin_table(users: list[User], current_user_id: str | None
     return [user for user in users if str(user.id) != current_user_id]
 
 
-async def set_user_approval_status(user_id: UUID, is_approved: bool) -> tuple[bool, str]:
+async def set_user_approval_status(
+    session: AsyncSession, user_id: UUID, is_approved: bool
+) -> tuple[bool, str]:
     """
     Update a user's approval flag.
 
     Args:
+        session: Admin database session
         user_id: User to update
         is_approved: Desired approval state
 
     Returns:
         Tuple of (success, message)
     """
-    async with get_admin_session() as session:
-        stmt = select(User).where(User.id == user_id)
-        result = await session.execute(stmt)
-        user = result.scalar_one_or_none()
+    stmt = select(User).where(User.id == user_id)
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
 
-        if not user:
-            return False, "User not found"
+    if not user:
+        return False, "User not found"
 
-        # Prevent admins from removing their own approval status.
-        current_user_id: str | None = None
-        if not is_approved:
-            try:
-                current_user_id = get_current_user_id()
-            except (RuntimeError, AssertionError, AttributeError):
-                # Not all call paths/tests have a request-scoped NiceGUI storage context.
-                logger.debug("Current user ID unavailable during approval update", exc_info=True)
+    # Prevent admins from removing their own approval status.
+    current_user_id: str | None = None
+    if not is_approved:
+        try:
+            current_user_id = get_current_user_id()
+        except (RuntimeError, AssertionError, AttributeError):
+            # Not all call paths/tests have a request-scoped NiceGUI storage context.
+            logger.debug("Current user ID unavailable during approval update", exc_info=True)
 
-        if not is_approved and current_user_id == str(user.id):
-            return False, "You cannot remove your own approval"
+    if not is_approved and current_user_id == str(user.id):
+        return False, "You cannot remove your own approval"
 
-        if bool(user.is_approved) == is_approved:
-            state = "approved" if is_approved else "pending"
-            return False, f"User is already {state}"
+    if bool(user.is_approved) == is_approved:
+        state = "approved" if is_approved else "pending"
+        return False, f"User is already {state}"
 
-        user.is_approved = is_approved
-        await session.commit()
+    user.is_approved = is_approved
+    await session.commit()
 
     if is_approved:
         return True, "User approved successfully"
     return True, "User approval removed successfully"
 
 
-async def set_user_priority_status(user_id: UUID, is_priority: bool) -> tuple[bool, str]:
+async def set_user_priority_status(
+    session: AsyncSession, user_id: UUID, is_priority: bool
+) -> tuple[bool, str]:
     """Mark a user's queued jobs as starting ahead of other users' jobs, or not.
 
     Returns:
         Tuple of (success, message)
     """
-    async with get_admin_session() as session:
-        user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
-        if not user:
-            return False, "User not found"
-        if bool(user.is_priority) == is_priority:
-            state = "already" if is_priority else "not"
-            return False, f"User is {state} a priority user"
-        user.is_priority = is_priority
-        await session.commit()
+    user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user:
+        return False, "User not found"
+    if bool(user.is_priority) == is_priority:
+        state = "already" if is_priority else "not"
+        return False, f"User is {state} a priority user"
+    user.is_priority = is_priority
+    await session.commit()
 
     if is_priority:
         return True, "User is now a priority user"
@@ -210,10 +210,12 @@ async def load_orphaned_jobs(container: ui.column, search_query: str = "") -> No
     """Load and display orphaned jobs."""
 
     container.clear()
+    access = await admin_access()
+    if access is None:
+        return
 
     try:
-        # Use admin session to query all orphaned jobs regardless of current user
-        async with get_admin_session() as session:
+        async with access.session() as session:
             orphaned_jobs = await list_orphaned_jobs(session, search_query=search_query)
 
         if not orphaned_jobs:
@@ -336,16 +338,13 @@ async def _confirm_assign_orphaned_job(
     job_id: str, selected_user_id: str, *, dialog: ui.dialog
 ) -> None:
     """Assign an orphaned job once the caller's admin session survives a re-check."""
-    if not await revalidate_admin_session():
-        refuse_stale_admin_session()
+    access = await admin_access()
+    if access is None:
         return
     try:
-        async with get_admin_session() as session:
-            result = await assign_orphaned_job(
-                session=session,
-                job_id=UUID(job_id),
-                user_id=UUID(selected_user_id),
-            )
+        job_uuid, user_uuid = UUID(job_id), UUID(selected_user_id)
+        async with access.session() as session:
+            result = await assign_orphaned_job(session=session, job_id=job_uuid, user_id=user_uuid)
         if result.ok:
             ui.notify("Job assigned successfully", color="positive")
             dialog.close()
@@ -368,11 +367,12 @@ async def _confirm_assign_orphaned_job(
         ui.notify("Failed to assign job. Check server logs.", color="negative")
 
 
-async def delete_user(user_id: UUID) -> tuple[bool, str]:
+async def delete_user(session: AsyncSession, user_id: UUID) -> tuple[bool, str]:
     """
     Delete a user from the system.
 
     Args:
+        session: Admin database session
         user_id: User to delete
 
     Returns:
@@ -387,48 +387,44 @@ async def delete_user(user_id: UUID) -> tuple[bool, str]:
     if current_user_id == str(user_id):
         return False, "You cannot delete your own account"
 
-    async with get_admin_session() as session:
-        stmt = select(User).where(User.id == user_id)
-        result = await session.execute(stmt)
-        user = result.scalar_one_or_none()
+    stmt = select(User).where(User.id == user_id)
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
 
-        if not user:
-            return False, "User not found"
+    if not user:
+        return False, "User not found"
 
-        await session.execute(
-            update(User)
-            .where(
-                User.id.in_(
-                    select(ReviewToken.redeemed_by_id).where(ReviewToken.created_by_id == user_id)
-                )
+    await session.execute(
+        update(User)
+        .where(
+            User.id.in_(
+                select(ReviewToken.redeemed_by_id).where(ReviewToken.created_by_id == user_id)
             )
-            .values(is_active=False)
         )
-        await session.execute(
-            update(ReviewToken).where(ReviewToken.redeemed_by_id == user_id).values(is_active=False)
-        )
-        await session.delete(user)
-        await session.commit()
+        .values(is_active=False)
+    )
+    await session.execute(
+        update(ReviewToken).where(ReviewToken.redeemed_by_id == user_id).values(is_active=False)
+    )
+    await session.delete(user)
+    await session.commit()
 
     return True, "User deleted successfully"
 
 
-async def revoke_review_token(token_id: UUID) -> tuple[bool, str]:
+async def revoke_review_token(session: AsyncSession, token_id: UUID) -> tuple[bool, str]:
     """Revoke a review token and disable the reviewer it redeemed."""
-    async with get_admin_session() as session:
-        result = await session.execute(select(ReviewToken).where(ReviewToken.id == token_id))
-        review_token = result.scalar_one_or_none()
-        if not review_token:
-            return False, "Token not found"
-        review_token.is_active = False
-        if review_token.redeemed_by_id is not None:
-            await session.execute(
-                update(User).where(User.id == review_token.redeemed_by_id).values(is_active=False)
-            )
-            await session.execute(
-                delete(Session).where(Session.user_id == review_token.redeemed_by_id)
-            )
-        await session.commit()
+    result = await session.execute(select(ReviewToken).where(ReviewToken.id == token_id))
+    review_token = result.scalar_one_or_none()
+    if not review_token:
+        return False, "Token not found"
+    review_token.is_active = False
+    if review_token.redeemed_by_id is not None:
+        await session.execute(
+            update(User).where(User.id == review_token.redeemed_by_id).values(is_active=False)
+        )
+        await session.execute(delete(Session).where(Session.user_id == review_token.redeemed_by_id))
+    await session.commit()
     return True, "Token revoked"
 
 
@@ -495,8 +491,8 @@ async def _build_admin_user_rows(session: Any, users: list[User]) -> list[dict[s
 async def _handle_approval_update(
     e: Any, is_approved: bool, reload_users: Callable[[], Awaitable[None]]
 ) -> None:
-    if not await revalidate_admin_session():
-        refuse_stale_admin_session()
+    access = await admin_access()
+    if access is None:
         return
     user_id = e.args.get("id")
     if not user_id:
@@ -504,10 +500,11 @@ async def _handle_approval_update(
         return
 
     try:
-        success, message = await set_user_approval_status(
-            UUID(user_id),
-            is_approved=is_approved,
-        )
+        target = UUID(user_id)
+        async with access.session() as session:
+            success, message = await set_user_approval_status(
+                session, target, is_approved=is_approved
+            )
         ui.notify(message, color="positive" if success else "info")
         if success:
             await reload_users()
@@ -533,15 +530,19 @@ async def _handle_approval_update(
 async def _handle_priority_update(
     e: Any, is_priority: bool, reload_users: Callable[[], Awaitable[None]]
 ) -> None:
-    if not await revalidate_admin_session():
-        refuse_stale_admin_session()
+    access = await admin_access()
+    if access is None:
         return
     user_id = e.args.get("id")
     if not user_id:
         ui.notify("Invalid user selection", color="negative")
         return
     try:
-        success, message = await set_user_priority_status(UUID(user_id), is_priority=is_priority)
+        target = UUID(user_id)
+        async with access.session() as session:
+            success, message = await set_user_priority_status(
+                session, target, is_priority=is_priority
+            )
     except ValueError:
         ui.notify("Invalid user selection", color="negative")
         return
@@ -713,11 +714,13 @@ async def _confirm_delete_user(
     on_deleted: Callable[[], Awaitable[None]],
 ) -> None:
     """Delete a user once the caller's admin session survives a re-check."""
-    if not await revalidate_admin_session():
-        refuse_stale_admin_session()
+    access = await admin_access()
+    if access is None:
         return
     try:
-        success, message = await delete_user(UUID(user_id))
+        target = UUID(user_id)
+        async with access.session() as session:
+            success, message = await delete_user(session, target)
         ui.notify(message, color="positive" if success else "negative")
         dialog.close()
         if success:
@@ -741,11 +744,14 @@ async def render_users_panel() -> None:
         async def load_users() -> None:
             """Load all users."""
             users_container.clear()
+            access = await admin_access()
+            if access is None:
+                return
 
             try:
                 current_user_id = _get_admin_current_user_id()
 
-                async with get_admin_session() as session:
+                async with access.session() as session:
                     stmt = select(User).order_by(User.created_at.desc())
                     result = await session.execute(stmt)
                     users = list(result.scalars().all())
@@ -773,7 +779,8 @@ async def render_users_panel() -> None:
 
 
 async def render_containers_panel(page_user_id: str) -> None:
-    """Render the real-time container dashboard panel."""
+    """Render the real-time container dashboard panel. Every tick rechecks the
+    caller's admin rights, and the first tick without them stops the timer."""
     from openscientist.webapp_components.utils.container_dashboard import (
         collect_dashboard_data,
     )
@@ -782,18 +789,25 @@ async def render_containers_panel(page_user_id: str) -> None:
     def render_dashboard(view: DashboardView) -> None:
         _render_dashboard_content(view)
 
-    view = _dashboard_view(await collect_dashboard_data())
+    access = await admin_access()
+    if access is None:
+        return
+    view = _dashboard_view(await collect_dashboard_data(access))
     render_dashboard(view)
 
     async def guarded_refresh() -> None:
         nonlocal view
-        new_view = _dashboard_view(await collect_dashboard_data())
+        tick_access = await admin_access()
+        if tick_access is None:
+            timer.deactivate()
+            return
+        new_view = _dashboard_view(await collect_dashboard_data(tick_access))
         if new_view == view:
             return
         view = new_view
         render_dashboard.refresh(new_view)
 
-    session_checked_timer(3.0, guarded_refresh, page_user_id)
+    timer = session_checked_timer(3.0, guarded_refresh, page_user_id)
 
 
 def _job_status_color(status: str) -> str:
@@ -1131,8 +1145,8 @@ def _review_token_rows(tokens: list[ReviewToken]) -> list[dict[str, Any]]:
 
 async def _create_review_token(label: str, expiry_days: int) -> None:
     """Create a review token once the caller's admin session survives a re-check."""
-    if not await revalidate_admin_session():
-        refuse_stale_admin_session()
+    access = await admin_access()
+    if access is None:
         return
     current_user_id = get_current_user_id()
     if not current_user_id:
@@ -1144,7 +1158,7 @@ async def _create_review_token(label: str, expiry_days: int) -> None:
     token_hash = _hash_token(plaintext)
 
     try:
-        async with get_admin_session() as session:
+        async with access.session() as session:
             review_token = ReviewToken(
                 token_hash=token_hash,
                 label=label,
@@ -1219,8 +1233,11 @@ async def render_review_tokens_panel() -> None:
 
         async def load_tokens() -> None:
             tokens_container.clear()
+            access = await admin_access()
+            if access is None:
+                return
             try:
-                async with get_admin_session() as session:
+                async with access.session() as session:
                     stmt = select(ReviewToken).order_by(ReviewToken.created_at.desc())
                     result = await session.execute(stmt)
                     tokens = list(result.scalars().all())
@@ -1300,11 +1317,13 @@ async def _confirm_revoke_review_token(
     on_revoked: Callable[[], Awaitable[None]],
 ) -> None:
     """Revoke a review token once the caller's admin session survives a re-check."""
-    if not await revalidate_admin_session():
-        refuse_stale_admin_session()
+    access = await admin_access()
+    if access is None:
         return
     try:
-        success, message = await revoke_review_token(UUID(token_id))
+        target = UUID(token_id)
+        async with access.session() as session:
+            success, message = await revoke_review_token(session, target)
         ui.notify(message, type="positive" if success else "negative")
         dialog.close()
         if success:

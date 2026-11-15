@@ -39,6 +39,7 @@ from openscientist.webapp_components.pages.job_detail import job_detail_page
 from openscientist.webapp_components.pages.jobs_list import jobs_page
 from openscientist.webapp_components.utils import container_dashboard
 from openscientist.webapp_components.utils.container_dashboard import DashboardData
+from openscientist.webapp_components.utils.permissions import AdminAccess
 from tests.db_outage import Forwarder
 from tests.webapp.conftest import ServedPage, WireMessage, drain_outbox
 
@@ -308,7 +309,7 @@ async def test_the_admin_tick_sends_the_page_to_login_once_the_session_is_gone(
     the login page."""
     payloads: list[DashboardData] = [DashboardData(docker_available=True, job_groups=[])]
 
-    async def collect(include_stats: bool = True) -> DashboardData:
+    async def collect(access: AdminAccess, include_stats: bool = True) -> DashboardData:
         return payloads[0]
 
     monkeypatch.setattr(container_dashboard, "collect_dashboard_data", collect)
