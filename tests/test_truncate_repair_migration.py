@@ -29,7 +29,7 @@ def _migration() -> ModuleType:
 
 
 @pytest.mark.asyncio
-async def test_truncate_leaves_the_app_role_on_existing_and_later_tables(
+async def test_truncate_leaves_the_app_role_and_a_downgrade_keeps_it_out(
     test_engine: AsyncEngine,
 ) -> None:
     module = _migration()
@@ -49,6 +49,7 @@ async def test_truncate_leaves_the_app_role_on_existing_and_later_tables(
             connection.execute(text("SET LOCAL ROLE openscientist_owner"))
             with Operations.context(MigrationContext.configure(connection)):
                 module.upgrade()
+                module.downgrade()
             connection.execute(text("CREATE TABLE created_after_repair (id int)"))
             existing, later = connection.execute(
                 text(
