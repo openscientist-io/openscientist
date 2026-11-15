@@ -33,6 +33,7 @@ from openscientist.webapp_components.utils.container_dashboard import (
     DashboardData,
     JobContainerGroup,
 )
+from openscientist.webapp_components.utils.permissions import AdminAccess
 from tests.db_outage import Forwarder
 from tests.webapp.conftest import OpenPage, ServedPage, WireMessage, drain_outbox, fire_click_twice
 
@@ -312,7 +313,7 @@ async def test_an_unchanged_container_tick_sends_no_update_messages(
     """A 3 s tick whose container data did not change puts no update on the wire."""
     payloads: list[DashboardData] = [_dashboard_payload()]
 
-    async def collect(include_stats: bool = True) -> DashboardData:
+    async def collect(access: AdminAccess, include_stats: bool = True) -> DashboardData:
         return payloads[0]
 
     monkeypatch.setattr(container_dashboard, "collect_dashboard_data", collect)
@@ -376,21 +377,19 @@ def _dashboard_refreshable(client: Client) -> bool:
 
 
 @pytest.mark.asyncio
-async def test_a_signout_before_the_deferred_containers_render_renders_then_logins(
+async def test_a_signout_before_the_deferred_containers_render_renders_nothing(
     database: Forwarder,
     test_engine: AsyncEngine,
     admin_with_a_pending_user: dict[str, str],
     served_page: ServedPage,
-    wire_recorder: list[WireMessage],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A sign-out in another tab that clears the page's user storage and deletes
     the session row before the deferred Containers render runs must not make that
-    render raise. The panel renders from the id the page was built with, and its
-    first session tick sends the browser to login."""
+    render raise, and the render shows no container data and starts no tick."""
     token = admin_with_a_pending_user["token"]
 
-    async def collect(include_stats: bool = True) -> DashboardData:
+    async def collect(access: AdminAccess, include_stats: bool = True) -> DashboardData:
         return _dashboard_payload()
 
     monkeypatch.setattr(container_dashboard, "collect_dashboard_data", collect)
@@ -408,23 +407,8 @@ async def test_a_signout_before_the_deferred_containers_render_renders_then_logi
     with client:
         await containers_timer.callback()
 
-    # The render finished with the captured id, so the dashboard is present and
-    # the session-checked timer it installs exists.
-    assert _dashboard_refreshable(client), "the Containers panel never rendered"
-    ticks = _timers_with_interval(client, 3.0)
-    assert len(ticks) == 1, "the containers render did not reach its session timer"
-
-    tick = ticks[0]
-    assert tick.callback is not None
-    client.tab_id = "signout-socket"
-    wire_recorder.clear()
-    with client:
-        await tick.callback()
-    assert tick.active is False, "the tick kept ticking after the session was gone"
-    await drain_outbox(client)
-    assert [m for m in wire_recorder if m.event == "open" and m.room == client.id], (
-        "the first tick did not send the browser to login"
-    )
+    assert not _dashboard_refreshable(client)
+    assert _timers_with_interval(client, 3.0) == []
 
 
 @pytest.mark.asyncio
@@ -484,7 +468,7 @@ async def test_the_job_card_header_shows_the_spend_and_updates_on_a_tick(
     spend change the panel renders reaches the browser on the next tick."""
     payloads: list[DashboardData] = [_spend_payload()]
 
-    async def collect(include_stats: bool = True) -> DashboardData:
+    async def collect(access: AdminAccess, include_stats: bool = True) -> DashboardData:
         return payloads[0]
 
     monkeypatch.setattr(container_dashboard, "collect_dashboard_data", collect)

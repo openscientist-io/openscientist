@@ -105,6 +105,7 @@ async def test_admin_billing_keeps_user_total_after_job_deletion(test_engine: As
     from unittest.mock import AsyncMock
 
     from openscientist.webapp_components.pages import billing
+    from openscientist.webapp_components.utils import permissions
 
     async with AsyncSession(test_engine, expire_on_commit=False) as db:
         user = User(email=f"billing-{uuid4().hex}@ledger.test", name="Ledger reader")
@@ -131,6 +132,7 @@ async def test_admin_billing_keeps_user_total_after_job_deletion(test_engine: As
             with (
                 client,
                 patch.object(billing, "ui") as widgets,
+                patch.object(permissions, "revalidate_admin_session", AsyncMock(return_value=True)),
                 patch.object(billing, "_render_project_budget_section", new_callable=AsyncMock),
             ):
                 await billing.render_billing_panel()

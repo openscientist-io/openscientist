@@ -8,16 +8,43 @@ helpers, so a logged-out, demoted or deleted caller loses the page's powers.
 from __future__ import annotations
 
 import logging
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
 from nicegui import ui
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.auth.middleware import get_session_token, validate_session
+from openscientist.database.session import get_admin_session
 from openscientist.job.repository import get_job, get_share_permission
 
 logger = logging.getLogger(__name__)
+
+
+class AdminAccess:
+    """Proof that the caller was an admin with a live session when it was
+    issued. Admin pages open the row-level-security-bypassing database session
+    only through it, so no admin read or write skips the recheck.
+
+    Only ``admin_access`` builds one, and a handler holds it for one action.
+    """
+
+    def session(self) -> AbstractAsyncContextManager[AsyncSession]:
+        """The admin database session."""
+        return get_admin_session()
+
+
+async def admin_access() -> AdminAccess | None:
+    """An ``AdminAccess`` while the caller's session still exists and still
+    belongs to an admin. Otherwise the caller is told to refresh the page and
+    gets None."""
+    if await revalidate_admin_session():
+        return AdminAccess()
+    logger.warning("Admin action refused for a session without current admin rights")
+    ui.notify("Your admin session is no longer valid. Please refresh the page.", type="warning")
+    return None
 
 
 @dataclass(frozen=True)
@@ -35,12 +62,6 @@ async def revalidate_admin_session() -> bool:
         return False
     user_info = await validate_session(token)
     return user_info is not None and bool(user_info.get("is_admin"))
-
-
-def refuse_stale_admin_session() -> None:
-    """Refuse an admin action with a notification, changing nothing."""
-    logger.warning("Admin action refused for a session without current admin rights")
-    ui.notify("Your admin session is no longer valid. Please refresh the page.", type="warning")
 
 
 async def revalidate_session() -> dict[str, Any] | None:
