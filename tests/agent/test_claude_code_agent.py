@@ -12,6 +12,7 @@ import pytest
 from openscientist.agent.base import AgentConfig
 from openscientist.agent.claude_code_agent import ClaudeCodeAgent
 from openscientist.providers.base import ClaudeCompatible
+from openscientist.settings import get_settings
 from tests.helpers import StubClaudeProvider
 
 
@@ -62,6 +63,23 @@ def test_build_options_uses_stdio_spec_for_openscientist_tools(tmp_path: Path) -
     assert "env" in cfg
     assert cfg["env"]["OPENSCIENTIST_JOB_ID"] == tmp_path.name
     assert cfg["env"]["OPENSCIENTIST_JOB_DIR"] == str(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("airgapped", "disallowed"), [("true", ["WebSearch", "WebFetch"]), ("false", [])]
+)
+def test_air_gapped_runs_withhold_the_web_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, airgapped: str, disallowed: list[str]
+) -> None:
+    # WebSearch asks Anthropic to run its search tool, which the proxy refuses
+    # for an air-gapped run, and WebFetch only meets the firewall.
+    monkeypatch.setenv("OPENSCIENTIST_AIRGAPPED", airgapped)
+    get_settings.cache_clear()
+    try:
+        options = _make_agent(tmp_path)._build_options()
+    finally:
+        get_settings.cache_clear()
+    assert options.disallowed_tools == disallowed
 
 
 def test_subprocess_env_passes_through_unrelated_openscientist_vars(

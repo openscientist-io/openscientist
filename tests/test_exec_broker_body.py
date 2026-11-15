@@ -21,7 +21,7 @@ _ROUTES = [("/execute", 1024 * 1024), ("/budget", 4096)]
 @pytest.fixture
 def token() -> Iterator[str]:
     role = f"agent_{uuid4().hex}"
-    yield issue_run_credentials("job-1", role, "discovery").exec_token
+    yield issue_run_credentials("job-1", role, "discovery", airgapped=False).exec_token
     revoke_run_credentials(role)
 
 
@@ -109,7 +109,7 @@ async def test_unauthenticated_request_never_reads_body(path: str, credential: s
 @pytest.mark.parametrize("path", ["/execute", "/budget"])
 async def test_revoked_token_never_reads_body(path: str) -> None:
     role = f"agent_{uuid4().hex}"
-    credential = issue_run_credentials("job-1", role, "discovery").exec_token
+    credential = issue_run_credentials("job-1", role, "discovery", airgapped=False).exec_token
     revoke_run_credentials(role)
     status, reads = await _post(
         path, token=credential, chunks=[b'{"job_id":"job-1","request_id":"req-1"}']

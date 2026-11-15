@@ -33,10 +33,13 @@ def derive_job_secret(master_key: str, job_id: str) -> str:
 class RunCredentials:
     """What one container run presents to the LLM proxy and to the execution
     broker, each ``"<job_id>.<random token>"``, for the run of ``job_id``
-    whose kind is ``kind`` (discovery, report or chat)."""
+    whose kind is ``kind`` (discovery, report or chat). ``airgapped`` is the
+    posture the run's firewall was built with, which the proxy enforces on the
+    run's requests even if the setting changes while the run lives."""
 
     job_id: str
     kind: RunKind
+    airgapped: bool
     llm_placeholder: str
     exec_token: str
 
@@ -47,13 +50,16 @@ _runs: dict[str, RunCredentials] = {}
 _runs_lock = threading.Lock()
 
 
-def issue_run_credentials(job_id: str, role: str, kind: RunKind) -> RunCredentials:
-    """New credentials for the run of ``job_id`` whose database login is ``role``
-    and whose kind is ``kind``, accepted until :func:`revoke_run_credentials`
-    ends them."""
+def issue_run_credentials(
+    job_id: str, role: str, kind: RunKind, *, airgapped: bool
+) -> RunCredentials:
+    """New credentials for the air-gapped or open run of ``job_id`` whose
+    database login is ``role`` and whose kind is ``kind``, accepted until
+    :func:`revoke_run_credentials` ends them."""
     credentials = RunCredentials(
         job_id=job_id,
         kind=kind,
+        airgapped=airgapped,
         llm_placeholder=f"{job_id}{_SEP}{secrets.token_hex(32)}",
         exec_token=f"{job_id}{_SEP}{secrets.token_hex(32)}",
     )

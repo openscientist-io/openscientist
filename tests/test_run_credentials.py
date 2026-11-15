@@ -34,7 +34,7 @@ def start_run() -> Iterator[StartRun]:
     def start(job_id: str, kind: RunKind = "discovery") -> tuple[str, RunCredentials]:
         role = f"agent_{uuid4().hex}"
         roles.append(role)
-        return role, issue_run_credentials(job_id, role, kind)
+        return role, issue_run_credentials(job_id, role, kind, airgapped=False)
 
     yield start
     for role in roles:

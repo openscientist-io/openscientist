@@ -243,7 +243,11 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
 
     def _build_options(self) -> ClaudeAgentOptions:
         """Build ClaudeAgentOptions with tools exposed via the standalone
-        `openscientist_tools` subprocess MCP server."""
+        `openscientist_tools` subprocess MCP server. An air-gapped run gets no
+        WebSearch, which asks the provider to search and which the LLM proxy
+        refuses, and no WebFetch, which the firewall stops."""
+        from openscientist.settings import get_settings
+
         job_dir = self._config.job_dir
 
         spec = StdioMcpServerSpec(
@@ -257,6 +261,7 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
         return ClaudeAgentOptions(
             system_prompt=self._config.system_prompt,
             tools=["Read", "Grep", "Glob"] if self._config.chat else None,
+            disallowed_tools=["WebSearch", "WebFetch"] if get_settings().airgap.enabled else [],
             setting_sources=[] if self._config.chat else None,
             skills=[] if self._config.chat else None,
             env={"CLAUDE_CODE_DISABLE_ATTACHMENTS": "1"} if self._config.chat else {},
