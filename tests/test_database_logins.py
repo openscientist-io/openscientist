@@ -205,6 +205,32 @@ async def test_tables_the_owner_creates_reach_the_app_and_admin_roles(
 
 
 @pytest.mark.asyncio
+async def test_a_rerun_bootstrap_keeps_truncate_from_the_app_role(
+    bootstrap: Bootstrap, test_database_url: str, test_engine: AsyncEngine
+) -> None:
+    """Row-level security does not apply to ``TRUNCATE``, so a table the owner
+    creates after the bootstrap runs again stays out of the app role's reach."""
+    exit_code, output = bootstrap(BOOTSTRAP_ENV)
+    assert exit_code == 0, output
+    owner_connection = await _connect(
+        login_url(test_database_url, "openscientist_owner", OWNER_PASSWORD)
+    )
+    try:
+        await owner_connection.execute("CREATE TABLE owner_made (id int)")
+    finally:
+        await owner_connection.close()
+    web_connection = await _connect(login_url(test_database_url, "openscientist_web", WEB_PASSWORD))
+    try:
+        await web_connection.execute("SET ROLE openscientist_app")
+        with pytest.raises(asyncpg.exceptions.InsufficientPrivilegeError):
+            await web_connection.execute("TRUNCATE owner_made")
+    finally:
+        await web_connection.close()
+        async with test_engine.begin() as engine_connection:
+            await engine_connection.execute(text("DROP TABLE owner_made"))
+
+
+@pytest.mark.asyncio
 async def test_the_web_login_reads_no_table_by_itself(
     test_database_url: str, _apply_migrations_once: None
 ) -> None:

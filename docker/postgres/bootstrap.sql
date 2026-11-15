@@ -104,10 +104,12 @@ BEGIN
 END
 $$;
 
--- Tables and sequences the owner creates reach the app and admin roles, as the
--- superuser's did.
+-- Tables and sequences the owner creates reach the app and admin roles. The app
+-- role gets no TRUNCATE, which row-level security does not cover.
 ALTER DEFAULT PRIVILEGES FOR ROLE openscientist_owner IN SCHEMA public
-    GRANT ALL PRIVILEGES ON TABLES TO openscientist_app, openscientist_admin;
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO openscientist_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE openscientist_owner IN SCHEMA public
+    GRANT ALL PRIVILEGES ON TABLES TO openscientist_admin;
 ALTER DEFAULT PRIVILEGES FOR ROLE openscientist_owner IN SCHEMA public
     GRANT ALL PRIVILEGES ON SEQUENCES TO openscientist_app, openscientist_admin;
 
