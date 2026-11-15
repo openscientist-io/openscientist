@@ -27,6 +27,7 @@ from openai_codex.models import Notification
 
 from openscientist.agent.base import AbstractAgent, AgentConfig, TurnOutcome
 from openscientist.agent.codex_agent import CodexAgent
+from openscientist.settings import get_settings
 from tests.helpers import StubCodexProvider
 
 
@@ -272,6 +273,24 @@ async def test_run_iteration_writes_config_and_agents_md(
     assert config_arg.env["CODEX_HOME"] == str(tmp_path / ".codex")
     assert config_arg.env["CODEX_API_KEY"] == "sk-secret"
     assert config_arg.cwd == str(tmp_path)
+
+
+@pytest.mark.parametrize(("airgapped", "web_search"), [("true", "disabled"), ("false", None)])
+async def test_air_gapped_runs_turn_off_codex_web_search(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, airgapped: str, web_search: str | None
+) -> None:
+    # Codex otherwise asks OpenAI to run its search tool, which the proxy
+    # refuses for an air-gapped run.
+    monkeypatch.setenv("OPENSCIENTIST_AIRGAPPED", airgapped)
+    get_settings.cache_clear()
+    agent = _agent(tmp_path)
+    mock_codex_cls, _ = _patch_codex(_turn(usage=None))
+
+    with patch("openscientist.agent.codex_agent.AsyncCodex", mock_codex_cls):
+        await agent.run_iteration("go")
+
+    cfg = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text())
+    assert cfg.get("web_search") == web_search
 
 
 async def test_the_run_home_env_names_the_launcher_mount(

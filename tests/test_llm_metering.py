@@ -143,7 +143,7 @@ def run_for() -> Iterator[Callable[[str, RunKind], RunCredentials]]:
     def issue(job_id: str, kind: RunKind) -> RunCredentials:
         role = f"agent_{uuid4().hex}"
         issued.append(role)
-        return issue_run_credentials(job_id, role, kind)
+        return issue_run_credentials(job_id, role, kind, airgapped=False)
 
     yield issue
     for role in issued:

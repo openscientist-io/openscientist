@@ -119,12 +119,18 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
 
     def _write_codex_config(self) -> None:
         """Write the per-job ``$CODEX_HOME/config.toml`` selecting the
-        provider and wiring the ``openscientist-tools`` MCP server."""
+        provider and wiring the ``openscientist-tools`` MCP server. An
+        air-gapped run turns off codex's web search, which asks OpenAI to
+        search and which the LLM proxy refuses."""
+        from openscientist.settings import get_settings
+
         home = self._codex_home()
         home.mkdir(parents=True, exist_ok=True)
 
         lines = [
             f"model_provider = {_toml_str(self._provider.codex_model_provider_id())}",
+            # Top-level keys precede the provider's tables.
+            *(['web_search = "disabled"'] if get_settings().airgap.enabled else []),
             *self._provider.codex_config_overrides(),
             "",
             f"[mcp_servers.{_MCP_SERVER_NAME}]",

@@ -124,6 +124,7 @@ def _launch_env(
         credentials = RunCredentials(
             job_id=JOB_ID,
             kind="chat" if run_mode == "chat" else "discovery",
+            airgapped=False,
             llm_placeholder=f"{JOB_ID}.placeholder",
             exec_token=f"{JOB_ID}.exec",
         )

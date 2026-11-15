@@ -116,7 +116,7 @@ async def placeholder_for(test_engine):
                 job_id = str(job.id)
             role = f"agent_{uuid4().hex}"
             roles.append(role)
-            return issue_run_credentials(job_id, role, "discovery").llm_placeholder
+            return issue_run_credentials(job_id, role, "discovery", airgapped=False).llm_placeholder
 
         yield issue
         for role in roles:
@@ -819,7 +819,9 @@ class TestProxyForwarding:
 
     def test_refuses_a_run_that_has_ended_without_forwarding(self):
         role = f"agent_{uuid4().hex}"
-        placeholder = issue_run_credentials("job-1", role, "discovery").llm_placeholder
+        placeholder = issue_run_credentials(
+            "job-1", role, "discovery", airgapped=False
+        ).llm_placeholder
         revoke_run_credentials(role)
         recorded: list[dict] = []
         app = create_llm_proxy_app(
