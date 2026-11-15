@@ -133,7 +133,8 @@ async def test_reviewer_cannot_create_key_from_open_page(
         user_id = login.user_id
     client, _ = await served_page(key_holders["user_token"], api_keys_page, _key_ids)
     if cutoff == "revoked":
-        await revoke_review_token(token.id)
+        async with AsyncSession(test_engine) as db:
+            await revoke_review_token(db, token.id)
     else:
         async with AsyncSession(test_engine) as db:
             stored_token = await db.get(ReviewToken, token.id)

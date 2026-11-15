@@ -45,6 +45,7 @@ from openscientist.job_container.secrets import (
     derive_job_secret,
     issue_run_credentials,
     proxy_accepts,
+    proxy_run,
     revoke_run_credentials,
 )
 from openscientist.providers.base import AirgapEgress, AirgapPosture
@@ -440,8 +441,8 @@ class TestTeardownWhenTheLauncherFails:
     def held_runs(self):
         """A discovery and a chat run of job-123, both still accepted."""
         roles = {"discovery": "agent_" + "1" * 32, "chat": "agent_" + "2" * 32}
-        issue_run_credentials("job-123", roles["discovery"], "discovery")
-        issue_run_credentials("job-123", roles["chat"], "chat")
+        issue_run_credentials("job-123", roles["discovery"], "discovery", airgapped=False)
+        issue_run_credentials("job-123", roles["chat"], "chat", airgapped=False)
         try:
             yield roles
         finally:
@@ -917,6 +918,16 @@ class TestFirewallLaunch:
             "openscientist:8081",
             "openscientist:8082",
         }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("airgapped", [True, False])
+    async def test_the_proxy_learns_the_posture_the_firewall_was_built_with(
+        self, test_engine: AsyncEngine, airgapped: bool
+    ) -> None:
+        await self._launch(test_engine, airgapped=airgapped)
+        run = proxy_run(_FakeProvider.last_placeholder)
+        assert run is not None
+        assert run.airgapped is airgapped
 
 
 class TestChatTurnLaunch:

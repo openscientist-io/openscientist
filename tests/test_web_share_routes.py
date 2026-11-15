@@ -11,7 +11,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from openscientist.database.models import Job, Session, User
+from openscientist.database.models import Job, JobShare, Session, User
 from openscientist.webapp_components.share_routes import router
 
 
@@ -88,13 +88,15 @@ def _app() -> FastAPI:
 async def test_web_share_create_uses_admin_lookup_for_target_user(
     share_target: User,
     signed_in_owner: tuple[User, str, Job],
+    test_engine: AsyncEngine,
 ) -> None:
     """
     Creating a web share should resolve target users via admin lookup.
 
     Under RLS, a regular app session cannot query arbitrary users by email.
     """
-    _, token, job = signed_in_owner
+    owner, token, job = signed_in_owner
+    await _set_owner_approved(test_engine, owner)
 
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://test") as client:
         response = await client.post(
@@ -120,7 +122,8 @@ async def test_web_share_create_rejects_inactive_target_user(
     test_engine: AsyncEngine,
 ) -> None:
     """Web share creation should reject inactive target users."""
-    _, token, job = signed_in_owner
+    owner, token, job = signed_in_owner
+    await _set_owner_approved(test_engine, owner)
     await _set_target_active(test_engine, share_target, False)
 
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://test") as client:
@@ -141,10 +144,12 @@ async def test_web_share_create_rejects_inactive_target_user(
 async def test_web_share_listing_shows_the_share_the_owner_just_created(
     share_target: User,
     signed_in_owner: tuple[User, str, Job],
+    test_engine: AsyncEngine,
 ) -> None:
     """The owner's listing shows their shares, with the shared-with users
     resolved the way the admin lookup does, not from the owner's own RLS rows."""
-    _, token, job = signed_in_owner
+    owner, token, job = signed_in_owner
+    await _set_owner_approved(test_engine, owner)
 
     async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://test") as client:
         headers = {"cookie": f"session_token={token}"}
@@ -164,6 +169,33 @@ async def test_web_share_listing_shows_the_share_the_owner_just_created(
     assert [entry["shared_with_email"] for entry in entries] == [share_target.email]
     assert entries[0]["shared_with_name"] == share_target.name
     assert entries[0]["permission_level"] == "edit"
+
+
+@pytest.mark.asyncio
+async def test_web_share_create_refuses_unapproved_caller_for_any_email(
+    share_target: User,
+    signed_in_owner: tuple[User, str, Job],
+    test_engine: AsyncEngine,
+) -> None:
+    """An unapproved owner gets the same 403 for a known and an unknown email,
+    so creating a share cannot tell which accounts exist."""
+    _, token, job = signed_in_owner
+
+    async with AsyncClient(transport=ASGITransport(app=_app()), base_url="http://test") as client:
+        responses = [
+            await client.post(
+                f"/web/shares/job/{job.id}",
+                json={"shared_with_email": email, "permission_level": "view"},
+                headers={"cookie": f"session_token={token}"},
+            )
+            for email in (share_target.email, "nobody@example.invalid")
+        ]
+
+    assert [response.status_code for response in responses] == [403, 403]
+    assert responses[0].json() == responses[1].json()
+    async with AsyncSession(test_engine) as db:
+        shares = (await db.execute(select(JobShare).where(JobShare.job_id == job.id))).all()
+    assert shares == []
 
 
 @pytest.mark.asyncio

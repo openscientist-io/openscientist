@@ -248,7 +248,8 @@ class JobContainerRunner:
                 run_home = create_run_home(job_dir_resolved.parent, login.role)
                 agent_class.provision_run_home(settings, run_home)
             # Ended with the login, when the container goes. The kind records
-            # the run's work so the proxy can attribute its forwarded calls.
+            # the run's work so the proxy can attribute its forwarded calls,
+            # and the posture is the one this run's firewall is built with.
             run_kind: RunKind = (
                 "chat"
                 if run_mode == "chat"
@@ -256,7 +257,9 @@ class JobContainerRunner:
                 if run_mode == "report_only"
                 else "discovery"
             )
-            credentials = issue_run_credentials(job_id, login.role, run_kind)
+            credentials = issue_run_credentials(
+                job_id, login.role, run_kind, airgapped=admin.airgapped
+            )
             handle, labels = self._run_container(
                 settings,
                 admin,

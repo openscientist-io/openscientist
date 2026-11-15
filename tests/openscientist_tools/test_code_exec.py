@@ -119,7 +119,7 @@ def _broker_env(job_id: UUID, broker_url: str) -> dict[str, str]:
     return {
         "OPENSCIENTIST_EXEC_BROKER_URL": broker_url,
         "OPENSCIENTIST_EXEC_TOKEN": issue_run_credentials(
-            str(job_id), role, "discovery"
+            str(job_id), role, "discovery", airgapped=False
         ).exec_token,
     }
 

@@ -362,7 +362,11 @@ async def _show_delete_dialog(
     job_manager: Any,
     on_deleted: Callable[[], Awaitable[None] | None],
 ) -> None:
-    """Open the delete confirmation dialog and refresh the table on success."""
+    """Open the delete confirmation dialog when the caller owns the job the
+    event names, and refresh the table on success. A missing job and another
+    user's job both open nothing, so the event reveals neither."""
+    if await owned_job_for_caller(job_id, get_current_user_id()) is None:
+        return
     dialog = render_delete_dialog(job_id, job_manager, on_deleted=on_deleted)
     await dialog.open()
 

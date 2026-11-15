@@ -122,7 +122,8 @@ async def run(
         "ADMIN_DATABASE_URL", login_url(test_database_url, "openscientist_admin", ADMIN_PASSWORD)
     )
     monkeypatch.setenv(
-        "OPENSCIENTIST_EXEC_TOKEN", issue_run_credentials(job_id, role, "discovery").exec_token
+        "OPENSCIENTIST_EXEC_TOKEN",
+        issue_run_credentials(job_id, role, "discovery", airgapped=False).exec_token,
     )
     monkeypatch.setenv("OPENSCIENTIST_MODEL", MODEL)
     clear_settings_cache()

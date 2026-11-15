@@ -859,8 +859,7 @@ async def test_demoted_admin_cannot_regenerate_report(
     test_engine: AsyncEngine, admin_actor, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _page_cookie(monkeypatch, admin_actor["session_id"])
-    mock_ui = MagicMock()
-    monkeypatch.setattr(report_module, "ui", mock_ui)
+    refusal = _refusal_ui(monkeypatch)
 
     async with _session(test_engine) as db:
         await _demote_admin(db, admin_actor["user_id"])
@@ -872,7 +871,7 @@ async def test_demoted_admin_cannot_regenerate_report(
     await report_module._regenerate_report(context)  # type: ignore[arg-type]
 
     context.job_manager.regenerate_report.assert_not_awaited()  # type: ignore[attr-defined]
-    mock_ui.notify.assert_called()
+    refusal.notify.assert_called()
 
 
 async def test_live_admin_can_regenerate_report(

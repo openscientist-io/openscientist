@@ -10,7 +10,7 @@ from contextlib import AbstractAsyncContextManager
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.api.utils import parse_uuid
@@ -18,6 +18,20 @@ from openscientist.database.models import Job, JobShare, User
 from openscientist.database.session import get_admin_session
 
 AdminSessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
+
+
+async def require_share_approval(session: AsyncSession, user_id: UUID) -> None:
+    """Refuse with 403 unless the caller may start jobs, the approval gate the
+    jobs INSERT policy enforces.
+
+    Share routes call it before resolving any email, so an unapproved account
+    learns nothing about which accounts exist.
+    """
+    if not await session.scalar(text("SELECT user_can_start_jobs(:id)"), {"id": user_id}):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is pending administrator approval. You cannot share jobs yet.",
+        )
 
 
 async def get_owned_job(
@@ -82,6 +96,7 @@ async def create_or_update_share(
     admin_session_factory: AdminSessionFactory = get_admin_session,
 ) -> tuple[JobShare, User]:
     """Create a job share, or update the permission if the share already exists."""
+    await require_share_approval(session, owner_id)
     job = await get_owned_job(
         session,
         owner_id,

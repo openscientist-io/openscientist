@@ -20,7 +20,7 @@ from openscientist.job_files import (
 from openscientist.webapp_components.components.agent_markdown import render_agent_markdown
 from openscientist.webapp_components.components.badges import transform_pmid_references
 from openscientist.webapp_components.pages.job_detail.common import _JobDetailContext
-from openscientist.webapp_components.utils.permissions import revalidate_admin_session
+from openscientist.webapp_components.utils.permissions import admin_access
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +52,7 @@ async def _regenerate_report(context: _JobDetailContext) -> None:
     # Server-side authorization: the caller's session and admin flag are
     # re-read from the database at action time, so an admin who was logged
     # out, demoted or deleted loses the action in an open tab.
-    if not await revalidate_admin_session():
-        logger.warning("Non-admin attempt to regenerate report for job %s blocked", context.job_id)
-        ui.notify("You are not authorized to regenerate reports.", type="negative")
+    if await admin_access() is None:
         return
     try:
         await context.job_manager.regenerate_report(context.job_id)

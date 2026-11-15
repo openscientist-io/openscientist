@@ -8,21 +8,24 @@ from sqlalchemy import func, select
 from openscientist.admin_settings import current_admin_settings
 from openscientist.budget import check_budget, project_spend, warning_limit_reached
 from openscientist.database.models import CostRecord, User
-from openscientist.database.session import get_admin_session
 from openscientist.providers import get_provider
 from openscientist.webapp_components.components.common import (
     render_empty_state,
     render_stat_badges,
 )
+from openscientist.webapp_components.utils.permissions import AdminAccess, admin_access
 
 logger = logging.getLogger(__name__)
 
 
 async def render_billing_panel() -> None:
     """Render the billing panel (for use as an admin subtab)."""
+    access = await admin_access()
+    if access is None:
+        return
     with ui.column().classes("w-full gap-6"):
-        await _render_db_cost_section()
-        await _render_user_cost_section()
+        await _render_db_cost_section(access)
+        await _render_user_cost_section(access)
         await _render_project_budget_section()
 
 
@@ -37,9 +40,9 @@ def _iteration_label(record: CostRecord) -> str:
     return record.operation_type if record.operation_type in ("report", "chat") else ""
 
 
-async def _render_db_cost_section() -> None:
+async def _render_db_cost_section(access: AdminAccess) -> None:
     """Query CostRecord and display per-job cost breakdown."""
-    async with get_admin_session() as session:
+    async with access.session() as session:
         records = await session.execute(select(CostRecord).order_by(CostRecord.created_at.desc()))
         cost_records = records.scalars().all()
 
@@ -119,9 +122,9 @@ async def _render_db_cost_section() -> None:
     ui.table(columns=columns, rows=rows, row_key="id").props("dense").classes("w-full")
 
 
-async def _render_user_cost_section() -> None:
+async def _render_user_cost_section(access: AdminAccess) -> None:
     """Show each user's lifetime expenditure, including deleted jobs."""
-    async with get_admin_session() as session:
+    async with access.session() as session:
         total = func.sum(CostRecord.cost_usd)
         result = await session.execute(
             select(CostRecord.user_id, User.name, User.email, total)

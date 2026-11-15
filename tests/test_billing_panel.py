@@ -12,7 +12,7 @@ import contextlib
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 from nicegui import ui
@@ -22,6 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from openscientist.database.models import CostRecord
 from openscientist.providers.base import CostInfo
 from openscientist.webapp_components.pages import billing
+from openscientist.webapp_components.utils import permissions
+from openscientist.webapp_components.utils.permissions import AdminAccess
 
 _PRICED_BUCKETS = (
     "input_tokens",
@@ -88,11 +90,11 @@ async def _render(
     badges: list[tuple[str, str | int, str]] = []
     table = MagicMock()
     with (
-        patch.object(billing, "get_admin_session", lambda: _admin_session(records)),
+        patch.object(permissions, "get_admin_session", lambda: _admin_session(records)),
         patch.object(billing, "render_stat_badges", lambda stats: badges.extend(stats)),
         patch.object(ui, "table", table),
     ):
-        await billing._render_db_cost_section()
+        await billing._render_db_cost_section(AdminAccess())
     return badges, table
 
 
@@ -263,6 +265,7 @@ async def _render_panel_labels(
 
     mock_ui = _panel_ui_mock()
     with (
+        patch.object(permissions, "revalidate_admin_session", AsyncMock(return_value=True)),
         patch.object(billing, "render_stat_badges", MagicMock()),
         patch.object(billing, "render_empty_state", MagicMock()),
         patch.object(billing, "get_provider", return_value=provider),

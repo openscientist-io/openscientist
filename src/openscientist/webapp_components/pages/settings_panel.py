@@ -16,7 +16,6 @@ from sqlalchemy.exc import IntegrityError
 from openscientist.admin_settings import AdminSettingsValues, current_admin_settings
 from openscientist.auth import get_current_user_id, is_current_user_admin
 from openscientist.database.models import AdminSettingChange, AdminSettings, User
-from openscientist.database.session import get_admin_session
 from openscientist.settings import (
     AirgapSettings,
     AuthSettings,
@@ -28,10 +27,7 @@ from openscientist.settings import (
 )
 from openscientist.webapp_components.components.banners import render_alert_banner
 from openscientist.webapp_components.components.common import render_empty_state
-from openscientist.webapp_components.utils.permissions import (
-    refuse_stale_admin_session,
-    revalidate_admin_session,
-)
+from openscientist.webapp_components.utils.permissions import AdminAccess, admin_access
 
 logger = logging.getLogger(__name__)
 
@@ -202,13 +198,13 @@ def _rejected_setting(exc: IntegrityError) -> str:
 
 async def _save_settings(values: dict[str, object]) -> tuple[bool, str]:
     """Save the settings once the caller's admin session survives a re-check."""
-    if not await revalidate_admin_session():
-        refuse_stale_admin_session()
+    access = await admin_access()
+    if access is None:
         return False, "Your admin session is no longer valid. Please refresh the page."
-    return await save_admin_settings(values)
+    return await save_admin_settings(access, values)
 
 
-async def save_admin_settings(values: dict[str, object]) -> tuple[bool, str]:
+async def save_admin_settings(access: AdminAccess, values: dict[str, object]) -> tuple[bool, str]:
     """Write the row and one history row per changed value, in one transaction."""
     if not is_current_user_admin():
         logger.warning("Non-admin attempt to save admin settings blocked")
@@ -219,7 +215,7 @@ async def save_admin_settings(values: dict[str, object]) -> tuple[bool, str]:
         return False, "Air-gap is forced on by the environment and cannot be turned off."
 
     changed_by = _current_user_uuid()
-    async with get_admin_session() as session:
+    async with access.session() as session:
         row = (
             await session.execute(select(AdminSettings).where(AdminSettings.id.is_(True)))
         ).scalar_one_or_none()
@@ -299,6 +295,9 @@ async def render_settings_panel() -> None:
 
 
 async def _render_settings(container: ui.column) -> None:
+    access = await admin_access()
+    if access is None:
+        return
     with container:
         try:
             current = await current_admin_settings()
@@ -357,14 +356,14 @@ async def _render_settings(container: ui.column) -> None:
                 ui.button("Save", icon="save", on_click=save).props("color=primary")
 
         history = ui.column().classes("w-full")
-        await _load_history(history)
+        await _load_history(access, history)
 
 
-async def _load_history(container: ui.column) -> None:
+async def _load_history(access: AdminAccess, container: ui.column) -> None:
     with container:
         ui.label("Change history").classes("text-lg font-bold")
         try:
-            async with get_admin_session() as session:
+            async with access.session() as session:
                 stmt = (
                     select(AdminSettingChange, User)
                     .outerjoin(User, User.id == AdminSettingChange.changed_by)

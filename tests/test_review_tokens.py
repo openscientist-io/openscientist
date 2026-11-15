@@ -487,11 +487,7 @@ async def test_revoke_a_redeemed_token_ends_the_reviewer_session(
     assert reviewer_id is not None
     assert await _reviewer_sessions(db_session, reviewer_id) != []
 
-    with patch(
-        "openscientist.webapp_components.pages.admin.get_admin_session",
-        _mock_admin_session(db_session),
-    ):
-        success, _ = await revoke_review_token(token.id)
+    success, _ = await revoke_review_token(db_session, token.id)
     assert success is True
 
     await db_session.refresh(token)
@@ -541,11 +537,7 @@ async def test_deleting_the_reviewer_refuses_the_next_use(
     reviewer_id = token.redeemed_by_id
     assert reviewer_id is not None
 
-    with patch(
-        "openscientist.webapp_components.pages.admin.get_admin_session",
-        _mock_admin_session(db_session),
-    ):
-        success, _ = await delete_user(reviewer_id)
+    success, _ = await delete_user(db_session, reviewer_id)
     assert success is True
 
     with patch(
@@ -586,7 +578,6 @@ async def test_review_cutoff_refuses_existing_credentials(
         patch("openscientist.auth.fastapi_routes.get_admin_session", session_context),
         patch("openscientist.auth.middleware.get_admin_session", session_context),
         patch("openscientist.api.auth.get_admin_session", session_context),
-        patch("openscientist.webapp_components.pages.admin.get_admin_session", session_context),
     ):
         async with AsyncClient(
             transport=ASGITransport(app=_make_app()), base_url="http://test"
@@ -602,13 +593,13 @@ async def test_review_cutoff_refuses_existing_credentials(
         assert (await get_current_user_from_api_key(credentials)).id == token.redeemed_by_id
         assert await validate_session(cookie) is not None
         if cutoff == "revoked":
-            assert (await revoke_review_token(token.id))[0]
+            assert (await revoke_review_token(db_session, token.id))[0]
         elif cutoff == "creator_deleted":
             await db_session.execute(
                 delete(Administrator).where(Administrator.user_id == test_admin_user.id)
             )
             await db_session.commit()
-            assert (await delete_user(test_admin_user.id))[0]
+            assert (await delete_user(db_session, test_admin_user.id))[0]
         else:
             token.expires_at = datetime.now(UTC) - timedelta(seconds=1)
             await db_session.commit()

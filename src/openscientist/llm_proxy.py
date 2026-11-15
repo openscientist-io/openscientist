@@ -31,6 +31,7 @@ from openscientist.agent.base import TokenUsage
 from openscientist.budget import check_budget, unpriced_model_violation
 from openscientist.job_container.secrets import RunKind, proxy_run
 from openscientist.listener import bind_listener
+from openscientist.llm_airgap import airgap_refusal, http_airgap_refusal
 from openscientist.llm_metering import (
     _model_from_body,
     _model_from_path,
@@ -419,6 +420,21 @@ def create_llm_proxy_app(
                     exc.detail,
                 )
                 return Response(str(exc.detail), status_code=exc.status_code)
+            if run.airgapped:
+                refusal = http_airgap_refusal(
+                    provider(),
+                    request.method,
+                    request.headers.get("content-encoding", ""),
+                    body,
+                )
+                if refusal is not None:
+                    logger.warning(
+                        "LLM proxy refused air-gapped run %s at %s: %s",
+                        run.job_id,
+                        request.url.path,
+                        refusal,
+                    )
+                    return Response(refusal, status_code=403)
             model: str | None = None
             if request.method == "POST" and not request.url.path.endswith(
                 ("/count_tokens", "/count-tokens:rawPredict")
@@ -670,17 +686,34 @@ class _ResponsesWebsocketTerminator:
         active: dict[str, _ReservedCall] = {}
         tasks: list[asyncio.Task[None]] = []
         decoder = _ResponsesDecoder("unknown")
+        # The responses this connection received, the only ones an air-gapped
+        # run may continue from.
+        received_ids: set[str] = set()
         try:
             await send({"type": "websocket.accept"})
             tasks = [
                 asyncio.create_task(
                     self._container_to_upstream(
-                        connection, receive, send, run.job_id, run.kind, default_model, active
+                        connection,
+                        receive,
+                        send,
+                        run.job_id,
+                        run.kind,
+                        default_model,
+                        active,
+                        airgapped=run.airgapped,
+                        received_ids=received_ids,
                     )
                 ),
                 asyncio.create_task(
                     self._upstream_to_container(
-                        connection, send, decoder, run.job_id, run.kind, active
+                        connection,
+                        send,
+                        decoder,
+                        run.job_id,
+                        run.kind,
+                        active,
+                        received_ids=received_ids,
                     )
                 ),
             ]
@@ -715,6 +748,9 @@ class _ResponsesWebsocketTerminator:
         kind: RunKind,
         default_model: str,
         active: dict[str, _ReservedCall],
+        *,
+        airgapped: bool,
+        received_ids: set[str],
     ) -> None:
         while True:
             message = await receive()
@@ -745,7 +781,16 @@ class _ResponsesWebsocketTerminator:
                         }
                     )
                 return
-            refusal = await self._call_refusal(payload, job_id, kind, default_model, active)
+            reason = (
+                airgap_refusal(self._provider_id(), payload, previous_response_ids=received_ids)
+                if airgapped
+                else None
+            )
+            refusal = (
+                (403, reason)
+                if reason is not None
+                else await self._call_refusal(payload, job_id, kind, default_model, active)
+            )
             if refusal is not None:
                 status, detail = refusal
                 logger.warning("LLM proxy refused run %s with %s", job_id, detail)
@@ -834,6 +879,8 @@ class _ResponsesWebsocketTerminator:
         job_id: str,
         kind: RunKind,
         active: dict[str, _ReservedCall],
+        *,
+        received_ids: set[str],
     ) -> None:
         while True:
             try:
@@ -859,6 +906,11 @@ class _ResponsesWebsocketTerminator:
                 frame = json.loads(data)
             except (ValueError, UnicodeDecodeError):
                 frame = None
+            response = frame.get("response") if isinstance(frame, dict) else None
+            if isinstance(response, dict) and isinstance(response.get("id"), str):
+                # Recorded before the container sees the frame, so its reply
+                # may continue from this response.
+                received_ids.add(response["id"])
             terminal = isinstance(frame, dict) and frame.get("type") in {
                 "response.completed",
                 "response.failed",

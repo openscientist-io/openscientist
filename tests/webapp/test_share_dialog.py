@@ -201,8 +201,9 @@ async def test_the_dialog_shows_no_shares_when_a_non_owner_opens_it(
 
 
 @pytest.mark.asyncio
-async def test_the_job_page_builds_no_share_dialog_for_a_non_owner() -> None:
-    """A non-owner's job page has no share dialog, so forged events find no target."""
+async def test_the_job_page_builds_no_share_or_delete_dialog_for_a_non_owner() -> None:
+    """A non-owner's job page has no share or delete dialog, so forged events
+    find no target."""
     with _content_slot():
         share_dialog, delete_dialog, notifications_dialog = _create_page_dialogs(
             job_id=str(uuid4()),
@@ -211,18 +212,19 @@ async def test_the_job_page_builds_no_share_dialog_for_a_non_owner() -> None:
             is_owner=False,
         )
     assert share_dialog is None
-    assert delete_dialog is not None
+    assert delete_dialog is None
     assert notifications_dialog is not None
 
 
 @pytest.mark.asyncio
-async def test_the_job_page_builds_the_share_dialog_for_the_owner() -> None:
-    """The owner's job page keeps its share dialog."""
+async def test_the_job_page_builds_the_share_and_delete_dialogs_for_the_owner() -> None:
+    """The owner's job page keeps its share and delete dialogs."""
     with _content_slot():
-        share_dialog, _, _ = _create_page_dialogs(
+        share_dialog, delete_dialog, _ = _create_page_dialogs(
             job_id=str(uuid4()),
             job_manager=None,
             user_id=str(uuid4()),
             is_owner=True,
         )
     assert share_dialog is not None
+    assert delete_dialog is not None
