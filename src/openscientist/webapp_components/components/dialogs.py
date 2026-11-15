@@ -8,13 +8,16 @@ from uuid import UUID
 from nicegui import ui
 from sqlalchemy import select
 
-from openscientist.auth import can_current_user_start_jobs, get_current_user_id
+from openscientist.auth import get_current_user_id
 from openscientist.database.models import Job, JobShare, User
 from openscientist.database.session import get_admin_session
 from openscientist.share_service import find_share_target_by_email
 from openscientist.webapp_components.components.badges import render_job_id_badge
 from openscientist.webapp_components.components.common import render_dialog_actions
-from openscientist.webapp_components.utils.permissions import current_job_access
+from openscientist.webapp_components.utils.permissions import (
+    current_job_access,
+    revalidate_session,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -287,13 +290,29 @@ class _ShareDialogController:
             logger.error("Failed to revoke share: %s", exc, exc_info=True)
             ui.notify("Error revoking share", type="negative")
 
+    async def _caller_may_share(self) -> bool:
+        """Whether the caller is still signed in as the page's user and still
+        approved, re-read from the database, notifying the refusal otherwise.
+
+        The dialog asks before resolving any email, so an account that lost
+        its approval while the page stayed open learns nothing about which
+        accounts exist.
+        """
+        caller = await revalidate_session()
+        if caller is None or caller["user_id"] != get_current_user_id():
+            ui.notify("You must be signed in to share jobs", type="negative")
+            return False
+        if not caller["can_start_jobs"]:
+            ui.notify("Your account is pending administrator approval", type="negative")
+            return False
+        return True
+
     async def add_user(self) -> None:
         """Look up the typed email exactly and reveal the share controls for a match."""
-        if not can_current_user_start_jobs():
-            ui.notify("Your account is pending administrator approval", type="negative")
-            return
         email = (self.email_input.value or "").strip()
         try:
+            if not await self._caller_may_share():
+                return
             target = await find_share_target_by_email(
                 email,
                 admin_session_factory=get_admin_session,
@@ -314,6 +333,8 @@ class _ShareDialogController:
             ui.notify("Select a user first", type="warning")
             return
         try:
+            if not await self._caller_may_share():
+                return
             current_user_id = get_current_user_id()
             if not current_user_id:
                 ui.notify("You must be signed in to share jobs", type="negative")

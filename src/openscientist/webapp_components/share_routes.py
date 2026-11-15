@@ -6,7 +6,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.auth.middleware import validate_session
@@ -17,6 +17,7 @@ from openscientist.share_service import (
     create_or_update_share,
     find_share_target_by_email,
     list_shares_for_owned_job,
+    require_share_approval,
     revoke_share_for_owned_job,
 )
 
@@ -175,12 +176,7 @@ async def lookup_share_target(
     uses the email or the email is malformed."""
     await set_current_user(session, user.id)
 
-    # Same approval gate the jobs INSERT policy enforces.
-    if not await session.scalar(text("SELECT user_can_start_jobs(:id)"), {"id": user.id}):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Your account is pending administrator approval. You cannot look up share targets yet.",
-        )
+    await require_share_approval(session, user.id)
 
     target = await find_share_target_by_email(
         email,
