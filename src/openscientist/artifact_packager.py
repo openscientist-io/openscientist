@@ -27,11 +27,13 @@ PERSISTED_REPORT_FILES = frozenset(
 PROVENANCE_FILE = "provenance.json"
 
 # A reader who has the job only because it is public never receives the owner's
-# uploads, their viewing copies, saved reports that may inline them, or the
-# agent's raw tool output, which carries uploaded files verbatim.
+# uploads, their viewing copies, saved reports that may inline them, the
+# agent's raw tool output, which carries uploaded files verbatim, or the agent
+# container's log and final error.
 PUBLIC_WITHHELD_DIRS = frozenset({"data", "previews"})
 ITERATION_LOG_FILE = "claude_iterations.log"
 AGENT_CONTAINER_LOG_FILE = "agent-container.log"
+AGENT_ERROR_FILE = "agent-error.txt"
 TRANSCRIPT_SUFFIX = "_transcript.json"
 
 # Agent working directories are never artifacts, and they hold credentials: the
@@ -105,6 +107,7 @@ def _withheld_from_public(parts: tuple[str, ...]) -> bool:
         return parts[0] in PERSISTED_REPORT_FILES or parts[0] in (
             ITERATION_LOG_FILE,
             AGENT_CONTAINER_LOG_FILE,
+            AGENT_ERROR_FILE,
         )
     return len(parts) == 2 and parts[0] == "provenance" and parts[1].endswith(TRANSCRIPT_SUFFIX)
 
