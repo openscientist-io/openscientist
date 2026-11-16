@@ -19,6 +19,14 @@ WEB_SERVICE = "openscientist"
 BUILD_PLATFORM = "linux/amd64"
 HEALTH_TIMEOUT = 300.0
 
+#: Each image's .env key and its tag when unset. Tags are host-wide, so a second checkout sets its own.
+IMAGE_TAGS = {
+    "OPENSCIENTIST_BASE_IMAGE": "openscientist-base:latest",
+    "OPENSCIENTIST_EXECUTOR_IMAGE": "openscientist-executor:latest",
+    "OPENSCIENTIST_AGENT_IMAGE": "openscientist-agent:latest",
+    "OPENSCIENTIST_LAUNCHER_IMAGE": "openscientist-launcher:latest",
+}
+
 console = Console()
 
 #: Runs a command in the checkout with exactly the environment it gets,
@@ -50,8 +58,8 @@ def record_image_digests(root: Path, image_id: Callable[[str], str] | None = Non
     """
     image_id = image_id or _image_id
     values = envfiles.file_values(root, "env")
-    agent_image = values.get("OPENSCIENTIST_AGENT_IMAGE") or "openscientist-agent:latest"
-    executor_image = values.get("OPENSCIENTIST_EXECUTOR_IMAGE") or "openscientist-executor:latest"
+    agent_image = image_tag(values, "OPENSCIENTIST_AGENT_IMAGE")
+    executor_image = image_tag(values, "OPENSCIENTIST_EXECUTOR_IMAGE")
     for tag, key in (
         (agent_image, "AGENT_IMAGE_DIGESTS"),
         (executor_image, "EXECUTOR_IMAGE_DIGESTS"),
@@ -65,19 +73,22 @@ def record_image_digests(root: Path, image_id: Callable[[str], str] | None = Non
 
 
 def build_images(run: CommandRunner, root: Path) -> int:
-    """The four image builds, the tags from .env with their :latest fallbacks and the
-    default platform on every build; 0 on success."""
+    """The four image builds, the tags from .env with their :latest fallbacks, every
+    image after the base built FROM that base, and the default platform on every
+    build; 0 on success. Compose tags the launcher with OPENSCIENTIST_LAUNCHER_IMAGE."""
     values = envfiles.file_values(root, "env")
-    base_image = _base_image(values)
-    executor_image = values.get("OPENSCIENTIST_EXECUTOR_IMAGE") or "openscientist-executor:latest"
-    agent_image = values.get("OPENSCIENTIST_AGENT_IMAGE") or "openscientist-agent:latest"
+    base_image = image_tag(values, "OPENSCIENTIST_BASE_IMAGE")
+    executor_image = image_tag(values, "OPENSCIENTIST_EXECUTOR_IMAGE")
+    agent_image = image_tag(values, "OPENSCIENTIST_AGENT_IMAGE")
     build_env = envfiles.docker_env(root, {"DOCKER_DEFAULT_PLATFORM": BUILD_PLATFORM})
     code = run(("docker", "build", "-f", "Dockerfile.base", "-t", base_image, "."), build_env)
     if code:
         return _failed("the base image", code)
-    # One commit and build time for every image, so the images report the same
-    # build as the web and the launcher.
+    # The base just built, and one commit and build time for every image, so the
+    # images report the same build as the web and the launcher.
     build_args = (
+        "--build-arg",
+        f"BASE_IMAGE={base_image}",
         "--build-arg",
         f"OPENSCIENTIST_COMMIT={_commit()}",
         "--build-arg",
@@ -116,8 +127,9 @@ def build_images(run: CommandRunner, root: Path) -> int:
     return 0
 
 
-def _base_image(values: Mapping[str, str]) -> str:
-    return values.get("OPENSCIENTIST_BASE_IMAGE") or "openscientist-base:latest"
+def image_tag(values: Mapping[str, str], key: str) -> str:
+    """The tag .env gives the image under ``key``, or its default."""
+    return values.get(key) or IMAGE_TAGS[key]
 
 
 #: The jobs group every image shares (gid 1001), and the setgid mode of the tree it owns.
@@ -161,7 +173,9 @@ def start(
     code = build_images(run, root)
     if code:
         return code
-    code = prepare_jobs_dir(root, run, _base_image(envfiles.file_values(root, "env")))
+    code = prepare_jobs_dir(
+        root, run, image_tag(envfiles.file_values(root, "env"), "OPENSCIENTIST_BASE_IMAGE")
+    )
     if code:
         console.print(f"[red]Preparing the jobs directory failed (exit {code}).[/red]")
         return code

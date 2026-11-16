@@ -11,7 +11,8 @@
 #   openscientist.job_id=<uuid>   set by JobContainerRunner at runtime
 #   openscientist.type=agent
 
-FROM openscientist-base:latest
+ARG BASE_IMAGE=openscientist-base:latest
+FROM ${BASE_IMAGE}
 
 # The firewall entrypoint sets nftables rules, then drops privileges
 # with setpriv from util-linux.

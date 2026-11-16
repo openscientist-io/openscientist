@@ -2,7 +2,8 @@
 #
 # Build:  docker build -f Dockerfile.launcher -t openscientist-launcher:latest .
 
-FROM openscientist-base:latest
+ARG BASE_IMAGE=openscientist-base:latest
+FROM ${BASE_IMAGE}
 
 ARG OPENSCIENTIST_COMMIT=unknown
 ARG BUILD_TIME=unknown

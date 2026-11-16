@@ -4,6 +4,7 @@ import http.server
 import re
 import threading
 from collections.abc import Mapping
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -39,7 +40,8 @@ def test_start_runs_the_four_builds_then_up_in_order(checkout: Path, monkeypatch
     assert calls[0][1]["DOCKER_DEFAULT_PLATFORM"] == "linux/amd64"
     assert argvs[3][:5] == ("docker", "compose", "-f", "docker-compose.yml", "build")
     assert calls[3][1]["DOCKER_DEFAULT_PLATFORM"] == "linux/amd64"
-    assert argvs[3].count("--build-arg") == 2
+    assert argvs[3].count("--build-arg") == 3
+    assert "BASE_IMAGE=openscientist-base:latest" in argvs[3]
     assert any(arg.startswith("OPENSCIENTIST_COMMIT=") for arg in argvs[3])
     assert any(arg.startswith("BUILD_TIME=") for arg in argvs[3])
     build_args = tuple(argvs[3][5:])
@@ -218,6 +220,38 @@ def test_image_tags_fall_back_to_latest_when_unset_or_empty(
     env = stack.envfiles.file_values(checkout, "env")
     assert env["AGENT_IMAGE_DIGESTS"] == "sha256:" + "d" * 64
     assert env["EXECUTOR_IMAGE_DIGESTS"] == "sha256:" + "d" * 64
+
+
+def test_prod_tags_reach_every_build_and_no_latest_tag_remains(
+    checkout: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A second checkout on the host builds its images FROM its own base, so a
+    staging build never replaces an image production runs."""
+    (checkout / ".env").write_text(
+        "OPENSCIENTIST_BASE_IMAGE=openscientist-base:prod\n"
+        "OPENSCIENTIST_LAUNCHER_IMAGE=openscientist-launcher:prod\n"
+        "OPENSCIENTIST_EXECUTOR_IMAGE=openscientist-executor:prod\n"
+        "OPENSCIENTIST_AGENT_IMAGE=openscientist-agent:prod\n",
+        encoding="utf-8",
+    )
+    argvs: list[tuple[str, ...]] = []
+
+    def run(argv: tuple[str, ...], env: Mapping[str, str]) -> int:
+        argvs.append(argv)
+        return 0
+
+    monkeypatch.setattr(stack, "_image_id", lambda image: "sha256:" + "c" * 64)
+    assert stack.build_images(run, checkout) == 0
+    base_build, *from_base = argvs
+    assert base_build[:5] == ("docker", "build", "-f", "Dockerfile.base", "-t")
+    assert [argv[:3] for argv in from_base] == [
+        ("docker", "build", "-f"),
+        ("docker", "build", "-f"),
+        ("docker", "compose", "-f"),
+    ]
+    for argv in from_base:
+        assert ("--build-arg", "BASE_IMAGE=openscientist-base:prod") in pairwise(argv), argv
+    assert not [arg for argv in argvs for arg in argv if ":latest" in arg]
 
 
 def test_start_stops_at_the_first_failing_build(checkout: Path, monkeypatch):
