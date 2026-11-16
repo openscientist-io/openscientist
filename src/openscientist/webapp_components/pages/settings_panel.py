@@ -295,10 +295,12 @@ async def render_settings_panel() -> None:
 
 
 async def _render_settings(container: ui.column) -> None:
-    access = await admin_access()
-    if access is None:
-        return
+    # Inside the container, because after a save the event's own slot, the Save
+    # button, is already cleared and the session check reads the client from it.
     with container:
+        access = await admin_access()
+        if access is None:
+            return
         try:
             current = await current_admin_settings()
         except Exception as exc:
