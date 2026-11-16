@@ -135,15 +135,27 @@ def image_tag(values: Mapping[str, str], key: str) -> str:
 #: The jobs group every image shares (gid 1001), and the setgid mode of the tree it owns.
 JOBS_GROUP = 1001
 JOBS_DIR_MODE = "2770"
+#: Root shell for the jobs tree. Only entries outside the group or short of its
+#: rights are touched, so a re-run is quick, and links are regrouped, never followed.
+JOBS_TREE_SCRIPT = (
+    f"chgrp {JOBS_GROUP} /jobs && chmod {JOBS_DIR_MODE} /jobs && "
+    f"find /jobs -mindepth 1 \\( ! -group {JOBS_GROUP} -o -type d ! -perm -2070 "
+    "-o -type f ! -perm -060 \\) "
+    f"\\( -type l -exec chgrp -h {JOBS_GROUP} {{}} + "
+    f"-o -type d -exec chgrp {JOBS_GROUP} {{}} + -exec chmod g+rwxs {{}} + "
+    f"-o -exec chgrp {JOBS_GROUP} {{}} + -exec chmod g+rwX {{}} + \\) "
+    "-printf . > /tmp/changed && "
+    'echo "Gave $(wc -c < /tmp/changed) entries of the jobs tree to the jobs group."'
+)
 
 
 def prepare_jobs_dir(root: Path, run: CommandRunner, image: str) -> int:
     """Create ``<root>/jobs`` and give it to the jobs group as a setgid tree.
 
     Compose refuses the launcher's jobs mount for a missing directory, and the
-    non-root web creates job directories in it through the group. A root
-    one-shot in ``image`` sets the group, so this works for an operator outside
-    the jobs group and on a tree an older root web created."""
+    non-root web creates, writes and deletes job directories through the group.
+    A root one-shot in ``image`` sets the group, so this works for an operator
+    outside the jobs group and on a tree an older root web created."""
     jobs = root.resolve() / "jobs"
     jobs.mkdir(exist_ok=True)
     return run(
@@ -158,7 +170,7 @@ def prepare_jobs_dir(root: Path, run: CommandRunner, image: str) -> int:
             image,
             "sh",
             "-c",
-            f"chgrp {JOBS_GROUP} /jobs && chmod {JOBS_DIR_MODE} /jobs",
+            JOBS_TREE_SCRIPT,
         ),
         envfiles.docker_env(root),
     )
