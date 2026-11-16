@@ -32,8 +32,8 @@ def fake_live_check(monkeypatch):
 
 
 def ready_host():
-    """A host whose Docker is ready and whose stack already holds its ports,
-    so the host checks pass without a real Docker."""
+    """A host whose Docker is ready, whose stack already holds its ports and
+    which runs no other compose project, so the host checks pass without a real Docker."""
     import json
 
     from openscientist.cli.preflight import CommandResult, Host
@@ -49,6 +49,8 @@ def ready_host():
     def run(argv: tuple[str, ...], cwd: Path | None) -> CommandResult:
         if argv[:2] == ("docker", "info"):
             return CommandResult(0, json.dumps(info), "")
+        if argv[:2] == ("docker", "ps"):
+            return CommandResult(0, "", "")
         if "ps" in argv:
             return CommandResult(0, "3f2a1b\n", "")
         return CommandResult(0, "ok\n", "")

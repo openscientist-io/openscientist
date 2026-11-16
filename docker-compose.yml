@@ -95,6 +95,9 @@ services:
       dockerfile: Dockerfile.launcher
       args: *base-image-args
     image: ${OPENSCIENTIST_LAUNCHER_IMAGE:-openscientist-launcher:latest}
+    # Read by another checkout's preflight, which refuses to share this base.
+    labels:
+      openscientist.base_image: ${OPENSCIENTIST_BASE_IMAGE:-openscientist-base:latest}
     restart: ${OPENSCIENTIST_RESTART_POLICY:-unless-stopped}
     # The socket holder loads no env file and gets only the keys its code
     # reads, never the .env credentials or the owner password.

@@ -40,6 +40,7 @@ def _host(
     running: bool = False,
     git: bool = True,
     missing: tuple[str, ...] = (),
+    containers: tuple[dict[str, object], ...] = (),
     **overrides: object,
 ) -> Host:
     """A host whose docker answers as told. Everything else is the real host's."""
@@ -55,6 +56,10 @@ def _host(
             return CommandResult(1, "", "docker: unknown command: docker compose")
         if argv[:2] == ("docker", "compose") and "ps" in argv:
             return CommandResult(0, "3f2a1b\n" if running else "", "")
+        if argv[:2] == ("docker", "ps"):
+            return CommandResult(0, "".join(f"{c['Id']}\n" for c in containers), "")
+        if argv[:3] == ("docker", "container", "inspect"):
+            return CommandResult(0, json.dumps([c for c in containers if c["Id"] in argv]), "")
         if argv[0] == "git":
             return CommandResult(0, "abc1234\n", "") if git else CommandResult(128, "", "fatal")
         raise AssertionError(f"unexpected command {argv}")
@@ -278,6 +283,125 @@ def test_a_mounted_path_under_the_home_tilde_that_exists_passes(
     (checkout / "mounted").write_text("{}")
     envfiles.set_file_value(checkout, "env", key, "~/mounted")
     assert preflight.start_findings(checkout, _host()) == []
+
+
+# --- names another checkout's stack holds -------------------------------------
+
+
+def _container(
+    working_dir: str,
+    service: str,
+    image: str,
+    env: dict[str, str] | None = None,
+    labels: dict[str, str] | None = None,
+) -> dict[str, object]:
+    """A compose container as `docker container inspect` describes it."""
+    return {
+        "Id": f"{Path(working_dir).name}-{service}",
+        "Config": {
+            "Image": image,
+            "Env": [f"{key}={value}" for key, value in (env or {}).items()] + ["PATH=/usr/bin"],
+            "Labels": {
+                "com.docker.compose.project": Path(working_dir).name,
+                "com.docker.compose.project.working_dir": working_dir,
+                "com.docker.compose.service": service,
+                **(labels or {}),
+            },
+        },
+    }
+
+
+def _production(**launcher_env: str) -> tuple[dict[str, object], ...]:
+    """A second checkout's stack, every name at its :prod tag unless overridden."""
+    env = {
+        "AGENT_IMAGE": "openscientist-agent:prod",
+        "EXECUTOR_IMAGE": "openscientist-executor:prod",
+        "LAUNCHER_INSTANCE_ID": "prod0instance",
+        **launcher_env,
+    }
+    return (
+        _container("/srv/production", "postgres", "postgres:18"),
+        _container(
+            "/srv/production",
+            "launcher",
+            env.pop("LAUNCHER_IMAGE", "openscientist-launcher:prod"),
+            {key: value for key, value in env.items() if key != "BASE_IMAGE"},
+            {"openscientist.base_image": env.get("BASE_IMAGE", "openscientist-base:prod")},
+        ),
+    )
+
+
+def _staging(checkout: Path) -> None:
+    for key, value in {
+        "OPENSCIENTIST_BASE_IMAGE": "openscientist-base:staging",
+        "OPENSCIENTIST_AGENT_IMAGE": "openscientist-agent:staging",
+        "OPENSCIENTIST_EXECUTOR_IMAGE": "openscientist-executor:staging",
+        "OPENSCIENTIST_LAUNCHER_IMAGE": "openscientist-launcher:staging",
+        "LAUNCHER_INSTANCE_ID": "staging0instance",
+    }.items():
+        envfiles.set_file_value(checkout, "env", key, value)
+
+
+def test_a_second_project_with_names_of_its_own_passes(checkout: Path, free_ports: None) -> None:
+    _staging(checkout)
+    assert preflight.start_findings(checkout, _host(containers=_production())) == []
+
+
+@pytest.mark.parametrize(
+    ("key", "shared"),
+    [
+        ("OPENSCIENTIST_BASE_IMAGE", "openscientist-base:prod"),
+        ("OPENSCIENTIST_AGENT_IMAGE", "openscientist-agent:prod"),
+        ("OPENSCIENTIST_EXECUTOR_IMAGE", "openscientist-executor:prod"),
+        ("OPENSCIENTIST_LAUNCHER_IMAGE", "openscientist-launcher:prod"),
+        ("LAUNCHER_INSTANCE_ID", "prod0instance"),
+    ],
+)
+def test_a_name_a_second_project_uses_is_refused_with_its_variable(
+    checkout: Path, free_ports: None, key: str, shared: str
+) -> None:
+    _staging(checkout)
+    envfiles.set_file_value(checkout, "env", key, shared)
+    [message] = _blocking(preflight.start_findings(checkout, _host(containers=_production())))
+    assert "production in /srv/production" in message
+    assert shared in message
+    assert f"Set {key} in .env" in message
+
+
+def test_the_default_tags_clash_with_a_second_project_on_the_defaults(
+    checkout: Path, free_ports: None
+) -> None:
+    """Two checkouts left at their defaults build and run the same four images."""
+    envfiles.set_file_value(checkout, "env", "LAUNCHER_INSTANCE_ID", "staging0instance")
+    production = _production(
+        AGENT_IMAGE="openscientist-agent:latest",
+        EXECUTOR_IMAGE="openscientist-executor:latest",
+        LAUNCHER_IMAGE="openscientist-launcher:latest",
+        BASE_IMAGE="openscientist-base:latest",
+    )
+    blocking = _blocking(preflight.start_findings(checkout, _host(containers=production)))
+    assert sorted(message.split("Set ")[1].split(" ")[0] for message in blocking) == [
+        "OPENSCIENTIST_AGENT_IMAGE",
+        "OPENSCIENTIST_BASE_IMAGE",
+        "OPENSCIENTIST_EXECUTOR_IMAGE",
+        "OPENSCIENTIST_LAUNCHER_IMAGE",
+    ]
+
+
+def test_the_checkouts_own_containers_are_no_clash(checkout: Path, free_ports: None) -> None:
+    envfiles.set_file_value(checkout, "env", "LAUNCHER_INSTANCE_ID", "prod0instance")
+    own = _container(
+        str(checkout),
+        "launcher",
+        "openscientist-launcher:latest",
+        {
+            "AGENT_IMAGE": "openscientist-agent:latest",
+            "EXECUTOR_IMAGE": "openscientist-executor:latest",
+            "LAUNCHER_INSTANCE_ID": "prod0instance",
+        },
+        {"openscientist.base_image": "openscientist-base:latest"},
+    )
+    assert preflight.start_findings(checkout, _host(containers=(own,))) == []
 
 
 # --- where the CLI runs them --------------------------------------------------

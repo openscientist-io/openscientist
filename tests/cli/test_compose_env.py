@@ -210,6 +210,7 @@ def test_compose_names_only_the_tags_the_env_file_sets(checkout: Path) -> None:
     assert result.returncode == 0, result.stderr[-2000:]
     services = json.loads(result.stdout)["services"]
     assert services["launcher"]["image"] == "openscientist-launcher:prod"
+    assert services["launcher"]["labels"]["openscientist.base_image"] == "openscientist-base:prod"
     assert services["openscientist-agent"]["image"] == "openscientist-agent:prod"
     assert {
         name: service["build"]["args"]["BASE_IMAGE"]
