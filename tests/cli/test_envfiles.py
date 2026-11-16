@@ -107,6 +107,26 @@ def test_set_value_replaces_uncommented_line_in_place():
     assert envfiles.set_value(lines, "A", "9") == ["A=9", "# A=2", "B=3"]
 
 
+def test_set_value_rewrites_the_active_line_below_a_commented_example():
+    """The example above stays a comment, so the new value is the one the file assigns."""
+    lines = ["# MODEL=example", "OTHER=1", "MODEL=old", "B=3"]
+    updated = envfiles.set_value(lines, "MODEL", "new")
+    assert updated == ["# MODEL=example", "OTHER=1", "MODEL=new", "B=3"]
+    assert envfiles.parse_values(updated)["MODEL"] == "new"
+
+
+def test_set_value_drops_later_active_duplicates_that_would_override_it():
+    lines = ["MODEL=first", "# MODEL=example", "MODEL=last"]
+    updated = envfiles.set_value(lines, "MODEL", "new")
+    assert updated == ["MODEL=new", "# MODEL=example"]
+    assert envfiles.parse_values(updated)["MODEL"] == "new"
+
+
+def test_set_value_uncomments_the_first_example_when_no_line_is_active():
+    lines = ["# MODEL=example # note", "# MODEL=other"]
+    assert envfiles.set_value(lines, "MODEL", "new") == ["MODEL=new # note", "# MODEL=other"]
+
+
 def test_set_value_appends_missing_key():
     assert envfiles.set_value(["A=1"], "C", "2") == ["A=1", "C=2"]
 

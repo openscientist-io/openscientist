@@ -63,18 +63,22 @@ HOST_PROJECT_DIR = "OPENSCIENTIST_HOST_PROJECT_DIR"
 
 
 def set_value(lines: list[str], key: str, value: str) -> list[str]:
-    """Replace ``key``'s line, un-commenting it, or append it when absent."""
-    replaced = False
-    updated: list[str] = []
-    for line in lines:
-        if not replaced and (_is_active(line, key) or _is_commented(line, key)):
-            updated.append(_rewritten_line(line, key, value))
-            replaced = True
-        else:
-            updated.append(line)
-    if not replaced:
-        updated.append(f"{key}={value}")
-    return updated
+    """Rewrite ``key``'s first active line and drop its later active duplicates,
+    which would override it. A key with no active line un-comments its first
+    commented example, and a key with neither is appended."""
+    active = [index for index, line in enumerate(lines) if _is_active(line, key)]
+    if active:
+        target, duplicates = active[0], set(active[1:])
+    else:
+        target = next((index for index, line in enumerate(lines) if _is_commented(line, key)), -1)
+        duplicates = set()
+    if target < 0:
+        return [*lines, f"{key}={value}"]
+    return [
+        _rewritten_line(line, key, value) if index == target else line
+        for index, line in enumerate(lines)
+        if index not in duplicates
+    ]
 
 
 def set_file_value(root: Path, file: str, key: str, value: str) -> None:
