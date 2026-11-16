@@ -677,8 +677,7 @@ class BudgetSettings(BaseSettings):
         default=float("inf"),
         alias="WARN_PROJECT_SPEND_24H_USD",
         description=(
-            "Project spend in USD over the last 24 hours at which the billing page shows a "
-            "warning."
+            "Project spend in USD over the last 24 hours at which the billing page shows a warning."
         ),
     )
 
