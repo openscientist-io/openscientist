@@ -8,6 +8,10 @@
 #
 #   Production:  docker compose up  (OPENSCIENTIST_DEV_MODE unset or false)
 
+# Image tags are host-wide, so a second checkout on the host sets its own in .env.
+x-base-image-args: &base-image-args
+  BASE_IMAGE: ${OPENSCIENTIST_BASE_IMAGE:-openscientist-base:latest}
+
 services:
   postgres:
     image: postgres:18@sha256:3a4264520e121176619f54ff867d12774bc81e95e7b84db58d63bccdb6144b81
@@ -64,7 +68,9 @@ services:
   #   docker compose run --rm migrate python -m openscientist.pubmed_mirror
   migrate:
     platform: ${OPENSCIENTIST_PLATFORM:-}
-    build: .
+    build:
+      context: .
+      args: *base-image-args
     # The one-shot migration stages the PubMed baseline into /app, which the web user cannot write.
     user: root
     restart: "no"
@@ -87,7 +93,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.launcher
-    image: openscientist-launcher:latest
+      args: *base-image-args
+    image: ${OPENSCIENTIST_LAUNCHER_IMAGE:-openscientist-launcher:latest}
+    # Read by another checkout's preflight, which refuses to share this base.
+    labels:
+      openscientist.base_image: ${OPENSCIENTIST_BASE_IMAGE:-openscientist-base:latest}
     restart: ${OPENSCIENTIST_RESTART_POLICY:-unless-stopped}
     # The socket holder loads no env file and gets only the keys its code
     # reads, never the .env credentials or the owner password.
@@ -138,7 +148,9 @@ services:
     stdin_open: true # docker run -i
     tty: true        # docker run -t
     platform: ${OPENSCIENTIST_PLATFORM:-}
-    build: .
+    build:
+      context: .
+      args: *base-image-args
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -242,7 +254,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.agent
-    image: openscientist-agent:latest
+      args: *base-image-args
+    image: ${OPENSCIENTIST_AGENT_IMAGE:-openscientist-agent:latest}
     profiles: ["build-only"]  # Excluded from `docker compose up`
     entrypoint: ["echo", "openscientist-agent image built"]
 

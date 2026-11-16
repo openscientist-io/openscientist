@@ -29,6 +29,16 @@ DIGEST_RE = re.compile(r"@sha256:[0-9a-f]{64}\Z")
 FROM_RE = re.compile(r"^\s*FROM\s+(?:--[^\s]+\s+)*(\S+)", re.MULTILINE)
 COPY_FROM_RE = re.compile(r"^\s*COPY\s+--from=(\S+)", re.MULTILINE)
 UV_RE = re.compile(r"\buv\s+(?:sync|run|export)\b")
+ARG_RE = re.compile(r"^\s*ARG\s+(\w+)=(\S+)", re.MULTILINE)
+VARIABLE_RE = re.compile(r"\$\{(\w+)(?::-([^}]*))?\}")
+
+
+def _defaulted(ref: str, defaults: dict[str, str]) -> str:
+    """The reference a build that overrides no variable uses."""
+    return VARIABLE_RE.sub(
+        lambda match: match.group(2) if match.group(2) is not None else defaults[match.group(1)],
+        ref,
+    )
 
 
 def _image_name(ref: str) -> str:
@@ -117,8 +127,10 @@ def test_workflow_service_images_are_pinned(path: Path) -> None:
 
 @pytest.mark.parametrize("path", DOCKERFILES, ids=lambda p: p.name)
 def test_dockerfile_from_lines_are_pinned(path: Path) -> None:
-    for ref in FROM_RE.findall(path.read_text()):
-        _assert_digest(ref, f"{path.name} FROM")
+    text = path.read_text()
+    defaults = dict(ARG_RE.findall(text))
+    for ref in FROM_RE.findall(text):
+        _assert_digest(_defaulted(ref, defaults), f"{path.name} FROM")
 
 
 @pytest.mark.parametrize("path", DOCKERFILES, ids=lambda p: p.name)
@@ -133,4 +145,4 @@ def test_compose_image_references_are_pinned() -> None:
     for name, service in compose.get("services", {}).items():
         image = service.get("image")
         if image:
-            _assert_digest(image, f"docker-compose.yml service {name}")
+            _assert_digest(_defaulted(image, {}), f"docker-compose.yml service {name}")

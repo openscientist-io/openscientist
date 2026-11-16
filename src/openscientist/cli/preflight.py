@@ -22,7 +22,7 @@ from rich.console import Console
 from rich.text import Text
 
 from openscientist.cli import envfiles
-from openscientist.cli.stack import COMPOSE_FILE
+from openscientist.cli.stack import COMPOSE_FILE, IMAGE_TAGS, image_tag
 from openscientist.docker_memory import parse_docker_memory_mib
 
 #: ``host.docker.internal:host-gateway`` in the compose file needs this engine.
@@ -35,6 +35,13 @@ STACK_MEMORY_MIB = 2048
 DOCKER_SOCKET = "/var/run/docker.sock"
 #: Host paths the compose file mounts, each a file or a directory.
 MOUNTED_PATHS = ("GCP_CREDENTIALS_FILE", "CODEX_AUTH_FILE", "OMP_AUTH_DIR", "PHENIX_HOST_PATH")
+#: The labels compose puts on every container it creates.
+PROJECT_LABEL = "com.docker.compose.project"
+WORKING_DIR_LABEL = "com.docker.compose.project.working_dir"
+#: The launcher service's label naming the base its stack's images start FROM.
+BASE_IMAGE_LABEL = "openscientist.base_image"
+#: The launcher environment keys holding names one stack must not share with another.
+LAUNCHER_NAME_KEYS = ("AGENT_IMAGE", "EXECUTOR_IMAGE", "LAUNCHER_INSTANCE_ID")
 
 _GIB = 1024**3
 
@@ -314,6 +321,57 @@ def _mounted_paths(values: dict[str, str]) -> list[Finding]:
     ]
 
 
+def _other_projects(root: Path, host: Host) -> list[tuple[str, str, set[str]]]:
+    """Project, checkout and used image tags and marker of each other checkout's compose container."""
+    listed = host.run(
+        ("docker", "ps", "--all", "--quiet", "--no-trunc", "--filter", f"label={PROJECT_LABEL}"),
+        root,
+    )
+    ids = tuple(listed.stdout.split()) if listed.code == 0 else ()
+    if not ids:
+        return []
+    # A container removed since the listing fails the command, and the rest still print.
+    inspected = host.run(("docker", "container", "inspect", *ids), root)
+    try:
+        containers = json.loads(inspected.stdout)
+    except json.JSONDecodeError:
+        return []
+    own = root.resolve()
+    others: list[tuple[str, str, set[str]]] = []
+    for container in containers if isinstance(containers, list) else []:
+        config = container.get("Config") or {}
+        labels = config.get("Labels") or {}
+        working_dir = labels.get(WORKING_DIR_LABEL) or ""
+        if not working_dir or Path(working_dir).resolve() == own:
+            continue
+        env = dict(entry.partition("=")[::2] for entry in config.get("Env") or [])
+        used = (
+            config.get("Image"),
+            labels.get(BASE_IMAGE_LABEL),
+            *map(env.get, LAUNCHER_NAME_KEYS),
+        )
+        names = {str(name) for name in used if name}
+        others.append((labels.get(PROJECT_LABEL) or "", working_dir, names))
+    return others
+
+
+def _shared_names(root: Path, values: dict[str, str], host: Host) -> list[Finding]:
+    """Another checkout using one of this one's image tags or launcher marker would replace its images or manage its containers."""
+    own = {key: image_tag(values, key) for key in IMAGE_TAGS}
+    if values.get("LAUNCHER_INSTANCE_ID"):
+        own["LAUNCHER_INSTANCE_ID"] = values["LAUNCHER_INSTANCE_ID"]
+    clashes: dict[str, Finding] = {}
+    for project, working_dir, names in _other_projects(root, host):
+        for key, value in own.items():
+            if value in names and key not in clashes:
+                clashes[key] = Finding(
+                    True,
+                    f"The compose project {project} in {working_dir} uses {value} too. "
+                    f"Set {key} in .env to a value only this checkout uses.",
+                )
+    return list(clashes.values())
+
+
 def start_findings(root: Path, host: Host = HOST) -> list[Finding]:
     """What building and starting the stack needs beyond a working Docker."""
     info, _ = _docker_info(host)
@@ -325,6 +383,7 @@ def start_findings(root: Path, host: Host = HOST) -> list[Finding]:
         findings += _disk(info, host)
         findings += _memory(info, values)
     findings += _ports(root, values, host)
+    findings += _shared_names(root, values, host)
     findings += _git(root, host)
     return findings
 

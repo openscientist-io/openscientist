@@ -1,7 +1,8 @@
 # OpenScientist Executor Container
 # Minimal image for isolated Python code execution
 
-FROM openscientist-base:latest
+ARG BASE_IMAGE=openscientist-base:latest
+FROM ${BASE_IMAGE}
 
 # Create non-root user for security. The GID is the job group the web chowns
 # the job tree to; keep it in sync with job_container.identity (checked by the

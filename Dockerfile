@@ -2,7 +2,8 @@
 # Builds on openscientist-base, which carries Python, uv, the locked
 # dependencies and the WeasyPrint libraries
 
-FROM openscientist-base:latest
+ARG BASE_IMAGE=openscientist-base:latest
+FROM ${BASE_IMAGE}
 
 # Build args
 ARG OPENSCIENTIST_COMMIT=unknown

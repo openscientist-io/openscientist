@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from collections.abc import Mapping
@@ -172,3 +173,51 @@ def test_compose_fills_the_launcher_with_the_digests_the_run_wrote(
     assert launcher["AGENT_IMAGE_DIGESTS"] == NEW_AGENT
     assert launcher["EXECUTOR_IMAGE_DIGESTS"] == NEW_EXECUTOR
     assert launcher["JOBS_ROOT"] == f"{checkout}/jobs"
+
+
+@pytest.mark.requires_docker_compose
+def test_compose_names_only_the_tags_the_env_file_sets(checkout: Path) -> None:
+    """A checkout with its own tags builds every compose image FROM its own base
+    and names no image another checkout on the host runs at its default tag."""
+    _configure(checkout)
+    shutil.copy(REPO_ROOT / stack.COMPOSE_FILE, checkout / stack.COMPOSE_FILE)
+    prod = {
+        "OPENSCIENTIST_BASE_IMAGE": "openscientist-base:prod",
+        "OPENSCIENTIST_LAUNCHER_IMAGE": "openscientist-launcher:prod",
+        "OPENSCIENTIST_AGENT_IMAGE": "openscientist-agent:prod",
+        "OPENSCIENTIST_EXECUTOR_IMAGE": "openscientist-executor:prod",
+    }
+    for key, tag in prod.items():
+        envfiles.set_file_value(checkout, "env", key, tag)
+    result = subprocess.run(
+        (
+            "docker",
+            "compose",
+            "-f",
+            stack.COMPOSE_FILE,
+            "--profile",
+            "build-only",
+            "config",
+            "--format",
+            "json",
+        ),
+        cwd=checkout,
+        env=envfiles.docker_env(checkout),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    services = json.loads(result.stdout)["services"]
+    assert services["launcher"]["image"] == "openscientist-launcher:prod"
+    assert services["launcher"]["labels"]["openscientist.base_image"] == "openscientist-base:prod"
+    assert services["openscientist-agent"]["image"] == "openscientist-agent:prod"
+    assert {
+        name: service["build"]["args"]["BASE_IMAGE"]
+        for name, service in services.items()
+        if "build" in service
+    } == dict.fromkeys(
+        ("migrate", "launcher", "openscientist", "openscientist-agent"), "openscientist-base:prod"
+    )
+    named = re.findall(r"openscientist-(?:base|launcher|agent|executor):[\w.-]+", result.stdout)
+    assert set(named) == set(prod.values())
