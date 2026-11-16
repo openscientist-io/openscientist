@@ -2,6 +2,7 @@
 
 import http.server
 import re
+import subprocess
 import threading
 from collections.abc import Mapping
 from itertools import pairwise
@@ -129,7 +130,7 @@ def _jobs_group_command(
         image,
         "sh",
         "-c",
-        "chgrp 1001 /jobs && chmod 2770 /jobs",
+        stack.JOBS_TREE_SCRIPT,
     )
 
 
@@ -153,21 +154,91 @@ def test_start_gives_a_fresh_jobs_directory_to_the_jobs_group_before_up(
     assert argvs.index(_jobs_group_command(checkout)) < up
 
 
-def test_the_jobs_group_command_leaves_a_setgid_jobs_group_directory(tmp_path: Path):
-    """The one-shot runs as root in a container, so it works for an operator
-    outside the jobs group and on a tree an older root web left behind."""
+#: The pinned image the root one-shot and the tree probes run in.
+_SLIM_IMAGE = (
+    "python:3.12-slim@sha256:b18b261e1b4974b4f321451ad5251ded85abb22c2b8b262da527dda1d031ab30"
+)
+
+
+def _require_docker() -> None:
     docker = pytest.importorskip("docker")
     try:
         docker.from_env().ping()
     except docker.errors.DockerException as exc:
         pytest.skip(f"Docker not available: {exc}")
-    image = (
-        "python:3.12-slim@sha256:b18b261e1b4974b4f321451ad5251ded85abb22c2b8b262da527dda1d031ab30"
+
+
+def _in_container(work: Path, user: str, script: str) -> subprocess.CompletedProcess[str]:
+    """Run ``script`` as ``user`` with ``work`` mounted at /work."""
+    return subprocess.run(
+        ("docker", "run", "--rm", "--user", user, "-v", f"{work}:/work", _SLIM_IMAGE)
+        + ("sh", "-c", script),
+        capture_output=True,
+        text=True,
+        check=False,
     )
-    assert stack.prepare_jobs_dir(tmp_path, stack.run_command, image) == 0
+
+
+def test_the_jobs_group_command_leaves_a_setgid_jobs_group_directory(tmp_path: Path):
+    """The one-shot runs as root in a container, so it works for an operator
+    outside the jobs group and on a tree an older root web left behind."""
+    _require_docker()
+    assert stack.prepare_jobs_dir(tmp_path, stack.run_command, _SLIM_IMAGE) == 0
     st = (tmp_path / "jobs").stat()
     assert st.st_gid == 1001
     assert st.st_mode & 0o7777 == 0o2770
+
+
+#: A job the old root web wrote: root:root 777 at the top, operator-owned 755/644
+#: entries inside, and a link out of the tree that the fix must not follow.
+_LEGACY_TREE = """
+set -e
+mkdir -p /work/jobs/legacy-job/plots /work/outside
+chmod 777 /work/jobs/legacy-job
+echo report > /work/jobs/legacy-job/report.md
+echo plot > /work/jobs/legacy-job/plots/a.png
+chown 1000:1000 /work/jobs/legacy-job/report.md /work/jobs/legacy-job/plots /work/jobs/legacy-job/plots/a.png
+chmod 644 /work/jobs/legacy-job/report.md /work/jobs/legacy-job/plots/a.png
+chmod 755 /work/jobs/legacy-job/plots
+echo secret > /work/outside/secret
+chmod 600 /work/outside/secret
+ln -s ../../outside/secret /work/jobs/legacy-job/escape
+"""
+
+
+def test_the_root_one_shot_lets_the_web_write_into_and_delete_a_legacy_job(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str]
+):
+    """The non-root web deletes a job the old root web wrote, and writes into it
+    for chat, once start has run. A re-run changes nothing."""
+    _require_docker()
+    try:
+        built = _in_container(tmp_path, "root", _LEGACY_TREE)
+        assert built.returncode == 0, built.stderr
+        capfd.readouterr()
+
+        assert stack.prepare_jobs_dir(tmp_path, stack.run_command, _SLIM_IMAGE) == 0
+        assert "5 entries" in capfd.readouterr().out
+        escape = (tmp_path / "jobs" / "legacy-job" / "escape").lstat()
+        assert escape.st_gid == 1001
+        secret = (tmp_path / "outside" / "secret").stat()
+        assert (secret.st_gid, secret.st_mode & 0o7777) == (0, 0o600)
+        assert stack.prepare_jobs_dir(tmp_path, stack.run_command, _SLIM_IMAGE) == 0
+        assert "0 entries" in capfd.readouterr().out
+
+        # Mounted the way compose mounts it, since the checkout above it is the operator's.
+        web = _in_container(
+            tmp_path / "jobs",
+            "1002:1001",
+            "set -e\n"
+            "echo chat > /work/legacy-job/plots/chat.md\n"
+            "echo more >> /work/legacy-job/report.md\n"
+            "rm -rf /work/legacy-job\n"
+            "test ! -e /work/legacy-job",
+        )
+        assert web.returncode == 0, web.stderr
+    finally:
+        _in_container(tmp_path, "root", "rm -rf /work/jobs /work/outside")
 
 
 def test_image_tags_come_from_the_env_file(checkout: Path, monkeypatch: pytest.MonkeyPatch):
