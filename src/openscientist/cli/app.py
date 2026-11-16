@@ -50,9 +50,12 @@ def stop() -> None:
 @app.callback(invoke_without_command=True)
 def default_command(ctx: click.Context) -> None:
     """Set up when the checkout is not configured, then start the stack."""
+    root = Path.cwd()
+    # Before setup too, which would otherwise replace the superuser password the volume holds.
+    for change in envfiles.split_legacy_env(root):
+        console.print(change)
     if ctx.invoked_subcommand is not None:
         return
-    root = Path.cwd()
     # Before the wizard, so a host without Docker learns it before answering every question.
     _require(preflight.docker_findings(preflight.HOST))
     # Move the launcher keys older checkouts keep in .env.owner, so a configured checkout is not sent to the wizard.

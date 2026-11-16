@@ -7,6 +7,7 @@ import re
 import secrets
 import tempfile
 from collections.abc import Iterable, Iterator, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 
 #: The wizard's file names and the examples they start from.
@@ -120,6 +121,82 @@ def migrate_owner_launcher_keys(root: Path) -> None:
     )
 
 
+#: Keys a pre-split .env held under the names the code read then.
+LEGACY_RENAMES = {
+    "CLAUDE_PROVIDER": "OPENSCIENTIST_PROVIDER",
+    "ANTHROPIC_MODEL": "OPENSCIENTIST_MODEL",
+}
+#: Keys a pre-split .env held that the stack no longer reads from it. Compose
+#: builds the web's database URLs, and the old ones carry the superuser password.
+LEGACY_DROPPED = (
+    "DATABASE_URL",
+    "ADMIN_DATABASE_URL",
+    "DATA_DIR",
+    "JOBS_DIR",
+    "CLEAN_STORAGE",
+    "CLEAN_PLOTS",
+    "TOKEN_ENCRYPTION_KEY",
+    "SKILLS_ENABLED",
+    "ALLOW_SKILLS_TOGGLE",
+    "ORCID_API_BASE",
+)
+
+
+def split_legacy_env(root: Path) -> list[str]:
+    """Split a .env from before .env.db and .env.owner existed into the three files.
+
+    The superuser password moves to .env.db unchanged, because the existing
+    volume accepts no other, and only the secrets that did not exist yet are
+    generated. Returns what changed, by key name only, and nothing for any
+    other layout."""
+    env_path = _file_path(root, "env")
+    if not env_path.is_file() or any(_file_path(root, f).exists() for f in ("db", "owner")):
+        return []
+    original = env_path.read_text(encoding="utf-8")
+    lines = original.splitlines()
+    values = parse_values(lines)
+    if not values.get("POSTGRES_PASSWORD"):
+        return []
+    backup = root / f"{ENV_FILES['env']}.pre-split-{datetime.now(UTC):%Y%m%dT%H%M%SZ}"
+    _write_text(backup, original)
+
+    present = assigned_keys(lines)
+    moved = {key: file for key, file in GENERATED_SECRETS.items() if file != "env"}
+    kept: list[str] = []
+    renamed: list[str] = []
+    dropped: list[str] = []
+    for line in lines:
+        key = next((assigned for assigned, _ in _assignments([line])), None)
+        if key in moved:
+            continue
+        if key in LEGACY_DROPPED or (key in LEGACY_RENAMES and LEGACY_RENAMES[key] in present):
+            dropped.append(key)
+            continue
+        if key in LEGACY_RENAMES:
+            line = _rewritten_line(line, LEGACY_RENAMES[key], values.get(key, ""))
+            renamed.append(f"{key} to {LEGACY_RENAMES[key]}")
+        kept.append(line)
+    carried = {key: file for key, file in moved.items() if values.get(key)}
+    for key, file in carried.items():
+        set_file_value(root, file, key, values[key])
+    write_file(env_path, kept)
+    generated = [
+        key
+        for key, file in GENERATED_SECRETS.items()
+        if not _is_real_secret(root, file, key, values.get(key, ""))
+    ]
+    write_env_files(root, {})
+
+    changes = [f"Split .env into .env, .env.db and .env.owner. The original is {backup.name}."]
+    changes += [f"Moved {key} to {ENV_FILES[file]}." for key, file in carried.items()]
+    changes += [f"Renamed {pair}." for pair in renamed]
+    if dropped:
+        changes.append(f"Removed {', '.join(dropped)}, which the stack no longer reads from .env.")
+    if generated:
+        changes.append(f"Generated {', '.join(generated)}.")
+    return changes
+
+
 def _assignments(lines: Iterable[str]) -> Iterator[tuple[str, str]]:
     """Every uncommented KEY=VALUE pair in order, empty values included, with trailing comments dropped."""
     for line in lines:
@@ -144,7 +221,10 @@ def assigned_keys(lines: Iterable[str]) -> set[str]:
 
 def write_file(path: Path, lines: list[str]) -> None:
     """Write the file atomically with owner-only permissions."""
-    text = "\n".join(lines).rstrip() + "\n"
+    _write_text(path, "\n".join(lines).rstrip() + "\n")
+
+
+def _write_text(path: Path, text: str) -> None:
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:

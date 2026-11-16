@@ -41,6 +41,7 @@ env/
 .env.db
 .env.owner
 .env.backup-*
+.env.pre-split-*
 
 # Deployment-specific configs (keep private)
 docker-compose.*.yml
