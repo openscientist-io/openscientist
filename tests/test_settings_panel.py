@@ -35,7 +35,7 @@ from tests.helpers import fake_admin_session
 
 _BASE = {
     "max_job_cost_usd": 12.5,
-    "max_project_spend_total_usd": None,
+    "max_project_spend_month_usd": None,
     "max_project_spend_24h_usd": 500.0,
     "warn_project_spend_24h_usd": 100.0,
     "agent_cpu": 2.0,
@@ -327,7 +327,7 @@ def _panel_ui_mock() -> MagicMock:
 def _panel_values(airgap_locked: bool) -> AdminSettingsValues:
     return AdminSettingsValues(
         max_job_cost_usd=12.5,
-        max_project_spend_total_usd=None,
+        max_project_spend_month_usd=None,
         max_project_spend_24h_usd=500.0,
         warn_project_spend_24h_usd=100.0,
         agent_cpu=2.0,

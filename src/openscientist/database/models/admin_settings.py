@@ -20,7 +20,7 @@ from ..base import Base
 
 _BUDGET_COLUMNS = (
     "max_job_cost_usd",
-    "max_project_spend_total_usd",
+    "max_project_spend_month_usd",
     "max_project_spend_24h_usd",
     "warn_project_spend_24h_usd",
 )
@@ -57,7 +57,7 @@ class AdminSettings(Base):
 
     # NULL means no limit.
     max_job_cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
-    max_project_spend_total_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_project_spend_month_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     max_project_spend_24h_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     warn_project_spend_24h_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
 

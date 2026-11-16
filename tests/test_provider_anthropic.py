@@ -201,7 +201,7 @@ class TestAnthropicGetCostInfo:
             cost = provider.get_cost_info()
 
         assert cost.provider_name == "Anthropic"
-        assert cost.total_spend_usd is None
+        assert cost.month_spend_usd is None
         assert cost.recent_spend_usd is None
         assert cost.recent_period_hours == 24
 

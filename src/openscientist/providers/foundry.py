@@ -20,6 +20,7 @@ from openscientist.providers.base import (
     UpstreamCredentialError,
     UpstreamSigning,
     _completion_live_check,
+    month_start,
 )
 from openscientist.settings import ProviderSettings, get_settings
 
@@ -367,7 +368,7 @@ class FoundryProvider(ClaudeCompatible):
             resource_name = settings.provider.anthropic_foundry_resource or "Azure AI Foundry"
             return CostInfo(
                 provider_name=f"Azure AI Foundry ({resource_name})",
-                total_spend_usd=None,
+                month_spend_usd=None,
                 recent_spend_usd=None,
                 recent_period_hours=lookback_hours,
                 last_updated=now,
@@ -386,7 +387,7 @@ class FoundryProvider(ClaudeCompatible):
             )
             return CostInfo(
                 provider_name="Azure AI Foundry",
-                total_spend_usd=None,
+                month_spend_usd=None,
                 recent_spend_usd=None,
                 recent_period_hours=lookback_hours,
                 last_updated=now,
@@ -403,7 +404,7 @@ class FoundryProvider(ClaudeCompatible):
         if not (tenant_id and client_id and client_secret):
             return CostInfo(
                 provider_name="Azure AI Foundry",
-                total_spend_usd=None,
+                month_spend_usd=None,
                 recent_spend_usd=None,
                 recent_period_hours=lookback_hours,
                 last_updated=now,
@@ -429,9 +430,7 @@ class FoundryProvider(ClaudeCompatible):
             )
             client = CostManagementClient(credential)
 
-            # Total spend is month-to-date
-            month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            total_spend = _query_azure_cost_usd(client, scope, month_start, now)
+            month_spend = _query_azure_cost_usd(client, scope, month_start(now), now)
 
             recent_start = now - timedelta(hours=lookback_hours)
             recent_spend = _query_azure_cost_usd(client, scope, recent_start, now)
@@ -439,7 +438,7 @@ class FoundryProvider(ClaudeCompatible):
             resource_name = settings.provider.anthropic_foundry_resource or "Azure AI Foundry"
             return CostInfo(
                 provider_name=f"Azure AI Foundry ({resource_name})",
-                total_spend_usd=total_spend,
+                month_spend_usd=month_spend,
                 recent_spend_usd=recent_spend,
                 recent_period_hours=lookback_hours,
                 last_updated=now,
@@ -454,7 +453,7 @@ class FoundryProvider(ClaudeCompatible):
             logger.warning("Azure Cost Management query failed: %s", e)
             return CostInfo(
                 provider_name="Azure AI Foundry",
-                total_spend_usd=None,
+                month_spend_usd=None,
                 recent_spend_usd=None,
                 recent_period_hours=lookback_hours,
                 last_updated=now,

@@ -616,7 +616,7 @@ class TestVertexCostInfo:
         ):
             info = VertexProvider().get_cost_info(lookback_hours=6)
 
-        assert info.total_spend_usd is None
+        assert info.month_spend_usd is None
         assert info.recent_spend_usd is None
         assert info.recent_period_hours == 6
         assert info.data_lag_note == "Billing data unavailable (ensure BigQuery export is enabled)"

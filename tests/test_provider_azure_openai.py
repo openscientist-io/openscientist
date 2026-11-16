@@ -132,7 +132,7 @@ def test_missing_model_raises() -> None:
 def test_get_cost_info_unavailable() -> None:
     with patch("openscientist.providers.azure_openai.get_settings", return_value=_settings()):
         info = AzureOpenAIProvider().get_cost_info()
-    assert info.total_spend_usd is None
+    assert info.month_spend_usd is None
     assert info.recent_spend_usd is None
 
 

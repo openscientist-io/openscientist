@@ -198,7 +198,7 @@ async def test_ambiguous_commit_never_counts_ledger_and_debt_twice(
 @pytest.mark.parametrize(
     "limit,field",
     [
-        ("project_total", "max_project_spend_total_usd"),
+        ("project_month", "max_project_spend_month_usd"),
         ("project_24h", "max_project_spend_24h_usd"),
     ],
 )
@@ -206,7 +206,7 @@ async def test_project_limits_include_other_job_reservations(
     test_engine: AsyncEngine, jobs, limit, field
 ):
     _, total, recent = await budget._ledger_totals()
-    baseline = total if limit == "project_total" else recent
+    baseline = total if limit == "project_month" else recent
     await set_admin_settings_row(test_engine, **{field: baseline + 0.5})
     reservation = await reserve(jobs[0])
     assert isinstance(reservation, ModelCallReservation)
@@ -237,10 +237,10 @@ async def test_cancel_releases_unattempted_reservation(test_engine: AsyncEngine,
     assert await rows(test_engine, jobs[0]) == []
 
 
-@pytest.mark.parametrize("field", ["max_project_spend_total_usd", "max_project_spend_24h_usd"])
+@pytest.mark.parametrize("field", ["max_project_spend_month_usd", "max_project_spend_24h_usd"])
 async def test_deleted_job_closes_reservation(test_engine: AsyncEngine, jobs, field):
     _, total, recent = await budget._ledger_totals()
-    baseline = total if field == "max_project_spend_total_usd" else recent
+    baseline = total if field == "max_project_spend_month_usd" else recent
     await set_admin_settings_row(test_engine, **{field: baseline + 0.5})
     reservation = await reserve(jobs[0])
     assert isinstance(reservation, ModelCallReservation)
@@ -310,14 +310,14 @@ async def test_pending_cost_adds_to_provider_billed_baseline(
     from openscientist.providers.base import CostInfo
 
     _, baseline, _ = await budget._ledger_totals()
-    await set_admin_settings_row(test_engine, max_project_spend_total_usd=baseline + 0.6)
+    await set_admin_settings_row(test_engine, max_project_spend_month_usd=baseline + 0.6)
     monkeypatch.setattr(
         budget,
         "_provider_billing",
         AsyncMock(
             return_value=CostInfo(
                 provider_name="anthropic",
-                total_spend_usd=baseline + 0.4,
+                month_spend_usd=baseline + 0.4,
                 recent_spend_usd=0.0,
                 recent_period_hours=24,
             )
@@ -325,7 +325,7 @@ async def test_pending_cost_adds_to_provider_billed_baseline(
     )
     refused = await reserve(jobs[0])
     assert isinstance(refused, ModelCallRefused)
-    assert refused.limit == "project_total"
+    assert refused.limit == "project_month"
 
 
 @pytest.mark.parametrize("unrelated_spend", [0.0, 0.2])

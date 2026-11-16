@@ -30,7 +30,7 @@ from tests.webapp.conftest import ServedPage
 # plans/job-cost-badges.md), keyed by the row's column.
 _EXPECTED_ICONS: dict[str, str] = {
     "max_job_cost_usd": "fa-solid fa-sack-dollar",
-    "max_project_spend_total_usd": "fa-solid fa-vault",
+    "max_project_spend_month_usd": "fa-solid fa-vault",
     "max_project_spend_24h_usd": "fa-solid fa-calendar-day",
     "warn_project_spend_24h_usd": "fa-solid fa-triangle-exclamation",
     "agent_cpu": "fa-solid fa-microchip",

@@ -17,7 +17,7 @@ from tests.admin_row import reset_admin_settings_row
 def seeded_env(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     """The environment seeding reads, with inf limits and Docker memory strings."""
     monkeypatch.setenv("MAX_JOB_COST_USD", "12.5")
-    monkeypatch.setenv("MAX_PROJECT_SPEND_TOTAL_USD", "inf")
+    monkeypatch.setenv("MAX_PROJECT_SPEND_MONTH_USD", "inf")
     monkeypatch.setenv("MAX_PROJECT_SPEND_24H_USD", "inf")
     monkeypatch.setenv("WARN_PROJECT_SPEND_24H_USD", "inf")
     monkeypatch.setenv("OPENSCIENTIST_AGENT_MEMORY", "8g")
@@ -50,7 +50,7 @@ async def test_seeding_writes_null_budgets_and_mib(
         await seed_admin_settings()
         row = await _row(test_engine)
         assert row["max_job_cost_usd"] == 12.5
-        assert row["max_project_spend_total_usd"] is None
+        assert row["max_project_spend_month_usd"] is None
         assert row["max_project_spend_24h_usd"] is None
         assert row["warn_project_spend_24h_usd"] is None
         assert row["agent_memory_mib"] == 8192

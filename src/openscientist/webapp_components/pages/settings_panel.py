@@ -34,7 +34,13 @@ logger = logging.getLogger(__name__)
 # (column, label, unit, allowed range, kind) for every setting of the row.
 _FIELDS: tuple[tuple[str, str, str, str, str], ...] = (
     ("max_job_cost_usd", "Job cost limit", "USD", "above 0 or no limit", "budget"),
-    ("max_project_spend_total_usd", "Project spend total", "USD", "above 0 or no limit", "budget"),
+    (
+        "max_project_spend_month_usd",
+        "Project spend (month)",
+        "USD",
+        "above 0 or no limit",
+        "budget",
+    ),
     ("max_project_spend_24h_usd", "Project spend (24 h)", "USD", "above 0 or no limit", "budget"),
     (
         "warn_project_spend_24h_usd",
@@ -60,7 +66,7 @@ _AIRGAP = ("airgapped", "Air-gap")
 # input. Every _FIELDS column and the air-gap switch must have an entry.
 _FIELD_ICONS: dict[str, str] = {
     "max_job_cost_usd": "fa-solid fa-sack-dollar",
-    "max_project_spend_total_usd": "fa-solid fa-vault",
+    "max_project_spend_month_usd": "fa-solid fa-vault",
     "max_project_spend_24h_usd": "fa-solid fa-calendar-day",
     "warn_project_spend_24h_usd": "fa-solid fa-triangle-exclamation",
     "agent_cpu": "fa-solid fa-microchip",
@@ -92,7 +98,7 @@ _GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
         "Budgets",
         (
             "max_job_cost_usd",
-            "max_project_spend_total_usd",
+            "max_project_spend_month_usd",
             "max_project_spend_24h_usd",
             "warn_project_spend_24h_usd",
         ),
@@ -116,7 +122,7 @@ _GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
 # read the description instead of keeping a second copy of the wording.
 _DESCRIPTION_SOURCES: dict[str, tuple[type[BaseSettings], str]] = {
     "max_job_cost_usd": (BudgetSettings, "max_job_cost_usd"),
-    "max_project_spend_total_usd": (BudgetSettings, "max_project_spend_total_usd"),
+    "max_project_spend_month_usd": (BudgetSettings, "max_project_spend_month_usd"),
     "max_project_spend_24h_usd": (BudgetSettings, "max_project_spend_24h_usd"),
     "warn_project_spend_24h_usd": (BudgetSettings, "warn_project_spend_24h_usd"),
     "agent_cpu": (ContainerSettings, "agent_cpu"),

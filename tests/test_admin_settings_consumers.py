@@ -341,7 +341,7 @@ async def test_a_budget_check_honours_the_rows_limits(
 
     cost = CostInfo(
         provider_name="stub",
-        total_spend_usd=600.0,
+        month_spend_usd=600.0,
         recent_spend_usd=95.0,
         recent_period_hours=24,
     )
@@ -350,16 +350,16 @@ async def test_a_budget_check_honours_the_rows_limits(
     with patch("openscientist.budget.get_provider", return_value=provider):
         await set_admin_settings_row(
             test_engine,
-            max_project_spend_total_usd=500.0,
+            max_project_spend_month_usd=500.0,
             max_project_spend_24h_usd=100.0,
             warn_project_spend_24h_usd=90.0,
         )
         verdict = await check_budget(provider_id="stub")
         assert verdict.ok is False
-        assert verdict.limit == "project_total"
+        assert verdict.limit == "project_month"
 
         # The 24 h figure is under its hard limit but at the warning.
-        await set_admin_settings_row(test_engine, max_project_spend_total_usd=None)
+        await set_admin_settings_row(test_engine, max_project_spend_month_usd=None)
         verdict = await check_budget(provider_id="stub")
         assert verdict.ok is True
         assert warning_limit_reached(95.0, 90.0, 100.0) is True
@@ -370,7 +370,7 @@ async def test_a_budget_check_honours_the_rows_limits(
         assert verdict.limit == "project_24h"
 
         await set_admin_settings_row(
-            test_engine, max_project_spend_total_usd=None, max_project_spend_24h_usd=None
+            test_engine, max_project_spend_month_usd=None, max_project_spend_24h_usd=None
         )
         verdict = await check_budget(provider_id="stub")
         assert verdict.ok is True

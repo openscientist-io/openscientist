@@ -168,10 +168,10 @@ async def _render_project_budget_section() -> None:
             admin = await current_admin_settings()
 
             with ui.row().classes("w-full gap-4 mb-2 flex-wrap"):
-                # Total spend
+                # This calendar month
                 with ui.card().classes("flex-1 min-w-40 os-density-card"):
-                    ui.label(f"${spend.total:.2f}").classes("text-2xl text-primary")
-                    ui.label("Total Spend").classes("text-subtitle2 text-grey")
+                    ui.label(f"${spend.month:.2f}").classes("text-2xl text-primary")
+                    ui.label("This Month (UTC)").classes("text-subtitle2 text-grey")
 
                 # Last 24h
                 with ui.card().classes("flex-1 min-w-40 os-density-card"):

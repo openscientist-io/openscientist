@@ -672,12 +672,12 @@ class TestBudgetSettings:
         """Valid budget values pass validation."""
         settings = BudgetSettings(
             MAX_JOB_COST_USD=5.0,
-            MAX_PROJECT_SPEND_TOTAL_USD=1000.0,
+            MAX_PROJECT_SPEND_MONTH_USD=1000.0,
             MAX_PROJECT_SPEND_24H_USD=50.0,
             WARN_PROJECT_SPEND_24H_USD=40.0,
         )
         assert settings.max_job_cost_usd == 5.0
-        assert settings.max_project_spend_total_usd == 1000.0
+        assert settings.max_project_spend_month_usd == 1000.0
         assert settings.warn_project_spend_24h_usd == 40.0
 
 

@@ -25,7 +25,7 @@ _UPDATED_AT = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
 
 _ROW = {
     "max_job_cost_usd": 12.5,
-    "max_project_spend_total_usd": None,
+    "max_project_spend_month_usd": None,
     "max_project_spend_24h_usd": 500.0,
     "warn_project_spend_24h_usd": 100.0,
     "agent_cpu": 2.0,
@@ -42,13 +42,13 @@ _ROW = {
 
 _INSERT = """
     INSERT INTO admin_settings (
-        max_job_cost_usd, max_project_spend_total_usd, max_project_spend_24h_usd,
+        max_job_cost_usd, max_project_spend_month_usd, max_project_spend_24h_usd,
         warn_project_spend_24h_usd, agent_cpu, executor_cpu, agent_memory_mib,
         executor_memory_mib, agent_timeout_seconds, executor_timeout_seconds,
         max_file_size_mb, max_concurrent_jobs, scheduler_window_hours,
         airgapped, session_duration_days, updated_at, updated_by
     ) VALUES (
-        :max_job_cost_usd, :max_project_spend_total_usd, :max_project_spend_24h_usd,
+        :max_job_cost_usd, :max_project_spend_month_usd, :max_project_spend_24h_usd,
         :warn_project_spend_24h_usd, :agent_cpu, :executor_cpu, :agent_memory_mib,
         :executor_memory_mib, :agent_timeout_seconds, :executor_timeout_seconds,
         :max_file_size_mb, :max_concurrent_jobs, :scheduler_window_hours,
@@ -100,7 +100,7 @@ async def test_the_reader_returns_the_row(
         values = await current_admin_settings()
         assert values == AdminSettingsValues(
             max_job_cost_usd=12.5,
-            max_project_spend_total_usd=None,
+            max_project_spend_month_usd=None,
             max_project_spend_24h_usd=500.0,
             warn_project_spend_24h_usd=100.0,
             agent_cpu=2.0,
@@ -173,7 +173,7 @@ async def test_the_sync_form_runs_from_a_worker_thread(
     try:
         values = await asyncio.to_thread(current_admin_settings_sync)
         assert values.agent_cpu == 2.0
-        assert values.max_project_spend_total_usd is None
+        assert values.max_project_spend_month_usd is None
         assert values.airgap_locked is False
     finally:
         await reset_admin_settings_row(test_engine)

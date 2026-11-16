@@ -656,20 +656,30 @@ class BudgetSettings(BaseSettings):
         description="Per-job cost cap in USD.",
     )
 
-    max_project_spend_total_usd: float = Field(
+    max_project_spend_month_usd: float = Field(
         default=float("inf"),
-        alias="MAX_PROJECT_SPEND_TOTAL_USD",
-        description="Total project spend limit in USD.",
+        alias="MAX_PROJECT_SPEND_MONTH_USD",
+        description=(
+            "Project spend limit in USD per calendar month (UTC), reset on the 1st. Counts "
+            "the larger of OpenScientist's own cost record and the provider's billed spend "
+            "this month."
+        ),
     )
     max_project_spend_24h_usd: float = Field(
         default=float("inf"),
         alias="MAX_PROJECT_SPEND_24H_USD",
-        description="24-hour project spend limit in USD.",
+        description=(
+            "Project spend limit in USD over the last 24 hours, a rolling window. Counts the "
+            "larger of OpenScientist's own cost record and the provider's billed spend."
+        ),
     )
     warn_project_spend_24h_usd: float = Field(
         default=float("inf"),
         alias="WARN_PROJECT_SPEND_24H_USD",
-        description="24-hour project spend warning threshold in USD.",
+        description=(
+            "Project spend in USD over the last 24 hours at which the billing page shows a "
+            "warning."
+        ),
     )
 
     @field_validator(

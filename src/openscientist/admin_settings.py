@@ -23,7 +23,7 @@ class AdminSettingsValues:
     """The admin settings row as a running part reads it at each use."""
 
     max_job_cost_usd: float | None
-    max_project_spend_total_usd: float | None
+    max_project_spend_month_usd: float | None
     max_project_spend_24h_usd: float | None
     warn_project_spend_24h_usd: float | None
     agent_cpu: float
@@ -56,7 +56,7 @@ async def seed_admin_settings() -> None:
     settings = get_settings()
     values = {
         "max_job_cost_usd": settings.budget.max_job_cost_usd,
-        "max_project_spend_total_usd": _inf_or_none(settings.budget.max_project_spend_total_usd),
+        "max_project_spend_month_usd": _inf_or_none(settings.budget.max_project_spend_month_usd),
         "max_project_spend_24h_usd": _inf_or_none(settings.budget.max_project_spend_24h_usd),
         "warn_project_spend_24h_usd": _inf_or_none(settings.budget.warn_project_spend_24h_usd),
         "agent_cpu": settings.container.agent_cpu,
@@ -80,14 +80,14 @@ async def seed_admin_settings() -> None:
             text(
                 """
                 INSERT INTO admin_settings (
-                    max_job_cost_usd, max_project_spend_total_usd,
+                    max_job_cost_usd, max_project_spend_month_usd,
                     max_project_spend_24h_usd, warn_project_spend_24h_usd,
                     agent_cpu, executor_cpu, agent_memory_mib, executor_memory_mib,
                     agent_timeout_seconds, executor_timeout_seconds,
                     max_file_size_mb, max_concurrent_jobs, scheduler_window_hours,
                     airgapped, session_duration_days
                 ) VALUES (
-                    :max_job_cost_usd, :max_project_spend_total_usd,
+                    :max_job_cost_usd, :max_project_spend_month_usd,
                     :max_project_spend_24h_usd, :warn_project_spend_24h_usd,
                     :agent_cpu, :executor_cpu, :agent_memory_mib, :executor_memory_mib,
                     :agent_timeout_seconds, :executor_timeout_seconds,
@@ -121,7 +121,7 @@ async def current_admin_settings() -> AdminSettingsValues:
         floor = get_settings().airgap.enabled
         return AdminSettingsValues(
             max_job_cost_usd=row.max_job_cost_usd,
-            max_project_spend_total_usd=row.max_project_spend_total_usd,
+            max_project_spend_month_usd=row.max_project_spend_month_usd,
             max_project_spend_24h_usd=row.max_project_spend_24h_usd,
             warn_project_spend_24h_usd=row.warn_project_spend_24h_usd,
             agent_cpu=row.agent_cpu,

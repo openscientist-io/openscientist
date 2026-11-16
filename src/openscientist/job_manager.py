@@ -575,7 +575,7 @@ class JobManager:
                     return False
                 self._repick_delays = None
 
-                if verdict.limit in ("project_total", "project_24h"):
+                if verdict.limit in ("project_month", "project_24h"):
                     reason = verdict.message or "A project budget limit is reached"
                     first_hold = run_sync(set_queue_reason(job_id, reason)) is None
                     logger.info("Job %s held by a budget limit: %s", job_id, reason)

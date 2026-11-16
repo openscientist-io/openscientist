@@ -15,7 +15,7 @@ from openscientist.providers.base import (
 def _stub_cost_info(provider_name: str, lookback_hours: int = 24) -> CostInfo:
     return CostInfo(
         provider_name=provider_name,
-        total_spend_usd=None,
+        month_spend_usd=None,
         recent_spend_usd=None,
         recent_period_hours=lookback_hours,
     )

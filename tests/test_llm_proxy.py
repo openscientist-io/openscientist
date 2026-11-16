@@ -2043,7 +2043,7 @@ class TestUnpricedModelRefusal:
     @pytest_asyncio.fixture
     async def limits_set(self, test_engine: AsyncEngine):
         """One project spend limit set, the default row again afterwards."""
-        await set_admin_settings_row(test_engine, max_project_spend_total_usd=1000.0)
+        await set_admin_settings_row(test_engine, max_project_spend_month_usd=1000.0)
         try:
             yield
         finally:

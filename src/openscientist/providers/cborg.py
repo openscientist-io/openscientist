@@ -17,6 +17,7 @@ from openscientist.providers.base import (
     SetupQuestion,
     StaticHeadersSigning,
     _listing_live_check,
+    month_start,
 )
 from openscientist.settings import ProviderSettings, get_settings
 
@@ -157,7 +158,7 @@ class CborgProvider(ClaudeCompatible):
             info_response.raise_for_status()
             info = info_response.json()["info"]
 
-            total_spend = info["spend"]
+            key_spend = info["spend"]
             max_budget = info.get("max_budget")
             key_expires = info.get("expires")
 
@@ -166,39 +167,26 @@ class CborgProvider(ClaudeCompatible):
             raise ProviderError(f"Failed to fetch CBORG /key/info: {e}") from e
 
         data_lag_note: str | None = None
+        end_time = datetime.now(UTC)
         try:
-            end_time = datetime.now(UTC)
-            start_time = end_time - timedelta(hours=lookback_hours)
-
-            activity_response = requests.get(
-                "https://api.cborg.lbl.gov/user/daily/activity",
-                params={
-                    "start_date": start_time.isoformat(),
-                    "end_date": end_time.isoformat(),
-                    "page": "1",
-                    "page_size": "1000",
-                },
-                headers={"x-litellm-api-key": token},
-                timeout=10,
+            month_spend = _activity_spend(token, month_start(end_time), end_time)
+            recent_spend = _activity_spend(
+                token, end_time - timedelta(hours=lookback_hours), end_time
             )
-            activity_response.raise_for_status()
-
-            activity_data = activity_response.json().get("data", [])
-            recent_spend = sum(record.get("spend", 0) for record in activity_data)
-
         except (requests.RequestException, KeyError, ValueError) as e:
             logger.warning("Failed to fetch CBORG activity data: %s", e)
             # Preserve "unknown" semantics so budget checks can warn appropriately.
+            month_spend = None
             recent_spend = None
-            data_lag_note = "Recent activity data unavailable"
+            data_lag_note = "Activity data unavailable"
 
         budget_remaining = None
         if max_budget is not None:
-            budget_remaining = max_budget - total_spend
+            budget_remaining = max_budget - key_spend
 
         return CostInfo(
             provider_name="CBORG",
-            total_spend_usd=total_spend,
+            month_spend_usd=month_spend,
             recent_spend_usd=recent_spend,
             recent_period_hours=lookback_hours,
             budget_limit_usd=max_budget,
@@ -207,3 +195,20 @@ class CborgProvider(ClaudeCompatible):
             data_lag_note=data_lag_note,
             key_expires=key_expires,
         )
+
+
+def _activity_spend(token: str, start: datetime, end: datetime) -> float:
+    """The key's spend between ``start`` and ``end`` from CBORG's daily activity."""
+    response = requests.get(
+        "https://api.cborg.lbl.gov/user/daily/activity",
+        params={
+            "start_date": start.isoformat(),
+            "end_date": end.isoformat(),
+            "page": "1",
+            "page_size": "1000",
+        },
+        headers={"x-litellm-api-key": token},
+        timeout=10,
+    )
+    response.raise_for_status()
+    return float(sum(record.get("spend", 0) for record in response.json().get("data", [])))

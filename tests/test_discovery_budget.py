@@ -273,7 +273,7 @@ def _billing_zero() -> SimpleNamespace:
     """The provider billing boundary, reporting no billed spend."""
     info = CostInfo(
         provider_name="stub",
-        total_spend_usd=0.0,
+        month_spend_usd=0.0,
         recent_spend_usd=0.0,
         recent_period_hours=24,
     )
@@ -324,13 +324,13 @@ class TestDiscoveryBudgetGate:
         assert row["stop_note"] is not None
         assert "Job cost limit" in row["stop_note"]
 
-    async def test_a_project_total_stops_a_later_iteration(
+    async def test_a_project_month_stops_a_later_iteration(
         self, run: _Run, ask_via_broker: None, admin_settings_reader: None
     ) -> None:
         """Iteration 1's ledger row spends past the limit, so the iteration-2
         check stops the run."""
         with patch("openscientist.budget.get_provider", return_value=_billing_zero()):
-            await set_admin_settings_row(run.engine, max_project_spend_total_usd=0.5)
+            await set_admin_settings_row(run.engine, max_project_spend_month_usd=0.5)
             executor = _executor(run, growing=True)
             result = await _run_discovery(run, executor)
         assert result["status"] == "completed"
@@ -338,7 +338,7 @@ class TestDiscoveryBudgetGate:
         row = await _row(run)
         assert row["status"] == "completed"
         assert row["stop_note"] is not None
-        assert "Project spend total limit" in row["stop_note"]
+        assert "Project monthly spend limit" in row["stop_note"]
 
     async def test_a_project_24h_stops_a_later_iteration(
         self, run: _Run, ask_via_broker: None, admin_settings_reader: None
@@ -363,7 +363,7 @@ class TestDiscoveryBudgetGate:
             task = asyncio.create_task(_run_discovery(run, executor))
             # The loop pauses after iteration 1, its cost row already written.
             await _wait_for_status(run, "awaiting_feedback")
-            await set_admin_settings_row(run.engine, max_project_spend_total_usd=0.5)
+            await set_admin_settings_row(run.engine, max_project_spend_month_usd=0.5)
             # The user resumes the job, as the feedback panel would.
             await _set_status(run, "running")
             result = await asyncio.wait_for(task, timeout=60.0)
@@ -372,7 +372,7 @@ class TestDiscoveryBudgetGate:
         row = await _row(run)
         assert row["status"] == "completed"
         assert row["stop_note"] is not None
-        assert "Project spend total limit" in row["stop_note"]
+        assert "Project monthly spend limit" in row["stop_note"]
 
     async def test_the_check_window_exhausts_and_the_job_stops_with_the_note(
         self,

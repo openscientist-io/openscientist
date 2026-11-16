@@ -166,18 +166,18 @@ class TestCostInfo:
     def test_basic_creation(self):
         info = CostInfo(
             provider_name="test",
-            total_spend_usd=100.0,
+            month_spend_usd=100.0,
             recent_spend_usd=10.0,
             recent_period_hours=24,
         )
         assert info.provider_name == "test"
-        assert info.total_spend_usd == 100.0
+        assert info.month_spend_usd == 100.0
         assert info.budget_limit_usd is None
 
     def test_optional_fields(self):
         info = CostInfo(
             provider_name="test",
-            total_spend_usd=50.0,
+            month_spend_usd=50.0,
             recent_spend_usd=5.0,
             recent_period_hours=24,
             budget_limit_usd=200.0,
