@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import logging
 import os
 import shlex
 import shutil
@@ -24,6 +25,7 @@ from typing import Any
 
 import httpx
 import pytest
+import requests
 from docker.models.containers import Container
 from starlette.testclient import TestClient
 
@@ -736,6 +738,80 @@ class TestForeignContainers:
             assert waited.json()["exit_code"] in {143, 137}
             assert client.get(f"/v1/containers/{name}").json()["status"] == "exited"
             client.post(f"/v1/containers/{name}/remove")
+
+
+class TestStats:
+    @pytest.mark.parametrize(
+        ("body", "docker_status", "expected_status"),
+        [
+            (b"", 200, 404),
+            (b"not json", 200, 404),
+            (b'{"memory_stats": {"usage": 1024}}', 200, 200),
+            (b'{"message": "daemon failure"}', 500, 502),
+        ],
+    )
+    def test_stats_response(
+        self,
+        docker_client: docker.DockerClient,
+        jobs_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        body: bytes,
+        docker_status: int,
+        expected_status: int,
+    ) -> None:
+        config = LauncherConfig.from_env(
+            {
+                "JOBS_ROOT": str(jobs_root),
+                "AGENT_IMAGE": EXECUTOR_IMAGE,
+                "EXECUTOR_IMAGE": EXECUTOR_IMAGE,
+                "AGENT_IMAGE_DIGESTS": image_digest(docker_client, EXECUTOR_IMAGE),
+                "EXECUTOR_IMAGE_DIGESTS": image_digest(docker_client, EXECUTOR_IMAGE),
+                "LAUNCHER_INSTANCE_ID": INSTANCE_ID,
+                "AGENT_MAX_MEMORY_MIB": "2048",
+                "AGENT_MAX_CPU": "1",
+                "EXECUTOR_MAX_MEMORY_MIB": "2048",
+                "EXECUTOR_MAX_CPU": "1",
+                "MAX_LIFETIME_SECONDS": "3600",
+            }
+        )
+        container = docker_client.containers.run(
+            EXECUTOR_IMAGE,
+            entrypoint=["/bin/true"],
+            detach=True,
+            labels={"openscientist.launcher": INSTANCE_ID, "openscientist.type": "executor"},
+        )
+        original_send = requests.Session.send
+
+        def docker_send(
+            session: requests.Session, request: requests.PreparedRequest, **keywords: Any
+        ) -> requests.Response:
+            url = request.url or ""
+            if url.partition("?")[0].endswith(f"/containers/{container.id}/stats"):
+                response = requests.Response()
+                response.status_code = docker_status
+                response._content = body
+                response.url = url
+                return response
+            return original_send(session, request, **keywords)
+
+        try:
+            assert container.id is not None
+            container.wait(timeout=30)
+            monkeypatch.setattr(requests.Session, "send", docker_send)
+            caplog.set_level(logging.DEBUG)
+            with TestClient(api.create_app(config), raise_server_exceptions=False) as client:
+                response = client.get(f"/v1/containers/{container.id}/stats")
+                assert response.status_code == expected_status
+                if expected_status == 404:
+                    assert response.json() == {"error": "not_found: container not found"}
+                elif expected_status == 200:
+                    assert response.json() == json.loads(body)
+                else:
+                    assert response.json()["error"].startswith("docker_error:")
+                assert not [record for record in caplog.records if record.exc_info]
+        finally:
+            container.remove(force=True)
 
 
 class TestPeerCred:

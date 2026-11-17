@@ -299,7 +299,10 @@ class Server:
 
     def stats(self, ref: str) -> object:
         container = self._resolve(ref)
-        return _guard(container.stats)(stream=False)
+        try:
+            return _guard(container.stats)(stream=False)
+        except requests.exceptions.JSONDecodeError as exc:
+            raise _not_found(ref) from exc
 
     def list(self, labels: list[str]) -> list[dict[str, object]]:
         """Launcher-created containers matching every label, AND-combined."""
