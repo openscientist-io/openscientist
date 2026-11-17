@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -17,8 +16,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.admin_settings import current_admin_settings
-from openscientist.database.models import CostRecord
+from openscientist.database.models import CostRecord, Job
 from openscientist.database.session import get_admin_session
+from openscientist.job.types import JobStatus
 from openscientist.providers import get_provider
 from openscientist.providers.base import CostInfo, month_start
 from openscientist.providers.pricing import has_price
@@ -51,10 +51,10 @@ class BudgetVerdict:
 class ProjectSpend:
     """The project spend the enforcement compares against the project limits.
 
-    Each figure is the higher of the ledger's and the provider's billed value
-    over the same window, the calendar month (UTC) or the last 24 hours. None on
-    the billing side means the provider reports no spend, so only the ledger
-    counts.
+    Each settled figure is the higher of the ledger's and the provider's billed
+    value over the same window, the calendar month (UTC) or the last 24 hours.
+    None on the billing side means the provider reports no spend, so only the
+    ledger counts. The reserved figures are model calls still in flight.
     """
 
     ledger_month: float
@@ -64,16 +64,24 @@ class ProjectSpend:
     reserved_24h: float = 0.0
 
     @property
-    def month(self) -> float:
+    def settled_month(self) -> float:
         if self.billed is None or self.billed.month_spend_usd is None:
-            return self.ledger_month + self.reserved_month
-        return max(self.ledger_month, self.billed.month_spend_usd) + self.reserved_month
+            return self.ledger_month
+        return max(self.ledger_month, self.billed.month_spend_usd)
+
+    @property
+    def settled_24h(self) -> float:
+        if self.billed is None or self.billed.recent_spend_usd is None:
+            return self.ledger_24h
+        return max(self.ledger_24h, self.billed.recent_spend_usd)
+
+    @property
+    def month(self) -> float:
+        return self.settled_month + self.reserved_month
 
     @property
     def last_24h(self) -> float:
-        if self.billed is None or self.billed.recent_spend_usd is None:
-            return self.ledger_24h + self.reserved_24h
-        return max(self.ledger_24h, self.billed.recent_spend_usd) + self.reserved_24h
+        return self.settled_24h + self.reserved_24h
 
 
 async def _provider_billing() -> CostInfo | None:
@@ -223,11 +231,16 @@ async def check_budget(
         )
 
 
-def _exceeds_limit(current: float, prospective: float, limit: float) -> bool:
-    amount = current + prospective
-    return current >= limit or (
-        amount > limit and not math.isclose(amount, limit, rel_tol=1e-12, abs_tol=0.0)
-    )
+def _spent(settled: float, reserved: float) -> str:
+    if reserved <= 0:
+        return f"${settled:.2f}"
+    return f"${settled:.2f}, with ${reserved:.2f} more in model calls still running"
+
+
+async def _in_report_phase(job_id: UUID) -> bool:
+    async with get_admin_session() as session:
+        status = await session.scalar(select(Job.status).where(Job.id == job_id))
+    return status == JobStatus.GENERATING_REPORT
 
 
 async def _check_budget_locked(
@@ -236,8 +249,10 @@ async def _check_budget_locked(
     provider_id: str,
     model: str | None = None,
     include_unpriced: bool = False,
-    prospective_usd: float = 0.0,
 ) -> BudgetVerdict:
+    """A limit is reached once the spend before the call, ledger plus calls in
+    flight, is at or over it. The job cap leaves out the report phase, so a job
+    that spent its cap still writes its report."""
     from openscientist.llm_reservations import _flush_debt_locked, _pending_totals_locked
 
     await _flush_debt_locked()
@@ -249,19 +264,19 @@ async def _check_budget_locked(
     admin = await current_admin_settings()
 
     pending_job, pending, pending_recent, excluded = _pending_totals_locked(job_id)
-    job_total, month, recent = await _ledger_totals(job_id, exclude_ids=excluded)
-    job_total += pending_job
+    job_ledger, month, recent = await _ledger_totals(job_id, exclude_ids=excluded)
 
     if (
         job_id is not None
         and admin.max_job_cost_usd is not None
-        and _exceeds_limit(job_total, prospective_usd, admin.max_job_cost_usd)
+        and job_ledger + pending_job >= admin.max_job_cost_usd
+        and not await _in_report_phase(job_id)
     ):
         return BudgetVerdict(
             False,
             "job_cap",
             f"Job cost limit of ${admin.max_job_cost_usd:.2f} reached: "
-            f"the job has spent ${job_total:.2f}.",
+            f"the job has spent {_spent(job_ledger, pending_job)}.",
         )
 
     if admin.max_project_spend_month_usd is None and admin.max_project_spend_24h_usd is None:
@@ -274,22 +289,26 @@ async def _check_budget_locked(
         reserved_month=pending,
         reserved_24h=pending_recent,
     )
-    if admin.max_project_spend_month_usd is not None and _exceeds_limit(
-        spend.month, prospective_usd, admin.max_project_spend_month_usd
+    if (
+        admin.max_project_spend_month_usd is not None
+        and spend.month >= admin.max_project_spend_month_usd
     ):
         return BudgetVerdict(
             False,
             "project_month",
             f"Project monthly spend limit of ${admin.max_project_spend_month_usd:.2f} reached: "
-            f"the project has spent ${spend.month:.2f} this calendar month (UTC).",
+            f"the project has spent {_spent(spend.settled_month, spend.reserved_month)} "
+            "this calendar month (UTC).",
         )
-    if admin.max_project_spend_24h_usd is not None and _exceeds_limit(
-        spend.last_24h, prospective_usd, admin.max_project_spend_24h_usd
+    if (
+        admin.max_project_spend_24h_usd is not None
+        and spend.last_24h >= admin.max_project_spend_24h_usd
     ):
         return BudgetVerdict(
             False,
             "project_24h",
             f"Project 24-hour spend limit of ${admin.max_project_spend_24h_usd:.2f} reached: "
-            f"the project has spent ${spend.last_24h:.2f} in the last 24 hours.",
+            f"the project has spent {_spent(spend.settled_24h, spend.reserved_24h)} "
+            "in the last 24 hours.",
         )
     return BudgetVerdict(True, None, None)

@@ -207,7 +207,9 @@ async def test_project_limits_include_other_job_reservations(
 ):
     _, total, recent = await budget._ledger_totals()
     baseline = total if limit == "project_month" else recent
-    await set_admin_settings_row(test_engine, **{field: baseline + 0.5})
+    # The first reservation leaves the project under the limit, the second has
+    # to count it to see the limit reached.
+    await set_admin_settings_row(test_engine, **{field: baseline + 0.25})
     reservation = await reserve(jobs[0])
     assert isinstance(reservation, ModelCallReservation)
     refused = await reserve(jobs[1])
@@ -216,8 +218,8 @@ async def test_project_limits_include_other_job_reservations(
     await reservation.cancel()
 
 
-async def test_concurrent_admissions_include_prospective_amount(test_engine: AsyncEngine, jobs):
-    await set_admin_settings_row(test_engine, max_job_cost_usd=0.5)
+async def test_concurrent_admissions_count_earlier_reservations(test_engine: AsyncEngine, jobs):
+    await set_admin_settings_row(test_engine, max_job_cost_usd=0.25)
     results = await asyncio.wait_for(
         asyncio.gather(*(reserve(jobs[0]) for _ in range(5))), timeout=10
     )
@@ -225,6 +227,65 @@ async def test_concurrent_admissions_include_prospective_amount(test_engine: Asy
     for reservation in results:
         if isinstance(reservation, ModelCallReservation):
             await reservation.cancel()
+
+
+async def test_a_job_under_its_cap_is_admitted_whatever_the_call_could_cost(
+    test_engine: AsyncEngine, jobs
+):
+    """$0.30 of a $0.31 cap is left, and the call's worst case is $30."""
+    await set_admin_settings_row(test_engine, max_job_cost_usd=0.31)
+    spent = await reserve(jobs[0])
+    assert isinstance(spent, ModelCallReservation)
+    await spent.settle([], complete=False)
+    large = await reserve_model_call(
+        job_id=str(jobs[0]),
+        kind="discovery",
+        model=MODEL,
+        provider_id="anthropic",
+        buckets=TokenUsage(input_tokens=10_000, output_tokens=10_000),
+    )
+    assert isinstance(large, ModelCallReservation)
+    await large.cancel()
+
+
+async def test_the_refusal_names_the_spend_and_the_calls_in_flight(test_engine: AsyncEngine, jobs):
+    await set_admin_settings_row(test_engine, max_job_cost_usd=0.25)
+    in_flight = await reserve(jobs[0])
+    assert isinstance(in_flight, ModelCallReservation)
+    refused = await reserve(jobs[0])
+    assert isinstance(refused, ModelCallRefused)
+    assert refused.message == (
+        "Job cost limit of $0.25 reached: the job has spent $0.00, "
+        "with $0.30 more in model calls still running."
+    )
+    await in_flight.cancel()
+
+
+async def test_report_calls_pass_the_job_cap_but_not_the_project_limits(
+    test_engine: AsyncEngine, jobs
+):
+    await set_admin_settings_row(test_engine, max_job_cost_usd=0.3)
+    spent = await reserve(jobs[0])
+    assert isinstance(spent, ModelCallReservation)
+    await spent.settle([], complete=False)
+    assert isinstance(await reserve(jobs[0]), ModelCallRefused)
+
+    async with AsyncSession(test_engine) as session:
+        job = await session.get(Job, jobs[0])
+        assert job is not None
+        job.status = "generating_report"
+        await session.commit()
+    report = await reserve(jobs[0])
+    assert isinstance(report, ModelCallReservation)
+    await report.cancel()
+
+    _, month, _ = await budget._ledger_totals()
+    await set_admin_settings_row(
+        test_engine, max_job_cost_usd=0.3, max_project_spend_month_usd=month
+    )
+    refused = await reserve(jobs[0])
+    assert isinstance(refused, ModelCallRefused)
+    assert refused.limit == "project_month"
 
 
 async def test_cancel_releases_unattempted_reservation(test_engine: AsyncEngine, jobs):
@@ -323,9 +384,14 @@ async def test_pending_cost_adds_to_provider_billed_baseline(
             )
         ),
     )
-    refused = await reserve(jobs[0])
+    # Billed $0.40 plus the first call's $0.30 in flight reaches the limit,
+    # which the ledger plus that call alone would not.
+    in_flight = await reserve(jobs[0])
+    assert isinstance(in_flight, ModelCallReservation)
+    refused = await reserve(jobs[1])
     assert isinstance(refused, ModelCallRefused)
     assert refused.limit == "project_month"
+    await in_flight.cancel()
 
 
 @pytest.mark.parametrize("unrelated_spend", [0.0, 0.2])

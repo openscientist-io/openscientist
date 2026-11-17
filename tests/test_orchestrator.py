@@ -1778,23 +1778,25 @@ class TestTurnOutcomePolicy:
             error="boom" if outcome is TurnOutcome.FAILED else "",
         )
 
-    def test_failed_turn_aborts_the_run(self):
+    async def test_failed_turn_aborts_the_run(self):
         from openscientist.orchestrator.discovery import _check_turn_outcome
 
         with pytest.raises(RuntimeError, match="Iteration 3 failed"):
-            _check_turn_outcome(self._result(TurnOutcome.FAILED), 3)
+            await _check_turn_outcome(self._result(TurnOutcome.FAILED), 3, str(uuid4()))
 
-    def test_timed_out_turn_advances(self):
+    async def test_timed_out_turn_advances(self):
         from openscientist.orchestrator.discovery import _check_turn_outcome
 
         # Must NOT raise: a wall-clock timeout advances the loop (work before the
         # cut is persisted), unlike a failure.
-        _check_turn_outcome(self._result(TurnOutcome.TIMED_OUT, tool_calls=2), 2)
+        await _check_turn_outcome(
+            self._result(TurnOutcome.TIMED_OUT, tool_calls=2), 2, str(uuid4())
+        )
 
-    def test_completed_turn_advances(self):
+    async def test_completed_turn_advances(self):
         from openscientist.orchestrator.discovery import _check_turn_outcome
 
-        _check_turn_outcome(self._result(TurnOutcome.COMPLETED), 1)
+        await _check_turn_outcome(self._result(TurnOutcome.COMPLETED), 1, str(uuid4()))
 
     def test_append_log_records_timeout(self, tmp_path: Path):
         from openscientist.orchestrator.discovery import _append_log

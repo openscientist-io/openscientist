@@ -7,6 +7,7 @@ calls via asyncio.run().
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from pathlib import Path
 from typing import Any
@@ -37,7 +38,11 @@ from openscientist.orchestrator.iteration import (
     wait_for_feedback_or_timeout,
 )
 from openscientist.orchestrator.provenance import _sync_version_metadata
-from openscientist.orchestrator.report import _persist_final_status, _run_report_generation_phase
+from openscientist.orchestrator.report import (
+    _persist_final_status,
+    _ReportOutcome,
+    _run_report_generation_phase,
+)
 from openscientist.providers.base import Provider
 from openscientist.settings import get_settings
 from openscientist.transcript import TranscriptEntry, save_transcript
@@ -72,6 +77,24 @@ async def _check_budget_before_iteration(job_id: str) -> None:
     verdict = await ask_budget(job_id=job_id)
     if not verdict.ok:
         raise _BudgetStopError(verdict.message or "The budget could not be checked")
+
+
+async def _reached_limit(job_id: str) -> str | None:
+    """The message of the budget limit the job has reached, or None while it is
+    under every limit or the check could not be answered."""
+    verdict = await ask_budget(job_id=job_id)
+    return verdict.message if not verdict.ok and verdict.limit is not None else None
+
+
+async def _explained(job_id: str, outcome: _ReportOutcome) -> _ReportOutcome:
+    """A failed report outcome whose error names why, a reached limit first,
+    since the agent's own error for a refused call is the proxy's raw reply."""
+    if outcome.success:
+        return outcome
+    reason = (
+        await _reached_limit(job_id) or outcome.error or "the agent did not write the report file."
+    )
+    return dataclasses.replace(outcome, error=reason)
 
 
 def _resolve_primary_data_file(data_files: list[str]) -> Path | None:
@@ -136,15 +159,21 @@ def _append_iteration_artifacts(
     )
 
 
-def _check_turn_outcome(result: IterationResult, iteration: int) -> None:
+async def _check_turn_outcome(result: IterationResult, iteration: int, job_id: str) -> None:
     """Apply the loop's per-turn policy.
 
-    FAILED aborts the run. TIMED_OUT is recorded and the loop advances: the
-    turn was cut by a wall-clock timeout, and any work done before the cut is
-    already persisted via the tools, so a stalled model is surfaced (in the log
-    and the honest outcome) rather than silently passed off as success.
+    FAILED aborts the run, unless the job reached a budget limit, which the
+    proxy enforces by refusing the call the turn then fails on. That stops
+    the iterations like the check before an iteration does. TIMED_OUT is
+    recorded and the loop advances: the turn was cut by a wall-clock timeout,
+    and any work done before the cut is already persisted via the tools, so a
+    stalled model is surfaced (in the log and the honest outcome) rather than
+    silently passed off as success.
     """
     if result.outcome is TurnOutcome.FAILED:
+        limit = await _reached_limit(job_id)
+        if limit is not None:
+            raise _BudgetStopError(limit)
         logger.error("Iteration %d failed: %s", iteration, result.error)
         raise RuntimeError(f"Iteration {iteration} failed: {result.error}")
     if result.outcome is TurnOutcome.TIMED_OUT:
@@ -218,7 +247,7 @@ async def _run_primary_discovery_loop(
     logger.info("Iteration 1/%d: Starting session", max_iterations)
     await _check_budget_before_iteration(job_id)
     result = await executor.run_iteration(initial_prompt, reset_session=True)
-    _check_turn_outcome(result, 1)
+    await _check_turn_outcome(result, 1, job_id)
 
     await _sync_version_metadata(job_id)
     _append_iteration_artifacts(
@@ -273,7 +302,7 @@ async def _run_primary_discovery_loop(
         )
 
         result = await executor.run_iteration(iteration_prompt, reset_session=should_reset)
-        _check_turn_outcome(result, iteration)
+        await _check_turn_outcome(result, iteration, job_id)
         _append_iteration_artifacts(
             provenance_dir=provenance_dir,
             log_file=log_file,
@@ -393,6 +422,7 @@ async def regenerate_report_async(job_dir: Path) -> dict[str, Any]:
             research_question=runtime["research_question"],
             description=runtime.get("description"),
         )
+        report_outcome = await _explained(job_id, report_outcome)
         final_status = await _persist_final_status(job_dir, report_outcome)
         ks = await KnowledgeState.load_from_database(job_id)
         return {
@@ -478,6 +508,7 @@ async def run_discovery_async(job_dir: Path) -> dict[str, Any]:
             research_question=runtime["research_question"],
             description=runtime.get("description"),
         )
+        report_outcome = await _explained(job_id, report_outcome)
         final_status = await _persist_final_status(job_dir, report_outcome, stop_note=stop_note)
         ks = await KnowledgeState.load_from_database(job_id)
         return {
