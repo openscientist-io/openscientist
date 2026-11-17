@@ -219,18 +219,22 @@ def test_the_root_one_shot_lets_the_web_write_into_and_delete_a_legacy_job(
 
         assert stack.prepare_jobs_dir(tmp_path, stack.run_command, _SLIM_IMAGE) == 0
         assert "5 entries" in capfd.readouterr().out
-        escape = (tmp_path / "jobs" / "legacy-job" / "escape").lstat()
-        assert escape.st_gid == 1001
-        secret = (tmp_path / "outside" / "secret").stat()
-        assert (secret.st_gid, secret.st_mode & 0o7777) == (0, 0o600)
+        secret = _in_container(tmp_path / "outside", "1002:1001", "stat -c '%g %a' /work/secret")
+        assert secret.returncode == 0, secret.stderr
+        assert secret.stdout.strip() == "0 600"
         assert stack.prepare_jobs_dir(tmp_path, stack.run_command, _SLIM_IMAGE) == 0
         assert "0 entries" in capfd.readouterr().out
+
+        outsider = _in_container(tmp_path / "jobs", "1003:1003", "touch /work/legacy-job/blocked")
+        assert outsider.returncode != 0
+        assert "Permission denied" in outsider.stderr
 
         # Mounted the way compose mounts it, since the checkout above it is the operator's.
         web = _in_container(
             tmp_path / "jobs",
             "1002:1001",
             "set -e\n"
+            "test \"$(stat -c '%g' /work/legacy-job/escape)\" = 1001\n"
             "echo chat > /work/legacy-job/plots/chat.md\n"
             "echo more >> /work/legacy-job/report.md\n"
             "rm -rf /work/legacy-job\n"
