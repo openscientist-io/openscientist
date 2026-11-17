@@ -120,6 +120,39 @@ def test_a_provider_and_model_already_under_their_new_names_win(checkout: Path) 
     assert not {"CLAUDE_PROVIDER", "ANTHROPIC_MODEL"} & env.keys()
 
 
+@pytest.mark.parametrize("base_url_assignment", ["", "OPENSCIENTIST_BASE_URL=\n"])
+def test_a_legacy_app_url_supplies_the_stack_base_url(
+    checkout: Path, base_url_assignment: str
+) -> None:
+    _legacy(
+        checkout,
+        LEGACY_ENV + "APP_URL=https://scientist.example.org\n" + base_url_assignment,
+    )
+
+    changes = envfiles.split_legacy_env(checkout)
+
+    values = envfiles.file_values(checkout, "env")
+    assert values["OPENSCIENTIST_BASE_URL"] == "https://scientist.example.org"
+    assert values["APP_URL"] == "https://scientist.example.org"
+    assert "Copied APP_URL to OPENSCIENTIST_BASE_URL." in changes
+
+
+def test_an_existing_base_url_wins_over_the_legacy_app_url(checkout: Path) -> None:
+    _legacy(
+        checkout,
+        LEGACY_ENV
+        + "APP_URL=https://scientist.example.org\n"
+        + "OPENSCIENTIST_BASE_URL=https://research.example.org\n",
+    )
+
+    changes = envfiles.split_legacy_env(checkout)
+
+    values = envfiles.file_values(checkout, "env")
+    assert values["OPENSCIENTIST_BASE_URL"] == "https://research.example.org"
+    assert values["APP_URL"] == "https://scientist.example.org"
+    assert "Copied APP_URL to OPENSCIENTIST_BASE_URL." not in changes
+
+
 def test_a_split_checkout_is_left_alone(checkout: Path) -> None:
     _legacy(checkout)
     (checkout / ".env.db").write_text("POSTGRES_PASSWORD=split\n", encoding="utf-8")
