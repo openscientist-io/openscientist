@@ -298,11 +298,41 @@ async def test_cancel_releases_unattempted_reservation(test_engine: AsyncEngine,
     assert await rows(test_engine, jobs[0]) == []
 
 
-@pytest.mark.parametrize("field", ["max_project_spend_month_usd", "max_project_spend_24h_usd"])
-async def test_deleted_job_closes_reservation(test_engine: AsyncEngine, jobs, field):
+async def unattributed_rows(engine: AsyncEngine) -> list[CostRecord]:
+    """The cost rows of this file's model whose job no longer exists."""
+    async with AsyncSession(engine) as session:
+        return list(
+            (
+                await session.scalars(
+                    select(CostRecord).where(CostRecord.job_id.is_(None), CostRecord.model == MODEL)
+                )
+            ).all()
+        )
+
+
+@pytest_asyncio.fixture
+async def no_unattributed_rows(test_engine: AsyncEngine) -> AsyncIterator[None]:
+    """Remove the cost rows a test leaves for a deleted job."""
+    yield
+    async with test_engine.begin() as conn:
+        await conn.execute(
+            delete(CostRecord).where(CostRecord.job_id.is_(None), CostRecord.model == MODEL)
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "limit"),
+    [
+        ("max_project_spend_month_usd", "project_month"),
+        ("max_project_spend_24h_usd", "project_24h"),
+    ],
+)
+async def test_a_call_settled_after_its_job_is_deleted_still_counts_toward_the_project(
+    test_engine: AsyncEngine, jobs, no_unattributed_rows: None, field: str, limit: str
+):
     _, total, recent = await budget._ledger_totals()
     baseline = total if field == "max_project_spend_month_usd" else recent
-    await set_admin_settings_row(test_engine, **{field: baseline + 0.5})
+    await set_admin_settings_row(test_engine, **{field: baseline + 0.25})
     reservation = await reserve(jobs[0])
     assert isinstance(reservation, ModelCallReservation)
     async with test_engine.begin() as conn:
@@ -310,10 +340,31 @@ async def test_deleted_job_closes_reservation(test_engine: AsyncEngine, jobs, fi
     await reservation.settle([], complete=False)
     assert reservation._closed
     assert reservation._id not in llm_reservations._outstanding
-    assert await rows(test_engine, jobs[0]) == []
-    next_call = await reserve(jobs[1])
-    assert isinstance(next_call, ModelCallReservation)
-    await next_call.cancel()
+    [row] = await unattributed_rows(test_engine)
+    assert row.cost_usd == pytest.approx(0.3)
+    assert row.operation_type == "discovery_estimated"
+    # The 0.3 the deleted job spent puts the project over its 0.25 limit.
+    refused = await reserve(jobs[1])
+    assert isinstance(refused, ModelCallRefused)
+    assert refused.limit == limit
+
+
+async def test_an_unreserved_call_of_a_deleted_job_is_recorded_without_a_job(
+    test_engine: AsyncEngine, no_unattributed_rows: None
+):
+    _, month_before, _ = await budget._ledger_totals()
+    assert await llm_metering.record_model_call(
+        job_id=str(uuid4()),
+        kind="discovery",
+        model=MODEL,
+        provider_id="anthropic",
+        buckets=TokenUsage(input_tokens=0, output_tokens=703),
+    )
+    [row] = await unattributed_rows(test_engine)
+    assert (row.output_tokens, row.user_id, row.iteration) == (703, None, None)
+    assert row.cost_usd == pytest.approx(1.406)
+    _, month_after, _ = await budget._ledger_totals()
+    assert month_after == pytest.approx(month_before + 1.406)
 
 
 async def test_record_model_call_idempotent_retry(test_engine: AsyncEngine, jobs):
