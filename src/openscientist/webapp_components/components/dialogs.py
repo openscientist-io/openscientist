@@ -433,7 +433,13 @@ async def confirm_delete_job(
     on_deleted: Callable[[], None | Awaitable[None]] | None,
     dialog: ui.dialog,
 ) -> None:
-    """Delete a job (cancelling it first when active) as its current owner."""
+    """Delete a job (cancelling it first when active) as its current owner.
+
+    The page may be redrawn while the job is deleted, since its status poll
+    finds the job gone and clears the page, so every message after an await
+    goes through the page's client rather than the confirm button's slot.
+    """
+    client = ui.context.client
     dialog.close()
     try:
         current_user_id = get_current_user_id()
@@ -442,7 +448,8 @@ async def confirm_delete_job(
             return
         access = await current_job_access(job_id, current_user_id)
         if access is None or not access.is_owner:
-            ui.notify("Only the job owner can delete this job", type="negative")
+            with client:
+                ui.notify("Only the job owner can delete this job", type="negative")
             return
 
         job_info = await job_manager.get_job(job_id)
@@ -450,17 +457,22 @@ async def confirm_delete_job(
             await job_manager.cancel_job(job_id)
 
         await job_manager.delete_job(job_id)
-        short_id = job_id[-8:] if len(job_id) > 8 else job_id
+    except ValueError:
+        with client:
+            ui.notify("Invalid job or job cannot be deleted in its current state.", type="negative")
+        return
+    except Exception as e:
+        logger.error("Failed to delete job %s: %s", job_id, e, exc_info=True)
+        with client:
+            ui.notify("Failed to delete job. Please try again.", type="negative")
+        return
+    short_id = job_id[-8:] if len(job_id) > 8 else job_id
+    with client:
         ui.notify(f"Job {short_id} deleted successfully", type="positive")
         if on_deleted:
             result = on_deleted()
             if result is not None:
                 await result
-    except ValueError:
-        ui.notify("Invalid job or job cannot be deleted in its current state.", type="negative")
-    except Exception as e:
-        logger.error("Failed to delete job %s: %s", job_id, e, exc_info=True)
-        ui.notify("Failed to delete job. Please try again.", type="negative")
 
 
 def render_delete_dialog(

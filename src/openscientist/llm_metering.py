@@ -486,7 +486,8 @@ async def record_model_call(
     estimated: bool = False,
     created_at: datetime | None = None,
 ) -> bool:
-    """Persist a cost row idempotently or settle it when its job no longer exists."""
+    """Persist a cost row idempotently. A call whose job was deleted while it
+    ran is still recorded, without a job or owner, so the project limits count it."""
     try:
         uid = UUID(job_id)
     except ValueError:
@@ -510,15 +511,14 @@ async def record_model_call(
             job = await session.get(JobModel, uid)
             if job is None:
                 logger.warning(
-                    "Cost of job %s was not saved: the job no longer exists "
-                    "(provider=%s model=%s input=%d output=%d)",
+                    "Job %s no longer exists, so the cost of its model call is recorded "
+                    "without a job (provider=%s model=%s input=%d output=%d)",
                     job_id,
                     provider_id,
                     model,
                     buckets.input_tokens,
                     buckets.output_tokens,
                 )
-                return True
             if record_id is None:
                 record_id = await session.scalar(select(func.uuidv7()))
             operation, iteration = _operation_labels(job, kind)
@@ -535,8 +535,8 @@ async def record_model_call(
                 )
             statement = insert(CostRecord).values(
                 id=record_id,
-                job_id=uid,
-                user_id=job.owner_id,
+                job_id=job.id if job is not None else None,
+                user_id=job.owner_id if job is not None else None,
                 iteration=iteration,
                 operation_type=f"{operation}_estimated" if estimated else operation,
                 provider=provider_id,
