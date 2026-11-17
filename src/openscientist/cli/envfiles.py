@@ -180,6 +180,9 @@ def split_legacy_env(root: Path) -> list[str]:
             line = _rewritten_line(line, LEGACY_RENAMES[key], values.get(key, ""))
             renamed.append(f"{key} to {LEGACY_RENAMES[key]}")
         kept.append(line)
+    copy_app_url = bool(values.get("APP_URL")) and not values.get("OPENSCIENTIST_BASE_URL")
+    if copy_app_url:
+        kept = set_value(kept, "OPENSCIENTIST_BASE_URL", values["APP_URL"])
     carried = {key: file for key, file in moved.items() if values.get(key)}
     for key, file in carried.items():
         set_file_value(root, file, key, values[key])
@@ -194,6 +197,8 @@ def split_legacy_env(root: Path) -> list[str]:
     changes = [f"Split .env into .env, .env.db and .env.owner. The original is {backup.name}."]
     changes += [f"Moved {key} to {ENV_FILES[file]}." for key, file in carried.items()]
     changes += [f"Renamed {pair}." for pair in renamed]
+    if copy_app_url:
+        changes.append("Copied APP_URL to OPENSCIENTIST_BASE_URL.")
     if dropped:
         changes.append(f"Removed {', '.join(dropped)}, which the stack no longer reads from .env.")
     if generated:
