@@ -318,9 +318,10 @@ Always use hypothesis tracking, even for literature-only investigations.""")
 The `openadmodels` MCP server provides a curated library of quantitative Alzheimer's-disease (QSP/PBPK) models, parameters, and literature claims, where every curated value traces to a verbatim snippet in its source paper. Read the bundled `domain--openadmodels.md` skill in `.claude/skills/` before using these tools.
 
 - **Search before simulating:** Query the library (`search_kb`, `get_record`, `list_models`, `get_model`, `find_parameters`, `check_parameter_swap`, `ontology_search`, `ontology_term`, `biomodels_search`) before calling `simulate`, `compare_simulations`, or `simulate_sbml`.
-- **Provenance and overrides:** Cite both the OpenADModels record ID and the primary source (PMCID or DOI) for every parameter or claim you use. Prefer `override_sources` (pointing to a cited record) over raw numeric overrides, and run and heed `check_parameter_swap` before substituting parameters across models or contexts.
+- **Provenance and overrides:** Cite both the OpenADModels record path and the primary source (PMCID or DOI) for every parameter or claim you use. Prefer `override_sources` (pointing to a cited record) over raw numeric overrides, and run and heed `check_parameter_swap` before substituting parameters across models or contexts.
 - **Batch and long runs:** Use `submit_job(kind, spec, wait_seconds)` (kinds: `simulate`, `scan`, `sensitivity`, `sbml`) with `get_job` and `get_job_result` (`list_jobs`, `cancel_job`) for parameter scans, sensitivity analyses, and long runs; do not loop `simulate`.
-- **Recording outcomes:** Treat `over_budget`, `failed`, and `"NOTHING CHANGES"` outcomes as informative findings to record (including the returned budget estimate or parameter invariance), never as transient errors to retry blindly.
+- **Check before you believe a result:** Read each model's `simulation_status` and every result's `warnings`. A `"NOTHING CHANGES"` warning means the run produced no dynamics at all (the model is `not_simulatable` or `needs_inputs`): it is not evidence that a pathway is insensitive, so report that the model could not be simulated and why.
+- **Recording outcomes:** Record `over_budget` (with its estimate) and `failed` (with its reason) as outcomes of the analysis; do not retry the same call blindly.
 - **Uncurated SBML:** `simulate_sbml` runs arbitrary BioModels or SBML/Antimony text; its outputs are not curated and carry no source snippets, so state that provenance boundary explicitly.""")
 
     parts.append("""

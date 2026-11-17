@@ -20,20 +20,23 @@ Inspect existing models, parameters, ontology terms, and literature claims befor
 
 ## 2. Provenance and Parameter Overrides
 
-- **Cite both IDs:** For every curated model, parameter, or claim used in an analysis or report, cite both the OpenADModels record ID and its source publication identifier (`PMCID` or `DOI`).
-- **Prefer `override_sources`:** Pass cited OpenADModels record IDs via `override_sources` instead of raw numeric overrides whenever a curated record exists.
-- **Heed `check_parameter_swap`:** Run `check_parameter_swap` before applying a parameter from another study or context. If it flags unit, species, or context mismatches, respect the warning and document any limitation.
+- **Cite both:** For every curated model, parameter, or claim used in an analysis or report, cite the OpenADModels record path (for example `kb/models/michaels_2020/parameters/k_plus.yaml`) and its source publication (`PMCID` or `DOI`).
+- **Prefer `override_sources`:** It maps a parameter id to the path of the record the value comes from (another model's parameter, or a parameter claim). The value is checked for units, rate-law form and process before it is applied. Raw `overrides` are applied unchecked.
+- **Heed `check_parameter_swap`:** Run it before moving a value between models. If the verdict is not `compatible`, `compatible_after_conversion` or `zero_only`, the two papers mean different things by that constant: say so and do not apply it silently.
 
-## 3. Running Simulations and Batch Jobs
+## 3. Check That a Model Can Be Simulated
 
-- **Single runs and comparisons:** Use `simulate` for a single curated-model run and `compare_simulations` to compare baseline and perturbed conditions (returns JSON metrics plus a PNG plot).
-- **Scans, sensitivity, and long jobs:** Never loop `simulate` across parameter grids or perturbations. Submit a batch job with `submit_job(kind, spec, wait_seconds)` using `kind` in `"simulate"`, `"scan"`, `"sensitivity"`, or `"sbml"`, then poll or retrieve outputs with `get_job(job_id)` and `get_job_result(job_id)` (`list_jobs()` and `cancel_job(job_id)` manage active jobs).
-- **Uncurated SBML (`simulate_sbml`):** `simulate_sbml` runs arbitrary SBML or Antimony models (by BioModels ID or model text). Results from `simulate_sbml` (and `"sbml"` jobs) are **not curated** and carry **no verbatim source snippets**; state this explicitly whenever reporting them.
+- `list_models` and `get_model` report each model's `simulation_status`: `simulatable`, `needs_inputs` (pass `initial_values`), or `not_simulatable` (an analytical fit, a statistical model, or rate laws given only as prose), with `simulation_notes` saying why.
+- Every result carries `warnings`. **`NOTHING CHANGES IN THIS SIMULATION` means the run produced no dynamics at all.** It is not evidence that a pathway is insensitive to a parameter. Report that the model could not be simulated and why; do not report a flat line as a finding.
 
-## 4. Interpreting Outcomes and Filing Suggestions
+## 4. Running Simulations and Batch Jobs
 
-- **Record non-change and budget outcomes as findings:**
-  - `over_budget`: A batch job that exceeds its time budget returns status `over_budget` with a runtime estimate instead of running. Record the estimate and narrow the spec if needed; do not retry the identical job blindly.
-  - `failed`: Record the failure mode and numerical/biological reason rather than repeating the same call.
-  - `"NOTHING CHANGES"`: Invariance of an output to a parameter or perturbation is a mechanistic negative finding. Record it as evidence about pathway insensitivity rather than treating it as a broken run.
-- **Library feedback:** When you identify a missing paper value or curation correction with clear provenance, you may file a maintainer suggestion with `suggest_change(title, description, record_path, kind, proposed_yaml, submitted_by)`.
+- **Single runs and comparisons:** `simulate` runs a curated model once; `compare_simulations` runs it as curated and with changed values, and returns the final-value differences and a plot.
+- **Scans and sensitivity:** Do not loop `simulate`. Submit `submit_job(kind, spec, wait_seconds)` with `kind` `"scan"` (a grid of parameter values) or `"sensitivity"` (each parameter moved down and up), then `get_job(job_id)` until it finishes and `get_job_result(job_id)` for the summary, the plot and links to the CSV files. Give `duration` yourself when you can: left out, it is chosen from the unchanged model, and a changed value may need longer.
+- **Budget:** A batch that would not finish inside its time limit returns `over_budget` with an estimate instead of running. Record the estimate and submit fewer conditions; do not resubmit the same job.
+- **Failures:** A `failed` job says why (an unknown parameter or observable, a solver error). Fix the request rather than repeating it.
+- **Models outside the library:** `simulate_sbml` runs any SBML or Antimony model, by BioModels id or as text. These models are **not curated here** and their values carry **no source snippets**; say so whenever you report them. An override of a species sets its starting concentration; a quantity fixed by an assignment rule cannot be overridden.
+
+## 5. Sending Corrections Back
+
+When you find a value, unit or citation in the library that the source paper contradicts, or something missing that a paper clearly states, `suggest_change(title, description, record_path, kind, proposed_yaml, submitted_by)` files it with the maintainers. Say what the source states and where (table, figure or paragraph).
