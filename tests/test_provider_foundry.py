@@ -1,15 +1,22 @@
 """Tests for Azure Foundry provider."""
 
 import time
+from collections.abc import Iterator
+from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import azure.identity
+import azure.mgmt.costmanagement
 import pytest
 from azure.core.credentials import AccessToken
 from azure.core.exceptions import ClientAuthenticationError
+from azure.mgmt.costmanagement.models import QueryDefinition, QueryResult
 
 from openscientist.providers import foundry
 from openscientist.providers.base import StaticHeadersSigning, UpstreamCredentialError
-from openscientist.providers.foundry import EntraTokenSigning, FoundryProvider
+from openscientist.providers.foundry import EntraTokenSigning, FoundryProvider, azure_bill
+from openscientist.settings import clear_settings_cache
 
 
 class FakeAzureCredential:
@@ -192,3 +199,93 @@ def test_airgap_posture_is_unsupported_without_credentials() -> None:
         SimpleNamespace(anthropic_foundry_base_url=None, anthropic_foundry_resource=None)  # type: ignore[arg-type]
     )
     assert posture.mode is AirgapEgress.UNSUPPORTED
+
+
+_AZURE_LOGIN = {
+    "AZURE_TENANT_ID": "tenant",
+    "AZURE_CLIENT_ID": "client",
+    "AZURE_CLIENT_SECRET": "secret",
+}
+
+
+@pytest.fixture
+def foundry_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[pytest.MonkeyPatch]:
+    """Foundry with an API key and no Azure billing setting."""
+    monkeypatch.setenv("OPENSCIENTIST_PROVIDER", "foundry")
+    monkeypatch.setenv("ANTHROPIC_FOUNDRY_RESOURCE", "my-foundry-res")
+    monkeypatch.setenv("ANTHROPIC_FOUNDRY_API_KEY", "foundry-key")
+    for key in ("AZURE_SUBSCRIPTION_ID", "AZURE_RESOURCE_GROUP", *_AZURE_LOGIN):
+        monkeypatch.delenv(key, raising=False)
+    clear_settings_cache()
+    yield monkeypatch
+    clear_settings_cache()
+
+
+class _CostQuery:
+    """Azure Cost Management's query API, answering every usage query with one
+    total and recording the scope and period asked for."""
+
+    def __init__(self, totals: list[float]) -> None:
+        self.totals = totals
+        self.queries: list[tuple[str, datetime, datetime]] = []
+
+    def usage(self, scope: str, params: QueryDefinition) -> QueryResult:
+        period = params.time_period
+        assert period is not None
+        self.queries.append((scope, period.from_property, period.to))
+        return QueryResult(rows=[[self.totals[len(self.queries) - 1], "USD"]])
+
+
+def test_without_the_azure_login_the_bill_is_not_read_and_the_note_names_the_missing_keys(
+    foundry_env: pytest.MonkeyPatch,
+) -> None:
+    foundry_env.setenv("AZURE_SUBSCRIPTION_ID", "subscription")
+    clear_settings_cache()
+    info = FoundryProvider().get_cost_info()
+    assert info.month_spend_usd is None
+    assert info.recent_spend_usd is None
+    assert info.data_lag_note == azure_bill({"AZURE_SUBSCRIPTION_ID": "subscription"}).message
+    assert "AZURE_TENANT_ID, AZURE_CLIENT_ID and AZURE_CLIENT_SECRET are not" in str(
+        info.data_lag_note
+    )
+
+
+@pytest.mark.parametrize(
+    ("resource_group", "scope"),
+    [
+        (None, "/subscriptions/subscription"),
+        ("openscientist-prod", "/subscriptions/subscription/resourceGroups/openscientist-prod"),
+    ],
+)
+def test_with_all_four_keys_the_bill_is_read_for_the_subscription_or_resource_group(
+    foundry_env: pytest.MonkeyPatch, resource_group: str | None, scope: str
+) -> None:
+    foundry_env.setenv("AZURE_SUBSCRIPTION_ID", "subscription")
+    for key, value in _AZURE_LOGIN.items():
+        foundry_env.setenv(key, value)
+    if resource_group is not None:
+        foundry_env.setenv("AZURE_RESOURCE_GROUP", resource_group)
+    clear_settings_cache()
+    query = _CostQuery(totals=[42.5, 3.25])
+    logins: list[tuple[str, str, str]] = []
+
+    def credential(*, tenant_id: str, client_id: str, client_secret: str) -> object:
+        logins.append((tenant_id, client_id, client_secret))
+        return object()
+
+    foundry_env.setattr(azure.identity, "ClientSecretCredential", credential)
+    foundry_env.setattr(
+        azure.mgmt.costmanagement,
+        "CostManagementClient",
+        lambda _credential: SimpleNamespace(query=query),
+    )
+
+    info = FoundryProvider().get_cost_info(lookback_hours=24)
+
+    assert logins == [("tenant", "client", "secret")]
+    assert (info.month_spend_usd, info.recent_spend_usd) == (42.5, 3.25)
+    assert info.metadata["scope"] == scope
+    (month_scope, month_from, _), (recent_scope, recent_from, recent_to) = query.queries
+    assert month_scope == recent_scope == scope
+    assert (month_from.day, month_from.hour) == (1, 0)
+    assert recent_to - recent_from == timedelta(hours=24)
