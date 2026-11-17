@@ -72,6 +72,10 @@ def _foundry_tables() -> dict[str, dict[str, str | int | bool]]:
         "anthropic_foundry_base_url": "",
         "anthropic_foundry_api_key": "key",
         "openscientist_model": "",
+        "azure_subscription_id": "",
+        "azure_resource_group": "",
+        "azure_tenant_id": "",
+        "azure_client_id": "",
     }
     return tables
 
@@ -428,9 +432,9 @@ def test_write_answers_records_the_skip_a_billed_check_got(checkout: Path, monke
 
     monkeypatch.setattr(livecheck, "perform_live_check", fake)
     path = checkout / "answers.toml"
-    # Provider 5 is foundry. Its four questions, then the declined billed check,
-    # then every later question at its default.
-    input_lines = ["5", "res", "", "key", "", "n", *wizard_tail()]
+    # Provider 5 is foundry. Its four model questions, its five billing questions
+    # left empty, then the declined billed check, then every later question at its default.
+    input_lines = ["5", "res", "", "key", "", "", "", "", "", "", "n", *wizard_tail()]
     result = runner.invoke(
         cli_app.app,
         ["setup", "--write-answers", str(path)],

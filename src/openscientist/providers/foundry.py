@@ -4,6 +4,8 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -36,6 +38,65 @@ ENTRA_SCOPE = "https://ai.azure.com/.default"
 
 # A cached token is minted again once it has less than this left to live.
 _ENTRA_REFRESH_MARGIN_SECONDS = 300
+
+#: The optional billing settings that let the project spend limits read the
+#: Azure bill from Azure Cost Management, in the order messages name them.
+AZURE_BILLING_KEYS = (
+    "AZURE_SUBSCRIPTION_ID",
+    "AZURE_TENANT_ID",
+    "AZURE_CLIENT_ID",
+    "AZURE_CLIENT_SECRET",
+)
+
+_LEDGER_ONLY = (
+    "With Foundry, the project spend limits count only OpenScientist's own cost record, "
+    "priced from token counts, and never the Azure bill."
+)
+
+
+@dataclass(frozen=True)
+class AzureBill:
+    """Whether the Foundry project spend limits count the Azure bill, and the
+    sentence telling an operator so."""
+
+    counted: bool
+    message: str
+
+
+def _names(keys: list[str]) -> str:
+    return keys[0] if len(keys) == 1 else f"{', '.join(keys[:-1])} and {keys[-1]}"
+
+
+def azure_bill(values: Mapping[str, Any]) -> AzureBill:
+    """Which bill the Foundry project spend limits count, from the Azure
+    billing settings in ``values`` keyed by env name. An empty value counts as unset."""
+    present = [key for key in AZURE_BILLING_KEYS if values.get(key)]
+    if not present:
+        return AzureBill(
+            False,
+            f"{_LEDGER_ONLY} {_names(list(AZURE_BILLING_KEYS))} are optional billing settings "
+            "that let them also count the Azure bill from Azure Cost Management.",
+        )
+    missing = [key for key in AZURE_BILLING_KEYS if key not in present]
+    if missing:
+        return AzureBill(
+            False,
+            f"{_LEDGER_ONLY} {_names(present)} {'is' if len(present) == 1 else 'are'} set, "
+            f"but {_names(missing)} {'is' if len(missing) == 1 else 'are'} not. "
+            "Set all four to count the Azure bill.",
+        )
+    resource_group = values.get("AZURE_RESOURCE_GROUP")
+    scope = (
+        f"resource group {resource_group}"
+        if resource_group
+        else "the whole subscription, which includes the spend of every other deployment "
+        "sharing it. Set AZURE_RESOURCE_GROUP to count one resource group only"
+    )
+    return AzureBill(
+        True,
+        "With Foundry, the project spend limits count the larger of OpenScientist's own "
+        f"cost record and the Azure bill of {scope}.",
+    )
 
 
 class EntraTokenSigning(UpstreamSigning):
@@ -177,6 +238,11 @@ class FoundryProvider(ClaudeCompatible):
             ),
             SetupQuestion("ANTHROPIC_FOUNDRY_API_KEY", kind="secret"),
             *super().setup_questions(),
+            SetupQuestion("AZURE_SUBSCRIPTION_ID"),
+            SetupQuestion("AZURE_RESOURCE_GROUP"),
+            SetupQuestion("AZURE_TENANT_ID"),
+            SetupQuestion("AZURE_CLIENT_ID"),
+            SetupQuestion("AZURE_CLIENT_SECRET", kind="secret"),
         )
 
     @classmethod
@@ -355,26 +421,27 @@ class FoundryProvider(ClaudeCompatible):
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
         """Get Azure Foundry cost information from Azure Cost Management.
 
-        Requires AZURE_SUBSCRIPTION_ID. AZURE_RESOURCE_GROUP optionally scopes
-        the query to one resource group. Authentication uses AZURE_TENANT_ID,
-        AZURE_CLIENT_ID and AZURE_CLIENT_SECRET. Cost data typically has a 1–3
-        day lag in Azure.
+        Requires AZURE_SUBSCRIPTION_ID and the AZURE_TENANT_ID, AZURE_CLIENT_ID
+        and AZURE_CLIENT_SECRET service principal. AZURE_RESOURCE_GROUP
+        optionally scopes the query to one resource group. Cost data typically
+        has a 1–3 day lag in Azure.
         """
         now = datetime.now(UTC)
-        settings = get_settings()
-        subscription_id = settings.provider.azure_subscription_id
+        provider = get_settings().provider
+        subscription_id = provider.azure_subscription_id
+        tenant_id = provider.azure_tenant_id
+        client_id = provider.azure_client_id
+        client_secret = provider.azure_client_secret
 
-        if not subscription_id:
-            resource_name = settings.provider.anthropic_foundry_resource or "Azure AI Foundry"
+        if not (subscription_id and tenant_id and client_id and client_secret):
+            resource_name = provider.anthropic_foundry_resource or "Azure AI Foundry"
             return CostInfo(
                 provider_name=f"Azure AI Foundry ({resource_name})",
                 month_spend_usd=None,
                 recent_spend_usd=None,
                 recent_period_hours=lookback_hours,
                 last_updated=now,
-                data_lag_note=(
-                    "Set AZURE_SUBSCRIPTION_ID to enable Azure Cost Management tracking"
-                ),
+                data_lag_note=azure_bill(provider.model_dump(by_alias=True)).message,
                 metadata={"resource": resource_name},
             )
 
@@ -397,24 +464,7 @@ class FoundryProvider(ClaudeCompatible):
                 ),
             )
 
-        tenant_id = settings.provider.azure_tenant_id
-        client_id = settings.provider.azure_client_id
-        client_secret = settings.provider.azure_client_secret
-
-        if not (tenant_id and client_id and client_secret):
-            return CostInfo(
-                provider_name="Azure AI Foundry",
-                month_spend_usd=None,
-                recent_spend_usd=None,
-                recent_period_hours=lookback_hours,
-                last_updated=now,
-                data_lag_note=(
-                    "Set AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET "
-                    "to enable Azure Cost Management tracking."
-                ),
-            )
-
-        resource_group = settings.provider.azure_resource_group
+        resource_group = provider.azure_resource_group
         if resource_group:
             scope = f"/subscriptions/{subscription_id}/resourceGroups/{resource_group}"
         else:
@@ -435,7 +485,7 @@ class FoundryProvider(ClaudeCompatible):
             recent_start = now - timedelta(hours=lookback_hours)
             recent_spend = _query_azure_cost_usd(client, scope, recent_start, now)
 
-            resource_name = settings.provider.anthropic_foundry_resource or "Azure AI Foundry"
+            resource_name = provider.anthropic_foundry_resource or "Azure AI Foundry"
             return CostInfo(
                 provider_name=f"Azure AI Foundry ({resource_name})",
                 month_spend_usd=month_spend,
@@ -445,7 +495,7 @@ class FoundryProvider(ClaudeCompatible):
                 data_lag_note="Azure billing data may have 1–3 day lag",
                 metadata={
                     "scope": scope,
-                    "resource": settings.provider.anthropic_foundry_resource,
+                    "resource": provider.anthropic_foundry_resource,
                 },
             )
 
