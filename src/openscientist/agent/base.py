@@ -249,13 +249,20 @@ class AbstractAgent[P: Provider](abc.ABC):
         return build_system_prompt(cls.prompt_fragments())
 
     @classmethod
-    def job_doc(cls, *, use_hypotheses: bool = False, phenix_available: bool = False) -> str:
+    def job_doc(
+        cls,
+        *,
+        use_hypotheses: bool = False,
+        phenix_available: bool = False,
+        openadmodels_available: bool = False,
+    ) -> str:
         """The full per-job instruction doc for this backend."""
         from openscientist.prompts.common import build_job_doc
 
         return build_job_doc(
             use_hypotheses=use_hypotheses,
             phenix_available=phenix_available,
+            openadmodels_available=openadmodels_available,
             frags=cls.prompt_fragments(),
         )
 
@@ -268,13 +275,21 @@ class AbstractAgent[P: Provider](abc.ABC):
 
     @classmethod
     def discovery_system_prompt(
-        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
+        cls,
+        *,
+        use_hypotheses: bool = False,
+        phenix_available: bool = False,
+        openadmodels_available: bool = False,
     ) -> str:
         """The system prompt this backend uses for a discovery run. The default is the
         full ``job_doc``, which the harness delivers via its job file (``AGENTS.md``
         for codex). Claude overrides it with the concise ``system_prompt``, because
         its rich doc is written into ``.claude/`` separately."""
-        return cls.job_doc(use_hypotheses=use_hypotheses, phenix_available=phenix_available)
+        return cls.job_doc(
+            use_hypotheses=use_hypotheses,
+            phenix_available=phenix_available,
+            openadmodels_available=openadmodels_available,
+        )
 
     # ----- per-job side effects (run where the agent instance lives) -----
 

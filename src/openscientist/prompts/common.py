@@ -166,6 +166,7 @@ def build_job_doc(
     *,
     use_hypotheses: bool = False,
     phenix_available: bool = False,
+    openadmodels_available: bool = False,
     frags: BackendFragments,
 ) -> str:
     """Backend-agnostic per-job instructions doc (the ``CLAUDE.md`` /
@@ -308,6 +309,19 @@ Always use hypothesis tracking, even for literature-only investigations.""")
 
 - `alphafold_pdb` accepts a job-relative PDB path or a bare filename inside `data/`.
 - `pae_json` accepts an optional job-relative PAE file path or a bare filename inside `data/`.""")
+
+    # OpenADModels MCP tools (only when OpenADModels is configured and reachable)
+    if openadmodels_available:
+        parts.append("""
+### Alzheimer's Disease Quantitative Models (`openadmodels` MCP server is available)
+
+The `openadmodels` MCP server provides a curated library of quantitative Alzheimer's-disease (QSP/PBPK) models, parameters, and literature claims, where every curated value traces to a verbatim snippet in its source paper. Read the bundled `domain--openadmodels.md` skill in `.claude/skills/` before using these tools.
+
+- **Search before simulating:** Query the library (`search_kb`, `get_record`, `list_models`, `get_model`, `find_parameters`, `check_parameter_swap`, `ontology_search`, `ontology_term`, `biomodels_search`) before calling `simulate`, `compare_simulations`, or `simulate_sbml`.
+- **Provenance and overrides:** Cite both the OpenADModels record ID and the primary source (PMCID or DOI) for every parameter or claim you use. Prefer `override_sources` (pointing to a cited record) over raw numeric overrides, and run and heed `check_parameter_swap` before substituting parameters across models or contexts.
+- **Batch and long runs:** Use `submit_job(kind, spec, wait_seconds)` (kinds: `simulate`, `scan`, `sensitivity`, `sbml`) with `get_job` and `get_job_result` (`list_jobs`, `cancel_job`) for parameter scans, sensitivity analyses, and long runs; do not loop `simulate`.
+- **Recording outcomes:** Treat `over_budget`, `failed`, and `"NOTHING CHANGES"` outcomes as informative findings to record (including the returned budget estimate or parameter invariance), never as transient errors to retry blindly.
+- **Uncurated SBML:** `simulate_sbml` runs arbitrary BioModels or SBML/Antimony text; its outputs are not curated and carry no source snippets, so state that provenance boundary explicitly.""")
 
     parts.append("""
 ### Reading Data Files

@@ -32,6 +32,8 @@ NOT_ASKED = {
     "OPENSCIENTIST_HOST_PROJECT_DIR": "checkout path, recorded by setup and start, never asked",
     "DREMIO_USER": "Berkeley Lab lakehouse credentials, optional",
     "DREMIO_PASSWORD": "Berkeley Lab lakehouse credentials, optional",
+    "OPENADMODELS_MCP_URL": "optional hosted OpenADModels MCP endpoint, edited in .env",
+    "OPENADMODELS_MCP_KEY": "optional hosted OpenADModels MCP bearer key, edited in .env",
     "APP_URL": "derives from OPENSCIENTIST_BASE_URL, the wizard writes it",
 }
 

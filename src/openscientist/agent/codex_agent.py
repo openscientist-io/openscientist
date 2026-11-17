@@ -33,6 +33,7 @@ from openscientist.agent.base import (
     TranscriptEntry,
     TurnOutcome,
 )
+from openscientist.agent.mcp_specs import build_openadmodels_mcp_spec
 from openscientist.providers.base import CodexCompatible
 from openscientist.transcript import CODEX
 
@@ -115,22 +116,25 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
         env table. Codex passes no process environment to MCP server children,
         only this table, so the whole parent environment is forwarded and the
         per-job ``OPENSCIENTIST_*`` values are overlaid."""
-        return super()._subprocess_env(self._job_dir())
+        env = super()._subprocess_env(self._job_dir())
+        env.pop("OPENADMODELS_MCP_KEY", None)
+        return env
 
     def _write_codex_config(self) -> None:
         """Write the per-job ``$CODEX_HOME/config.toml`` selecting the
-        provider and wiring the ``openscientist-tools`` MCP server. An
-        air-gapped run turns off codex's web search, which asks OpenAI to
-        search and which the LLM proxy refuses."""
+        provider and wiring the ``openscientist-tools`` MCP server (plus
+        optional HTTP MCP servers). An air-gapped run turns off codex's web
+        search, which asks OpenAI to search and which the LLM proxy refuses."""
         from openscientist.settings import get_settings
 
+        settings = get_settings()
         home = self._codex_home()
         home.mkdir(parents=True, exist_ok=True)
 
         lines = [
             f"model_provider = {_toml_str(self._provider.codex_model_provider_id())}",
             # Top-level keys precede the provider's tables.
-            *(['web_search = "disabled"'] if get_settings().airgap.enabled else []),
+            *(['web_search = "disabled"'] if settings.airgap.enabled else []),
             *self._provider.codex_config_overrides(),
             "",
             f"[mcp_servers.{_MCP_SERVER_NAME}]",
@@ -139,6 +143,20 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
             f"[mcp_servers.{_MCP_SERVER_NAME}.env]",
             *(f"{key} = {_toml_str(value)}" for key, value in self._mcp_env().items()),
         ]
+        openadmodels_spec = build_openadmodels_mcp_spec(settings, log=logger)
+        if openadmodels_spec is not None:
+            lines.extend(
+                [
+                    "",
+                    f"[mcp_servers.{openadmodels_spec.name}]",
+                    f"url = {_toml_str(openadmodels_spec.url)}",
+                    *(
+                        ['bearer_token_env_var = "OPENADMODELS_MCP_KEY"']
+                        if settings.openadmodels.mcp_key
+                        else []
+                    ),
+                ]
+            )
         (home / "config.toml").write_text("\n".join(lines) + "\n")
 
     def _write_agents_md(self) -> None:
@@ -149,11 +167,18 @@ class CodexAgent(AbstractAgent[CodexCompatible]):
     def _make_codex(self) -> AsyncCodex:
         """Build an ``AsyncCodex`` whose app-server reads the per-job config
         home and the provider's auth env."""
+        from openscientist.settings import get_settings
+
+        settings = get_settings()
         env = {
             **os.environ,
             **self._provider.codex_sdk_env(),
             "CODEX_HOME": str(self._codex_home()),
         }
+        if settings.airgap.enabled:
+            env.pop("OPENADMODELS_MCP_KEY", None)
+        elif settings.openadmodels.is_available and settings.openadmodels.mcp_key:
+            env["OPENADMODELS_MCP_KEY"] = settings.openadmodels.mcp_key
         return AsyncCodex(
             CodexConfig(
                 env=env,

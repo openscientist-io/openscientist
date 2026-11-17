@@ -19,6 +19,8 @@ from claude_agent_sdk import (
     ResultMessage,
 )
 from claude_agent_sdk.types import (
+    McpHttpServerConfig,
+    McpServerConfig,
     McpStdioServerConfig,
     PermissionResultAllow,
     TextBlock,
@@ -33,7 +35,7 @@ from openscientist.agent.base import (
     IterationResult,
     TurnOutcome,
 )
-from openscientist.agent.mcp_specs import StdioMcpServerSpec
+from openscientist.agent.mcp_specs import StdioMcpServerSpec, build_openadmodels_mcp_spec
 from openscientist.providers.base import ClaudeCompatible
 from openscientist.transcript import CLAUDE, TranscriptEntry
 
@@ -160,7 +162,11 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
 
     @classmethod
     def discovery_system_prompt(
-        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
+        cls,
+        *,
+        use_hypotheses: bool = False,
+        phenix_available: bool = False,
+        openadmodels_available: bool = False,
     ) -> str:
         # Claude gets the concise system prompt. Its rich CLAUDE.md is written
         # separately into .claude/ by prepare_job_workspace.
@@ -175,13 +181,17 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
         from openscientist.prompts import generate_job_claude_md
         from openscientist.settings import get_settings
 
+        settings = get_settings()
         claude_dir = self._config.job_dir / ".claude"
         claude_dir.mkdir(parents=True, exist_ok=True)
         try:
             (claude_dir / "CLAUDE.md").write_text(
                 generate_job_claude_md(
                     use_hypotheses=use_hypotheses,
-                    phenix_available=get_settings().phenix.is_available,
+                    phenix_available=settings.phenix.is_available,
+                    openadmodels_available=(
+                        settings.openadmodels.is_available and not settings.airgap.enabled
+                    ),
                 ),
                 encoding="utf-8",
             )
@@ -235,6 +245,7 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
         """
         config = self._config
         env = super()._subprocess_env(config.job_dir)
+        env.pop("OPENADMODELS_MCP_KEY", None)
         if config.data_file is None:
             env.pop("OPENSCIENTIST_DATA_FILE", None)
         if not config.data_files:
@@ -243,11 +254,13 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
 
     def _build_options(self) -> ClaudeAgentOptions:
         """Build ClaudeAgentOptions with tools exposed via the standalone
-        `openscientist_tools` subprocess MCP server. An air-gapped run gets no
-        WebSearch, which asks the provider to search and which the LLM proxy
-        refuses, and no WebFetch, which the firewall stops."""
+        `openscientist_tools` subprocess MCP server (plus optional HTTP MCP
+        servers). An air-gapped run gets no WebSearch, which asks the provider
+        to search and which the LLM proxy refuses, and no WebFetch, which the
+        firewall stops."""
         from openscientist.settings import get_settings
 
+        settings = get_settings()
         job_dir = self._config.job_dir
 
         spec = StdioMcpServerSpec(
@@ -257,17 +270,23 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
             env=self._build_subprocess_env(),
             cwd=str(job_dir),
         )
+        mcp_servers: dict[str, McpServerConfig] = {
+            "openscientist-tools": cast(McpStdioServerConfig, spec.to_sdk_config()),
+        }
+        openadmodels_spec = build_openadmodels_mcp_spec(settings, log=logger)
+        if openadmodels_spec is not None:
+            mcp_servers[openadmodels_spec.name] = cast(
+                McpHttpServerConfig, openadmodels_spec.to_sdk_config()
+            )
 
         return ClaudeAgentOptions(
             system_prompt=self._config.system_prompt,
             tools=["Read", "Grep", "Glob"] if self._config.chat else None,
-            disallowed_tools=["WebSearch", "WebFetch"] if get_settings().airgap.enabled else [],
+            disallowed_tools=["WebSearch", "WebFetch"] if settings.airgap.enabled else [],
             setting_sources=[] if self._config.chat else None,
             skills=[] if self._config.chat else None,
             env={"CLAUDE_CODE_DISABLE_ATTACHMENTS": "1"} if self._config.chat else {},
-            mcp_servers={
-                "openscientist-tools": cast(McpStdioServerConfig, spec.to_sdk_config()),
-            },
+            mcp_servers=mcp_servers,
             model=self._model_override or self._provider.claude_model_name(),
             can_use_tool=self._allow_all_tools,
             cwd=str(job_dir),

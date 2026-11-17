@@ -258,6 +258,28 @@ Content 2
 
         assert parsed1.content_hash != parsed2.content_hash
 
+    def test_builtin_openadmodels_skill_parses_cleanly(self):
+        """Built-in OpenADModels domain skill parses without database or network."""
+        parser = SkillParser()
+        skill_file = BUILTIN_SKILLS_DIR / "domain" / "openadmodels" / "SKILL.md"
+        parsed = parser.parse_file(skill_file)
+        assert parsed.name == "openadmodels"
+        assert parsed.slug == "openadmodels"
+        assert parsed.category == "domain"
+        assert parsed.description is not None
+        assert "\u2014" not in parsed.content
+        for expected in (
+            "search_kb",
+            "override_sources",
+            "check_parameter_swap",
+            "submit_job",
+            "get_job",
+            "over_budget",
+            "NOTHING CHANGES",
+            "simulate_sbml",
+        ):
+            assert expected in parsed.content
+
 
 class TestGitHubSkillIngester:
     """Tests for GitHubSkillIngester with mocked HTTP."""
@@ -891,7 +913,7 @@ class TestBuiltinSkillsIngestion:
         stats = await ingester.sync_source(db_session, source)
 
         assert stats["errors"] == 0
-        assert stats["created"] == 10
+        assert stats["created"] == 11
 
         # Verify all expected slugs are present
         stmt = select(Skill).where(Skill.source_id == source.id)
@@ -904,6 +926,7 @@ class TestBuiltinSkillsIngestion:
             "jgi-lakehouse",
             "kbase-query",
             "metabolomics",
+            "openadmodels",
             "phenix-tools-reference",
             "hypothesis-generation",
             "prioritization",
@@ -912,10 +935,10 @@ class TestBuiltinSkillsIngestion:
         }
         assert set(skills.keys()) == expected_slugs
 
-        # Verify 6 domain + 4 workflow category split
+        # Verify 7 domain + 4 workflow category split
         domain_skills = [s for s in skills.values() if s.category == "domain"]
         workflow_skills = [s for s in skills.values() if s.category == "workflow"]
-        assert len(domain_skills) == 6
+        assert len(domain_skills) == 7
         assert len(workflow_skills) == 4
 
         # Spot-check one skill's metadata

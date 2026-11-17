@@ -107,6 +107,63 @@ class TestBackendJobDocs:
         assert "add_hypothesis" in with_h
         assert "add_hypothesis" not in without_h
 
+    def test_openadmodels_section_gated_on_availability(self):
+        for without_oam in (
+            generate_job_claude_md(openadmodels_available=False),
+            CodexAgent.job_doc(openadmodels_available=False),
+        ):
+            assert "openadmodels" not in without_oam
+            assert "search_kb" not in without_oam
+            assert "check_parameter_swap" not in without_oam
+
+        claude_with = generate_job_claude_md(openadmodels_available=True)
+        codex_with = CodexAgent.job_doc(openadmodels_available=True)
+        assert ".claude/skills/" in claude_with
+        assert ".claude/" not in codex_with
+        for doc in (claude_with, codex_with):
+            for expected in (
+                "openadmodels",
+                "domain--openadmodels.md",
+                "search_kb",
+                "PMCID",
+                "DOI",
+                "override_sources",
+                "check_parameter_swap",
+                "submit_job",
+                "get_job",
+                "over_budget",
+                "NOTHING CHANGES",
+                "simulate_sbml",
+            ):
+                assert expected in doc
+
+    def test_build_agent_executor_gates_openadmodels_on_url_and_airgap(self, tmp_path, monkeypatch):
+        from unittest.mock import patch
+
+        from openscientist.orchestrator.discovery import _build_agent_executor
+        from openscientist.settings import get_settings
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("OPENSCIENTIST_PROVIDER", "openai")
+        monkeypatch.setenv("OPENADMODELS_MCP_URL", "https://openadmodels.example.org/mcp")
+        monkeypatch.setenv("OPENSCIENTIST_AIRGAPPED", "false")
+        get_settings.cache_clear()
+        try:
+            with patch("openscientist.orchestrator.discovery.get_agent") as mock_get_agent:
+                _build_agent_executor(job_dir=tmp_path, data_file=None, use_hypotheses=False)
+                online_prompt = mock_get_agent.call_args[0][0].system_prompt
+
+            monkeypatch.setenv("OPENSCIENTIST_AIRGAPPED", "true")
+            get_settings.cache_clear()
+            with patch("openscientist.orchestrator.discovery.get_agent") as mock_get_agent:
+                _build_agent_executor(job_dir=tmp_path, data_file=None, use_hypotheses=False)
+                airgap_prompt = mock_get_agent.call_args[0][0].system_prompt
+        finally:
+            get_settings.cache_clear()
+
+        assert "openadmodels" in online_prompt
+        assert "openadmodels" not in airgap_prompt
+
 
 class TestAirgapSearchNote:
     """The search_pubmed doc gains AND-semantics guidance only when air-gapped,
@@ -216,7 +273,11 @@ class TestWritingStyle:
         ks = KnowledgeState("job", "Does X bind Y?", 3)
         prompts = {
             "system": agent.system_prompt(),
-            "discovery doc": agent.job_doc(use_hypotheses=True, phenix_available=True),
+            "discovery doc": agent.job_doc(
+                use_hypotheses=True,
+                phenix_available=True,
+                openadmodels_available=True,
+            ),
             "chat doc": agent.chat_doc(),
             "initial": build_initial_prompt("Q", 3, ["d.csv"], ks, tool_prefix=""),
             "iteration": build_iteration_prompt(2, 3, ks, "More on Y", tool_prefix=""),

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from claude_agent_sdk.types import PermissionResultAllow, ToolPermissionContext
 
 from openscientist.agent.base import AgentConfig
 from openscientist.agent.claude_code_agent import ClaudeCodeAgent
@@ -35,6 +37,7 @@ def _make_agent(
     model_override: str | None = None,
     provider: ClaudeCompatible | None = None,
     tool_server_env: dict[str, str] | None = None,
+    chat: bool = False,
 ) -> ClaudeCodeAgent:
     config = AgentConfig(
         job_dir=tmp_path,
@@ -44,6 +47,7 @@ def _make_agent(
         data_files=tuple(data_files or ()),
         model_override=model_override,
         tool_server_env=tool_server_env or {},
+        chat=chat,
     )
     return ClaudeCodeAgent(config, provider or _StubProvider())
 
@@ -197,6 +201,100 @@ def test_apply_provider_env_sets_vars(tmp_path: Path, monkeypatch: pytest.Monkey
     agent._apply_provider_env()
 
     assert os.environ["STUB_AUTH_TOKEN"] == "secret"
+
+
+def test_openadmodels_server_absent_when_unconfigured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("OPENADMODELS_MCP_URL", raising=False)
+    monkeypatch.setenv("OPENADMODELS_MCP_KEY", "unused-without-url")
+    monkeypatch.setenv("OPENSCIENTIST_AIRGAPPED", "false")
+    get_settings.cache_clear()
+    try:
+        options = _make_agent(tmp_path)._build_options()
+    finally:
+        get_settings.cache_clear()
+
+    assert isinstance(options.mcp_servers, dict)
+    assert set(options.mcp_servers) == {"openscientist-tools"}
+
+
+def test_openadmodels_server_added_without_header_when_key_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENADMODELS_MCP_URL", "https://openadmodels.example.org/mcp")
+    monkeypatch.delenv("OPENADMODELS_MCP_KEY", raising=False)
+    monkeypatch.setenv("OPENSCIENTIST_AIRGAPPED", "false")
+    get_settings.cache_clear()
+    try:
+        options = _make_agent(tmp_path)._build_options()
+    finally:
+        get_settings.cache_clear()
+
+    assert isinstance(options.mcp_servers, dict)
+    cfg = cast(dict[str, Any], options.mcp_servers["openadmodels"])
+    assert cfg == {"type": "http", "url": "https://openadmodels.example.org/mcp"}
+
+
+async def test_openadmodels_server_carries_bearer_header_and_works_in_chat_mode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENADMODELS_MCP_URL", "https://openadmodels.example.org/mcp")
+    monkeypatch.setenv("OPENADMODELS_MCP_KEY", "oam-secret-key")
+    monkeypatch.setenv("OPENSCIENTIST_AIRGAPPED", "false")
+    get_settings.cache_clear()
+    try:
+        agent = _make_agent(tmp_path, chat=True)
+        options = agent._build_options()
+    finally:
+        get_settings.cache_clear()
+
+    assert isinstance(options.mcp_servers, dict)
+    cfg = cast(dict[str, Any], options.mcp_servers["openadmodels"])
+    assert cfg == {
+        "type": "http",
+        "url": "https://openadmodels.example.org/mcp",
+        "headers": {"Authorization": "Bearer oam-secret-key"},
+    }
+    tools_cfg = cast(dict[str, Any], options.mcp_servers["openscientist-tools"])
+    assert "OPENADMODELS_MCP_KEY" not in tools_cfg["env"]
+    assert options.extra_args == {"strict-mcp-config": None}
+    assert options.tools == ["Read", "Grep", "Glob"]
+    assert options.can_use_tool is not None
+    verdict = await options.can_use_tool(
+        "mcp__openadmodels__search_kb",
+        {"query": "amyloid"},
+        ToolPermissionContext(),
+    )
+    assert isinstance(verdict, PermissionResultAllow)
+
+
+def test_openadmodels_server_skipped_with_log_when_airgapped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENADMODELS_MCP_URL", "https://openadmodels.example.org/mcp")
+    monkeypatch.setenv("OPENADMODELS_MCP_KEY", "oam-secret-key")
+    monkeypatch.setenv("OPENSCIENTIST_AIRGAPPED", "true")
+    get_settings.cache_clear()
+    try:
+        with caplog.at_level(logging.INFO, logger="openscientist.agent.claude_code_agent"):
+            agent = _make_agent(tmp_path)
+            options = agent._build_options()
+            agent._write_job_claude_md(use_hypotheses=False)
+    finally:
+        get_settings.cache_clear()
+
+    assert isinstance(options.mcp_servers, dict)
+    assert "openadmodels" not in options.mcp_servers
+    oam_logs = [r for r in caplog.records if "OpenADModels" in r.getMessage()]
+    assert len(oam_logs) == 1
+    assert "oam-secret-key" not in oam_logs[0].getMessage()
+    claude_md = (tmp_path / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "openadmodels" not in claude_md
 
 
 async def test_built_spec_spawns_subprocess_that_lists_all_tools(

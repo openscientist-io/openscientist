@@ -121,10 +121,12 @@ def _build_agent_executor(
     written separately into ``.claude/`` by ``prepare_job_workspace``), codex
     returns the full per-job doc delivered via ``AGENTS.md``.
     """
-    agent_cls = agent_class_for_provider_id(get_settings().provider.provider_id)
+    settings = get_settings()
+    agent_cls = agent_class_for_provider_id(settings.provider.provider_id)
     system_prompt = agent_cls.discovery_system_prompt(
         use_hypotheses=use_hypotheses,
-        phenix_available=get_settings().phenix.is_available,
+        phenix_available=settings.phenix.is_available,
+        openadmodels_available=(settings.openadmodels.is_available and not settings.airgap.enabled),
     )
     logger.info("Built %s system prompt (%d chars)", agent_cls.backend.value, len(system_prompt))
     config = AgentConfig(

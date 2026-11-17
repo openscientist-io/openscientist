@@ -6,9 +6,17 @@ Used to construct ``claude-agent-sdk`` MCP server config entries for
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict
+
+if TYPE_CHECKING:
+    from openscientist.settings import Settings
+
+logger = logging.getLogger(__name__)
+
+OPENADMODELS_MCP_SERVER_NAME = "openadmodels"
 
 
 class StdioMcpServerSpec(BaseModel):
@@ -54,3 +62,25 @@ class HttpMcpServerSpec(BaseModel):
 
 
 McpServerSpec = StdioMcpServerSpec | HttpMcpServerSpec
+
+
+def build_openadmodels_mcp_spec(
+    settings: Settings, *, log: logging.Logger = logger
+) -> HttpMcpServerSpec | None:
+    """Return the OpenADModels HTTP MCP server spec when configured and not air-gapped."""
+    if not settings.openadmodels.is_available:
+        return None
+    if settings.airgap.enabled:
+        log.info("Skipping OpenADModels MCP server: air-gapped mode is enabled")
+        return None
+    assert settings.openadmodels.mcp_url is not None
+    headers = (
+        {"Authorization": f"Bearer {settings.openadmodels.mcp_key}"}
+        if settings.openadmodels.mcp_key
+        else None
+    )
+    return HttpMcpServerSpec(
+        name=OPENADMODELS_MCP_SERVER_NAME,
+        url=settings.openadmodels.mcp_url,
+        headers=headers,
+    )
