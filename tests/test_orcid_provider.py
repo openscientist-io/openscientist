@@ -32,8 +32,9 @@ async def test_full_token_with_oidc_email():
 
 
 @pytest.mark.asyncio
-async def test_oidc_email_unverified_claim_is_reported_unverified():
-    """An OIDC email with email_verified=false is reported unverified."""
+async def test_an_unverified_oidc_email_is_never_reported():
+    """An OIDC email with email_verified=false gives way to the public API and
+    then to the placeholder, so it can link to no account."""
     token = {
         "access_token": "test-token",
         "orcid": "0000-0002-1234-5678",
@@ -41,9 +42,21 @@ async def test_oidc_email_unverified_claim_is_reported_unverified():
         "userinfo": {"email": "jane@university.edu", "email_verified": False},
     }
 
-    result = await OrcidProvider.get_user_info(token)
+    mock_response = AsyncMock(spec=httpx.Response)
+    mock_response.status_code = 200
+    mock_response.raise_for_status = lambda: None
+    mock_response.json.return_value = {"email": []}
 
-    assert result["email"] == "jane@university.edu"
+    with patch("openscientist.auth.providers.orcid.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_client_cls.return_value = mock_client
+
+        result = await OrcidProvider.get_user_info(token)
+
+    assert result["email"] == "0000-0002-1234-5678@orcid.invalid"
     assert result["email_verified"] is False
 
 
@@ -154,7 +167,7 @@ async def test_missing_name_falls_back_to_orcid_id():
         "access_token": "test-token",
         "orcid": "0000-0002-1234-5678",
         "name": "",
-        "userinfo": {"email": "private@example.com"},
+        "userinfo": {"email": "private@example.com", "email_verified": True},
     }
 
     result = await OrcidProvider.get_user_info(token)

@@ -76,7 +76,7 @@ class _StubOAuthClient:
     def __init__(
         self,
         *,
-        token: dict[str, str] | None = None,
+        token: dict[str, object] | None = None,
         exchange_error: Exception | None = None,
         redirect_target: str = "https://provider.example/oauth/authorize",
     ) -> None:
@@ -89,7 +89,7 @@ class _StubOAuthClient:
         self.redirect_uri = redirect_uri
         return RedirectResponse(url=self.redirect_target, status_code=307)
 
-    async def authorize_access_token(self, request: Request) -> dict[str, str]:
+    async def authorize_access_token(self, request: Request) -> dict[str, object]:
         if self.exchange_error is not None:
             raise self.exchange_error
         if self.token is None:
@@ -816,3 +816,70 @@ async def test_oauth_callback_linked_identity_signs_in_despite_unverified_email(
     assert len(await _sessions_for(db_session, user.id)) == sessions_before + 1
     account = (await _oauth_accounts_for(db_session, "google-route-uv-3"))[0]
     assert account.access_token == "route-tok-uv-3"
+
+
+async def _orcid_sign_in(
+    db_session: AsyncSession, token: dict[str, object]
+) -> tuple[httpx.Response, User]:
+    """Sign in through the ORCID callback while ORCID shows no public email,
+    returning the response and the user its session belongs to."""
+    no_public_email = httpx.Response(
+        200,
+        json={"email": []},
+        request=httpx.Request("GET", f"https://pub.orcid.org/v3.0/{token['orcid']}/email"),
+    )
+
+    async def _email_endpoint(*_args: object, **_kwargs: object) -> httpx.Response:
+        return no_public_email
+
+    oauth = SimpleNamespace(orcid=_StubOAuthClient(token=token))
+    with patch.object(httpx.AsyncClient, "get", _email_endpoint):
+        response = await _request(
+            _make_app(), db_session, "GET", "/auth/orcid/callback", oauth=oauth
+        )
+    assert response.headers["location"] == "/jobs"
+    cookie = response.cookies.get("session_token")
+    assert cookie is not None
+    session = (
+        await db_session.scalars(
+            select(Session).where(Session.token_hash == hash_session_token(cookie))
+        )
+    ).one()
+    user = await db_session.get(User, session.user_id)
+    assert user is not None
+    return response, user
+
+
+@pytest.mark.asyncio
+async def test_an_orcid_sign_up_without_a_public_email_gets_an_account_of_its_own(
+    db_session: AsyncSession,
+) -> None:
+    token: dict[str, object] = {"access_token": "route-tok-orcid-1", "orcid": "0000-0002-0000-0001"}
+    _, first = await _orcid_sign_in(db_session, token)
+    _, again = await _orcid_sign_in(db_session, token)
+
+    assert first.email == "0000-0002-0000-0001@orcid.invalid"
+    assert again.id == first.id
+
+
+@pytest.mark.asyncio
+async def test_an_orcid_sign_up_is_never_linked_by_an_unverified_email(
+    db_session: AsyncSession,
+) -> None:
+    existing = User(email="route-orcid-owner@example.com", name="Existing User")
+    db_session.add(existing)
+    await db_session.commit()
+    await db_session.refresh(existing)
+
+    _, user = await _orcid_sign_in(
+        db_session,
+        {
+            "access_token": "route-tok-orcid-2",
+            "orcid": "0000-0002-0000-0002",
+            "userinfo": {"email": "route-orcid-owner@example.com", "email_verified": False},
+        },
+    )
+
+    assert user.id != existing.id
+    assert user.email == "0000-0002-0000-0002@orcid.invalid"
+    assert await _sessions_for(db_session, existing.id) == []

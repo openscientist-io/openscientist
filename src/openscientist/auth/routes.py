@@ -86,8 +86,12 @@ async def create_or_update_user(
     refresh_token: str | None = None,
     email_verified: bool | None = None,
     auth_provider: str | None = None,
+    email_optional: bool = False,
 ) -> User:
-    """Create or update a user from OAuth data."""
+    """Create or update a user from OAuth data.
+
+    With ``email_optional`` a new identity without a verified email gets an
+    account of its own under the provider's placeholder address."""
     # Eager load the user to avoid a lazy load in async
     oauth_stmt = (
         select(OAuthAccount)
@@ -109,9 +113,14 @@ async def create_or_update_user(
         user = oauth_account.user
         logger.info("Updated OAuth account for user %s (provider=%s)", user.id, provider)
     else:
-        # A new identity must be tied to an email the provider verified, so
-        # an unverified address can neither link to nor impersonate a user
-        if email_verified is not True:
+        # A new identity is linked to an existing user by email only when the
+        # provider verified the address, so an unverified one impersonates no one
+        if email_verified is True:
+            user_stmt = select(User).where(User.email == email)
+            existing_user = (await db.execute(user_stmt)).scalar_one_or_none()
+        elif email_optional:
+            existing_user = None
+        else:
             logger.warning(
                 "Refused %s sign-in for %s: email not verified by the provider",
                 provider,
@@ -120,10 +129,6 @@ async def create_or_update_user(
             raise UnverifiedEmailError(
                 f"{provider} did not verify the email address for {provider_user_id}"
             )
-
-        user_stmt = select(User).where(User.email == email)
-        user_result = await db.execute(user_stmt)
-        existing_user = user_result.scalar_one_or_none()
 
         if not existing_user:
             user = User(

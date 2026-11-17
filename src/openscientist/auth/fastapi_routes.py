@@ -326,6 +326,7 @@ async def oauth_callback(provider: str, request: Request) -> RedirectResponse:
                 refresh_token=token.get("refresh_token"),
                 email_verified=user_info.get("email_verified"),
                 auth_provider=provider,
+                email_optional=user_info.get("email_optional", False),
             )
             _, session_token = await create_session(db, str(user.id))
 

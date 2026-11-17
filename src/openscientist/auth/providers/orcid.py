@@ -39,12 +39,9 @@ class OrcidProvider:
             name = orcid_id or "Unknown"
 
         email: str | None = None
-        email_verified = False
-
         oidc_email = userinfo.get("email")
-        if oidc_email:
+        if oidc_email and userinfo.get("email_verified"):
             email = str(oidc_email)
-            email_verified = bool(userinfo.get("email_verified"))
 
         if not email and orcid_id:
             try:
@@ -60,7 +57,6 @@ class OrcidProvider:
                     verified_email = _extract_verified_email(resp.json())
                     if verified_email:
                         email = verified_email
-                        email_verified = True
             except httpx.HTTPError:
                 logger.warning(
                     "Could not fetch email from ORCID API for %s",
@@ -68,13 +64,15 @@ class OrcidProvider:
                     exc_info=True,
                 )
 
+        email_verified = email is not None
         if not email:
             email = f"{orcid_id}@orcid.invalid" if orcid_id else "unknown@orcid.invalid"
-            email_verified = False
 
         return {
             "provider_user_id": orcid_id,
             "email": email,
             "name": name,
             "email_verified": email_verified,
+            # ORCID verified the iD itself, so it holds an account without an email
+            "email_optional": bool(orcid_id),
         }
