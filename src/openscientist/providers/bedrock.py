@@ -18,6 +18,7 @@ from openscientist.providers.base import (
     StaticHeadersSigning,
     UpstreamSigning,
     env_from_pairs,
+    month_start,
 )
 from openscientist.settings import ProviderSettings, get_settings
 
@@ -299,10 +300,10 @@ class BedrockProvider(ClaudeCompatible):
             settings = get_settings()
             ce_client = boto3.client("ce", region_name=settings.provider.aws_region or "us-east-1")
 
-            # Cost Explorer requires date strings
+            # Cost Explorer takes dates and leaves the End day out
             end_date = now.strftime("%Y-%m-%d")
             start_date_recent = (now - timedelta(hours=lookback_hours)).strftime("%Y-%m-%d")
-            start_date_total = (now - timedelta(days=365)).strftime("%Y-%m-%d")
+            start_date_month = month_start(now).strftime("%Y-%m-%d")
 
             def get_bedrock_cost(start: str, end: str) -> float:
                 response = ce_client.get_cost_and_usage(
@@ -316,26 +317,29 @@ class BedrockProvider(ClaudeCompatible):
                     total += float(result["Total"]["UnblendedCost"]["Amount"])
                 return total
 
-            total_spend = get_bedrock_cost(start_date_total, end_date)
+            # On the 1st the month holds only today, which Cost Explorer has not billed.
+            month_spend = (
+                get_bedrock_cost(start_date_month, end_date) if start_date_month < end_date else 0.0
+            )
             recent_spend = get_bedrock_cost(start_date_recent, end_date)
             data_lag_note = "AWS billing data has 24-48 hour lag"
 
         except ImportError:
             logger.warning("boto3 not installed. Cannot fetch AWS cost data.")
-            total_spend = None
+            month_spend = None
             recent_spend = None
             data_lag_note = "boto3 not installed (pip install boto3)"
 
         except Exception as e:
             logger.warning("Could not fetch AWS cost data: %s", e)
-            total_spend = None
+            month_spend = None
             recent_spend = None
             data_lag_note = f"Cost data unavailable: {e}"
 
         settings = get_settings()
         return CostInfo(
             provider_name="AWS Bedrock",
-            total_spend_usd=total_spend,
+            month_spend_usd=month_spend,
             recent_spend_usd=recent_spend,
             recent_period_hours=lookback_hours,
             last_updated=now,

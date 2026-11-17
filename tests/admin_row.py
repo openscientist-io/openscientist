@@ -20,7 +20,7 @@ _ROW_TIME = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
 
 _DEFAULTS: dict[str, object] = {
     "max_job_cost_usd": None,
-    "max_project_spend_total_usd": None,
+    "max_project_spend_month_usd": None,
     "max_project_spend_24h_usd": None,
     "warn_project_spend_24h_usd": None,
     "agent_cpu": 2.0,
@@ -38,13 +38,13 @@ _DEFAULTS: dict[str, object] = {
 
 _INSERT = """
     INSERT INTO admin_settings (
-        max_job_cost_usd, max_project_spend_total_usd, max_project_spend_24h_usd,
+        max_job_cost_usd, max_project_spend_month_usd, max_project_spend_24h_usd,
         warn_project_spend_24h_usd, agent_cpu, executor_cpu, agent_memory_mib,
         executor_memory_mib, agent_timeout_seconds, executor_timeout_seconds,
         max_file_size_mb, max_concurrent_jobs, scheduler_window_hours,
         airgapped, session_duration_days, updated_at, updated_by
     ) VALUES (
-        :max_job_cost_usd, :max_project_spend_total_usd, :max_project_spend_24h_usd,
+        :max_job_cost_usd, :max_project_spend_month_usd, :max_project_spend_24h_usd,
         :warn_project_spend_24h_usd, :agent_cpu, :executor_cpu, :agent_memory_mib,
         :executor_memory_mib, :agent_timeout_seconds, :executor_timeout_seconds,
         :max_file_size_mb, :max_concurrent_jobs, :scheduler_window_hours,
@@ -73,7 +73,7 @@ async def set_admin_settings_row(engine: AsyncEngine, **overrides: object) -> No
 
 _BASE_VALUES = AdminSettingsValues(
     max_job_cost_usd=None,
-    max_project_spend_total_usd=None,
+    max_project_spend_month_usd=None,
     max_project_spend_24h_usd=None,
     warn_project_spend_24h_usd=None,
     agent_cpu=2.0,

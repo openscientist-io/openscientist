@@ -38,7 +38,7 @@ class StubClaudeProvider(ClaudeCompatible):
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
         return CostInfo(
             provider_name=self.display_name,
-            total_spend_usd=None,
+            month_spend_usd=None,
             recent_spend_usd=None,
             recent_period_hours=lookback_hours,
         )
@@ -70,7 +70,7 @@ class StubCodexProvider(CodexCompatible):
     def get_cost_info(self, lookback_hours: int = 24) -> CostInfo:
         return CostInfo(
             provider_name=self.display_name,
-            total_spend_usd=None,
+            month_spend_usd=None,
             recent_spend_usd=None,
             recent_period_hours=lookback_hours,
         )

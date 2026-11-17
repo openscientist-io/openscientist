@@ -102,13 +102,16 @@ class TestCborgGetCostInfo:
             activity_resp.json.return_value = {"data": [{"spend": 5.0}, {"spend": 3.0}]}
             activity_resp.raise_for_status = MagicMock()
 
-            mock_get.side_effect = [key_resp, activity_resp]
+            month_response = MagicMock()
+            month_response.json.return_value = {"data": [{"spend": 20.0}, {"spend": 10.0}]}
+
+            mock_get.side_effect = [key_resp, month_response, activity_resp]
 
             provider = CborgProvider()
             cost = provider.get_cost_info(lookback_hours=24)
 
             assert cost.provider_name == "CBORG"
-            assert cost.total_spend_usd == 50.0
+            assert cost.month_spend_usd == 30.0
             assert cost.recent_spend_usd == 8.0
             assert cost.budget_limit_usd == 200.0
             assert cost.budget_remaining_usd == 150.0
@@ -141,9 +144,9 @@ class TestCborgGetCostInfo:
             provider = CborgProvider()
             cost = provider.get_cost_info()
 
-            assert cost.total_spend_usd == 50.0
+            assert cost.month_spend_usd is None
             assert cost.recent_spend_usd is None
-            assert "unavailable" in (cost.data_lag_note or "").lower()
+            assert cost.data_lag_note == "Activity data unavailable"
 
     @patch("openscientist.providers.cborg.requests.get")
     def test_no_max_budget(self, mock_get):
@@ -166,7 +169,7 @@ class TestCborgGetCostInfo:
             activity_resp.json.return_value = {"data": []}
             activity_resp.raise_for_status = MagicMock()
 
-            mock_get.side_effect = [key_resp, activity_resp]
+            mock_get.side_effect = [key_resp, activity_resp, activity_resp]
 
             provider = CborgProvider()
             cost = provider.get_cost_info()

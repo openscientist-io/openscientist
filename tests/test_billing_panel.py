@@ -215,7 +215,7 @@ def _fake_provider(total: float | None, recent: float | None) -> SimpleNamespace
     """The provider billing boundary the page reads its figures from."""
     info = CostInfo(
         provider_name="Fake",
-        total_spend_usd=total,
+        month_spend_usd=total,
         recent_spend_usd=recent,
         recent_period_hours=24,
     )
@@ -288,12 +288,12 @@ async def test_project_section_shows_the_enforcement_figures_and_verdict(
     job_id = None
     try:
         job_id = await _ledger_job(test_engine, 10.0)
-        await set_admin_settings_row(test_engine, max_project_spend_total_usd=100.0)
+        await set_admin_settings_row(test_engine, max_project_spend_month_usd=100.0)
         labels = await _render_panel_labels(_fake_provider(total=500.0, recent=50.0))
         assert "$500.00" in labels
         assert "$50.00" in labels
         assert "Budget Limit Reached" in labels
-        assert any("Project spend total limit of $100.00" in label for label in labels)
+        assert any("Project monthly spend limit of $100.00" in label for label in labels)
         assert "Provider: Fake" in labels
     finally:
         budget._billed = None

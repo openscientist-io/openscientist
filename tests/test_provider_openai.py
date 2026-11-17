@@ -90,7 +90,7 @@ def test_invalid_without_any_auth(tmp_path: Path) -> None:
 
 def test_get_cost_info_unavailable() -> None:
     info = OpenAIDirectProvider().get_cost_info()
-    assert info.total_spend_usd is None
+    assert info.month_spend_usd is None
     assert info.recent_spend_usd is None
 
 

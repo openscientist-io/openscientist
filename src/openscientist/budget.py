@@ -1,5 +1,5 @@
 """The web's budget enforcement: a verdict against the cost ledger and the
-provider's billed total, read at each moment a new unit of work is allowed."""
+provider's billed spend, read at each moment a new unit of work is allowed."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from openscientist.admin_settings import current_admin_settings
 from openscientist.database.models import CostRecord
 from openscientist.database.session import get_admin_session
 from openscientist.providers import get_provider
-from openscientist.providers.base import CostInfo
+from openscientist.providers.base import CostInfo, month_start
 from openscientist.providers.pricing import has_price
 
 logger = logging.getLogger(__name__)
@@ -29,10 +29,10 @@ logger = logging.getLogger(__name__)
 #: see its spend, exempt from the unpriced-model refusal.
 SELF_HOSTED_PROVIDER_IDS = frozenset({"ollama", "vllm", "llamacpp"})
 
-#: A provider's billed total stays fresh for this long; the ledger is read live.
+#: A provider's billed spend stays fresh for this long; the ledger is read live.
 BILLING_TTL_SECONDS = 600
 
-_limit = Literal["job_cap", "project_total", "project_24h", "unpriced_model"]
+_limit = Literal["job_cap", "project_month", "project_24h", "unpriced_model"]
 
 _billed: CostInfo | None = None
 _billed_at: float = 0.0
@@ -51,22 +51,23 @@ class BudgetVerdict:
 class ProjectSpend:
     """The project spend the enforcement compares against the project limits.
 
-    Each figure is the higher of the ledger's and the provider's billed value,
-    and None on the billing side means the provider reports no spend, so only
-    the ledger counts.
+    Each figure is the higher of the ledger's and the provider's billed value
+    over the same window, the calendar month (UTC) or the last 24 hours. None on
+    the billing side means the provider reports no spend, so only the ledger
+    counts.
     """
 
-    ledger_total: float
+    ledger_month: float
     ledger_24h: float
     billed: CostInfo | None
-    reserved_total: float = 0.0
+    reserved_month: float = 0.0
     reserved_24h: float = 0.0
 
     @property
-    def total(self) -> float:
-        if self.billed is None or self.billed.total_spend_usd is None:
-            return self.ledger_total + self.reserved_total
-        return max(self.ledger_total, self.billed.total_spend_usd) + self.reserved_total
+    def month(self) -> float:
+        if self.billed is None or self.billed.month_spend_usd is None:
+            return self.ledger_month + self.reserved_month
+        return max(self.ledger_month, self.billed.month_spend_usd) + self.reserved_month
 
     @property
     def last_24h(self) -> float:
@@ -76,7 +77,7 @@ class ProjectSpend:
 
 
 async def _provider_billing() -> CostInfo | None:
-    """The provider's billed total, at most once every 10 minutes per process.
+    """The provider's billed spend, at most once every 10 minutes per process.
 
     A failed fetch counts the ledger only and is retried at the next check, so
     it is never cached.
@@ -89,7 +90,7 @@ async def _provider_billing() -> CostInfo | None:
         info = await asyncio.to_thread(get_provider().get_cost_info)
     except Exception as e:
         logger.warning(
-            "Could not fetch the provider's billed total, counting the ledger only: %s", e
+            "Could not fetch the provider's billed spend, counting the ledger only: %s", e
         )
         return None
     _billed, _billed_at = info, now
@@ -99,22 +100,27 @@ async def _provider_billing() -> CostInfo | None:
 async def _ledger_totals(
     job_id: UUID | None = None, *, exclude_ids: tuple[UUID, ...] = ()
 ) -> tuple[float, float, float]:
-    """Read all budget totals from one ledger snapshot."""
-    cutoff = datetime.now(UTC) - timedelta(hours=24)
+    """The job's all-time spend, the calendar month's (UTC) and the last 24
+    hours', read from one ledger snapshot."""
+    now = datetime.now(UTC)
+    cutoff = now - timedelta(hours=24)
     async with get_admin_session() as session:
         statement = select(
             func.coalesce(func.sum(CostRecord.cost_usd).filter(CostRecord.job_id == job_id), 0.0),
-            func.coalesce(func.sum(CostRecord.cost_usd), 0.0),
+            func.coalesce(
+                func.sum(CostRecord.cost_usd).filter(CostRecord.created_at >= month_start(now)),
+                0.0,
+            ),
             func.coalesce(
                 func.sum(CostRecord.cost_usd).filter(CostRecord.created_at > cutoff), 0.0
             ),
         )
         if exclude_ids:
             statement = statement.where(CostRecord.id.not_in(exclude_ids))
-        job_total, total, recent = (await session.execute(statement)).one()
+        job_total, month, recent = (await session.execute(statement)).one()
     return (
         0.0 if job_total is None else float(job_total),
-        0.0 if total is None else float(total),
+        0.0 if month is None else float(month),
         0.0 if recent is None else float(recent),
     )
 
@@ -153,13 +159,14 @@ async def project_spend() -> ProjectSpend:
 
     async with _budget_guard():
         await _flush_debt_locked()
-        _, pending_total, pending_recent, excluded = _pending_totals_locked(None)
-        _, total, recent = await _ledger_totals(exclude_ids=excluded)
+        # Calls still in flight are spend of the current month and day.
+        _, pending, pending_recent, excluded = _pending_totals_locked(None)
+        _, month, recent = await _ledger_totals(exclude_ids=excluded)
         return ProjectSpend(
-            ledger_total=total,
+            ledger_month=month,
             ledger_24h=recent,
             billed=await _provider_billing(),
-            reserved_total=pending_total,
+            reserved_month=pending,
             reserved_24h=pending_recent,
         )
 
@@ -184,7 +191,7 @@ async def unpriced_model_violation(*, provider_id: str, model: str | None) -> Bu
     admin = await current_admin_settings()
     any_limit = (
         admin.max_job_cost_usd is not None
-        or admin.max_project_spend_total_usd is not None
+        or admin.max_project_spend_month_usd is not None
         or admin.max_project_spend_24h_usd is not None
         or admin.warn_project_spend_24h_usd is not None
     )
@@ -241,8 +248,8 @@ async def _check_budget_locked(
 
     admin = await current_admin_settings()
 
-    pending_job, pending_total, pending_recent, excluded = _pending_totals_locked(job_id)
-    job_total, total, recent = await _ledger_totals(job_id, exclude_ids=excluded)
+    pending_job, pending, pending_recent, excluded = _pending_totals_locked(job_id)
+    job_total, month, recent = await _ledger_totals(job_id, exclude_ids=excluded)
     job_total += pending_job
 
     if (
@@ -257,24 +264,24 @@ async def _check_budget_locked(
             f"the job has spent ${job_total:.2f}.",
         )
 
-    if admin.max_project_spend_total_usd is None and admin.max_project_spend_24h_usd is None:
+    if admin.max_project_spend_month_usd is None and admin.max_project_spend_24h_usd is None:
         return BudgetVerdict(True, None, None)
 
     spend = ProjectSpend(
-        ledger_total=total,
+        ledger_month=month,
         ledger_24h=recent,
         billed=await _provider_billing(),
-        reserved_total=pending_total,
+        reserved_month=pending,
         reserved_24h=pending_recent,
     )
-    if admin.max_project_spend_total_usd is not None and _exceeds_limit(
-        spend.total, prospective_usd, admin.max_project_spend_total_usd
+    if admin.max_project_spend_month_usd is not None and _exceeds_limit(
+        spend.month, prospective_usd, admin.max_project_spend_month_usd
     ):
         return BudgetVerdict(
             False,
-            "project_total",
-            f"Project spend total limit of ${admin.max_project_spend_total_usd:.2f} reached: "
-            f"the project has spent ${spend.total:.2f}.",
+            "project_month",
+            f"Project monthly spend limit of ${admin.max_project_spend_month_usd:.2f} reached: "
+            f"the project has spent ${spend.month:.2f} this calendar month (UTC).",
         )
     if admin.max_project_spend_24h_usd is not None and _exceeds_limit(
         spend.last_24h, prospective_usd, admin.max_project_spend_24h_usd

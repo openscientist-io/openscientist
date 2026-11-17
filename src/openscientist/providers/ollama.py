@@ -122,7 +122,7 @@ class OllamaProvider(OpenAiWireCompatible):
         # budget checks pass cleanly rather than warning on unavailable data.
         return CostInfo(
             provider_name=self.display_name,
-            total_spend_usd=0.0,
+            month_spend_usd=0.0,
             recent_spend_usd=0.0,
             recent_period_hours=lookback_hours,
             data_lag_note="Local Ollama inference incurs no API cost.",

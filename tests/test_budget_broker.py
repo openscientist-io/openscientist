@@ -76,7 +76,7 @@ async def committed(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
 def _billing(total: float, recent: float) -> SimpleNamespace:
     info = CostInfo(
         provider_name="stub",
-        total_spend_usd=total,
+        month_spend_usd=total,
         recent_spend_usd=recent,
         recent_period_hours=24,
     )
@@ -122,12 +122,12 @@ class TestBudgetRoute:
             assert body["limit"] is None
             assert body["message"] is None
 
-    async def test_it_answers_the_project_total(
+    async def test_it_answers_the_project_month(
         self, test_engine: AsyncEngine, token_for, client
     ) -> None:
         async with job_with_costs(test_engine, [(10.0, None)]) as job:
             job_id = str(job.id)
-            await set_admin_settings_row(test_engine, max_project_spend_total_usd=1.0)
+            await set_admin_settings_row(test_engine, max_project_spend_month_usd=1.0)
             with patch("openscientist.budget.get_provider", return_value=_billing(0.0, 0.0)):
                 resp = client.post(
                     "/budget",
@@ -137,7 +137,7 @@ class TestBudgetRoute:
             assert resp.status_code == 200
             body = resp.json()
             assert body["ok"] is False
-            assert body["limit"] == "project_total"
+            assert body["limit"] == "project_month"
 
     async def test_it_answers_the_project_24h(
         self, test_engine: AsyncEngine, token_for, client

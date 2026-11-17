@@ -21,6 +21,7 @@ from openscientist.providers.base import (
     SetupQuestion,
     UpstreamSigning,
     env_from_pairs,
+    month_start,
 )
 from openscientist.settings import ProviderSettings, get_settings
 
@@ -369,11 +370,12 @@ class VertexProvider(ClaudeCompatible):
             f"{project_id}.billing_export.gcp_billing_export_v1_{billing_account.replace('-', '_')}"
         )
 
-        total_query = f"""
-        SELECT SUM(cost) as total_cost
+        month_query = f"""
+        SELECT SUM(cost) as month_cost
         FROM `{billing_table}`
         WHERE service.description = 'Vertex AI'
           AND project.id = '{project_id}'
+          AND usage_start_time >= TIMESTAMP('{month_start(now).isoformat()}')
         """
 
         recent_query = f"""
@@ -385,8 +387,8 @@ class VertexProvider(ClaudeCompatible):
         """
 
         try:
-            total_result = list(bq_client.query(total_query).result())
-            total_spend = float(total_result[0].total_cost or 0)
+            month_result = list(bq_client.query(month_query).result())
+            month_spend = float(month_result[0].month_cost or 0)
 
             recent_result = list(bq_client.query(recent_query).result())
             recent_spend = float(recent_result[0].recent_cost or 0)
@@ -399,13 +401,13 @@ class VertexProvider(ClaudeCompatible):
             logger.warning("Could not fetch Vertex AI billing data: %s", e)
             logger.warning("Ensure BigQuery billing export is enabled in GCP Console.")
             # Return None if billing data is unavailable (permissions, export missing)
-            total_spend = None
+            month_spend = None
             recent_spend = None
             data_lag_note = "Billing data unavailable (ensure BigQuery export is enabled)"
 
         return CostInfo(
             provider_name="Vertex AI",
-            total_spend_usd=total_spend,
+            month_spend_usd=month_spend,
             recent_spend_usd=recent_spend,
             recent_period_hours=lookback_hours,
             last_updated=now,

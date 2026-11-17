@@ -621,7 +621,7 @@ class TestJobManagerCreationSafety:
         job_id = str(uuid4())
         info = CostInfo(
             provider_name="stub",
-            total_spend_usd=500.0,
+            month_spend_usd=500.0,
             recent_spend_usd=50.0,
             recent_period_hours=24,
         )
@@ -637,9 +637,9 @@ class TestJobManagerCreationSafety:
             )
             mock_settings.return_value.job_dir = tmp_path
 
-            await set_admin_settings_row(test_engine, max_project_spend_total_usd=100.0)
+            await set_admin_settings_row(test_engine, max_project_spend_month_usd=100.0)
             with pytest.raises(
-                BudgetExceededError, match=r"Project spend total limit of \$100\.00"
+                BudgetExceededError, match=r"Project monthly spend limit of \$100\.00"
             ):
                 await manager.create_job(
                     job_id=job_id,
@@ -813,7 +813,7 @@ class TestJobManagerSummary:
         def fake_get_cost_info(lookback_hours: int = 24):
             seen_lookbacks.append(lookback_hours)
             cost_threads.append(threading.get_ident())
-            return SimpleNamespace(total_spend_usd=12.5)
+            return SimpleNamespace(month_spend_usd=12.5)
 
         fake_provider = SimpleNamespace(
             get_cost_info=fake_get_cost_info,
@@ -838,7 +838,7 @@ class TestJobManagerSummary:
         assert summary["total_jobs"] == 2
         assert summary["status_counts"]["completed"] == 1
         assert summary["status_counts"]["running"] == 1
-        assert summary["cost_info"].total_spend_usd == 12.5
+        assert summary["cost_info"].month_spend_usd == 12.5
         # The provider's blocking cost call runs on a worker thread, with the 24h window.
         assert seen_lookbacks == [24]
         assert cost_threads and cost_threads[0] != loop_thread
@@ -1033,7 +1033,7 @@ class TestQueuedJobBudgetHold:
         manager = _new_manager(tmp_path)
         info = CostInfo(
             provider_name="stub",
-            total_spend_usd=500.0,
+            month_spend_usd=500.0,
             recent_spend_usd=50.0,
             recent_period_hours=24,
         )
@@ -1062,14 +1062,14 @@ class TestQueuedJobBudgetHold:
                 )
                 await session.commit()
             try:
-                await set_admin_settings_row(test_engine, max_project_spend_total_usd=100.0)
+                await set_admin_settings_row(test_engine, max_project_spend_month_usd=100.0)
 
                 # The pick holds the job and notifies the owner once.
                 assert await self._pick(manager) is False
                 assert str(job_id) not in manager._running_jobs
                 row = await self._row(test_engine, job_id)
                 assert row["status"] == "queued"
-                assert "Project spend total limit of $100.00" in row["queue_reason"]
+                assert "Project monthly spend limit of $100.00" in row["queue_reason"]
                 assert row["error_message"] is None
 
                 # The re-check re-holds the job without a second notification.
@@ -1077,7 +1077,7 @@ class TestQueuedJobBudgetHold:
                 assert send.call_count == 1
 
                 # Releasing the limit starts the job and clears the reason.
-                await set_admin_settings_row(test_engine, max_project_spend_total_usd=None)
+                await set_admin_settings_row(test_engine, max_project_spend_month_usd=None)
                 assert await self._pick(manager) is True
                 assert str(job_id) in manager._running_jobs
                 row = await self._row(test_engine, job_id)
@@ -1151,7 +1151,7 @@ class TestQueuedJobBudgetHold:
         manager = _new_manager(tmp_path)
         info = CostInfo(
             provider_name="stub",
-            total_spend_usd=500.0,
+            month_spend_usd=500.0,
             recent_spend_usd=50.0,
             recent_period_hours=24,
         )
@@ -1167,7 +1167,7 @@ class TestQueuedJobBudgetHold:
                 job = await self._job(session, owner, "claude-sonnet-4-6")
                 job_id = job.id
             try:
-                await set_admin_settings_row(test_engine, max_project_spend_total_usd=100.0)
+                await set_admin_settings_row(test_engine, max_project_spend_month_usd=100.0)
                 assert await self._pick(manager) is False
                 assert (await self._row(test_engine, job_id))["queue_reason"] is not None
 
@@ -1186,7 +1186,7 @@ class TestQueuedJobBudgetHold:
         manager = _new_manager(tmp_path)
         info = CostInfo(
             provider_name="stub",
-            total_spend_usd=500.0,
+            month_spend_usd=500.0,
             recent_spend_usd=50.0,
             recent_period_hours=24,
         )
@@ -1203,14 +1203,14 @@ class TestQueuedJobBudgetHold:
                 job = await self._job(session, owner, "claude-sonnet-4-6")
                 job_id = job.id
             try:
-                await set_admin_settings_row(test_engine, max_project_spend_total_usd=100.0)
+                await set_admin_settings_row(test_engine, max_project_spend_month_usd=100.0)
                 # A normal pick holds the job; the loop only looks for held jobs.
                 assert await self._pick(manager) is False
                 assert (await self._row(test_engine, job_id))["queue_reason"] is not None
 
                 task = asyncio.create_task(run_budget_queue_recheck(manager, interval=0.02))
                 try:
-                    await set_admin_settings_row(test_engine, max_project_spend_total_usd=None)
+                    await set_admin_settings_row(test_engine, max_project_spend_month_usd=None)
                     # The re-check picks every 20 ms; wait for its pick to land.
                     for _ in range(100):
                         if str(job_id) in manager._running_jobs:

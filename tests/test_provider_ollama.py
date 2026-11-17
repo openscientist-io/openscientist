@@ -79,7 +79,7 @@ def test_validate_required_config_is_empty() -> None:
 def test_get_cost_info_reports_zero_local_spend() -> None:
     with patch("openscientist.providers.ollama.get_settings", return_value=_settings()):
         info = OllamaProvider().get_cost_info()
-    assert info.total_spend_usd == 0.0
+    assert info.month_spend_usd == 0.0
     assert info.recent_spend_usd == 0.0
 
 

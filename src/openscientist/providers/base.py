@@ -97,14 +97,20 @@ def self_hosted_omp_model_catalog(
     return {"providers": {provider_id: entry}}
 
 
+def month_start(now: datetime) -> datetime:
+    """The start of ``now``'s calendar month in UTC, where the monthly limit resets."""
+    return now.astimezone(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
 @dataclass
 class CostInfo:
     """Provider-agnostic cost information."""
 
     provider_name: str
 
+    # Spend since month_start(), and over the last recent_period_hours.
     # None = unknown/unavailable (e.g., permissions error)
-    total_spend_usd: float | None
+    month_spend_usd: float | None
     recent_spend_usd: float | None
     recent_period_hours: int
     budget_limit_usd: float | None = None
@@ -119,7 +125,7 @@ class CostInfo:
         """A CostInfo whose spend is unknown, with ``note`` saying why."""
         return cls(
             provider_name=provider_name,
-            total_spend_usd=None,
+            month_spend_usd=None,
             recent_spend_usd=None,
             recent_period_hours=lookback_hours,
             data_lag_note=note,
@@ -818,7 +824,7 @@ class SelfHostedOpenAiWire(OpenAiWireCompatible, abc.ABC):
         # No per-call cost, so report zero spend and keep budget checks quiet.
         return CostInfo(
             provider_name=self.display_name,
-            total_spend_usd=0.0,
+            month_spend_usd=0.0,
             recent_spend_usd=0.0,
             recent_period_hours=lookback_hours,
             data_lag_note=f"Self-hosted {self.server_name} inference incurs no API cost.",

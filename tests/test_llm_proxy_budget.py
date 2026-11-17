@@ -37,14 +37,14 @@ async def _no_billing():
 
 
 @pytest.mark.parametrize(
-    "limit", ["max_job_cost_usd", "max_project_spend_total_usd", "max_project_spend_24h_usd"]
+    "limit", ["max_job_cost_usd", "max_project_spend_month_usd", "max_project_spend_24h_usd"]
 )
 @pytest.mark.parametrize("spent", [0.5, 1.0])
 async def test_http_budget_gate(limit, spent, test_engine, placeholder_for):
     _, total, recent = await budget._ledger_totals()
     baseline = {
         "max_job_cost_usd": 0.0,
-        "max_project_spend_total_usd": total,
+        "max_project_spend_month_usd": total,
         "max_project_spend_24h_usd": recent,
     }[limit]
     await set_admin_settings_row(test_engine, **{limit: baseline + 1.0})

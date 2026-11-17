@@ -22,7 +22,7 @@ _FULL_SETTINGS_INSERT = (
     "INSERT INTO admin_settings (agent_cpu, executor_cpu, agent_memory_mib, "
     "executor_memory_mib, agent_timeout_seconds, executor_timeout_seconds, "
     "max_file_size_mb, max_concurrent_jobs, scheduler_window_hours, airgapped, "
-    "session_duration_days, max_job_cost_usd, max_project_spend_total_usd, "
+    "session_duration_days, max_job_cost_usd, max_project_spend_month_usd, "
     "max_project_spend_24h_usd, warn_project_spend_24h_usd) VALUES (" + _SETTINGS_VALUES + ")"
 )
 

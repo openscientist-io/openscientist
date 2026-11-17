@@ -106,7 +106,7 @@ def _billing(fetches: list[object], total: float | None, recent: float | None) -
     """The provider billing boundary: a provider whose get_cost_info counts its calls."""
     info = CostInfo(
         provider_name="stub",
-        total_spend_usd=total,
+        month_spend_usd=total,
         recent_spend_usd=recent,
         recent_period_hours=24,
     )
@@ -131,7 +131,7 @@ class TestUnpricedModel:
         self, test_engine: AsyncEngine
     ) -> None:
         _, baseline, _ = await budget._ledger_totals()
-        await set_admin_settings_row(test_engine, max_project_spend_total_usd=baseline + 1000.0)
+        await set_admin_settings_row(test_engine, max_project_spend_month_usd=baseline + 1000.0)
         verdict = await budget.check_budget(
             provider_id="anthropic", model=UNPRICED_MODEL, include_unpriced=True
         )
@@ -153,7 +153,7 @@ class TestUnpricedModel:
         self, test_engine: AsyncEngine, provider_id: str
     ) -> None:
         _, baseline, _ = await budget._ledger_totals()
-        await set_admin_settings_row(test_engine, max_project_spend_total_usd=baseline + 1000.0)
+        await set_admin_settings_row(test_engine, max_project_spend_month_usd=baseline + 1000.0)
         verdict = await budget.check_budget(
             provider_id=provider_id, model=UNPRICED_MODEL, include_unpriced=True
         )
@@ -181,7 +181,7 @@ class TestUnpricedModel:
         self, test_engine: AsyncEngine
     ) -> None:
         _, baseline, _ = await budget._ledger_totals()
-        await set_admin_settings_row(test_engine, max_project_spend_total_usd=baseline + 1000.0)
+        await set_admin_settings_row(test_engine, max_project_spend_month_usd=baseline + 1000.0)
         verdict = await budget.check_budget(
             provider_id="anthropic", model=UNPRICED_MODEL, include_unpriced=False
         )
@@ -226,50 +226,50 @@ class TestJobCap:
 
 
 class TestProjectSpend:
-    async def test_project_total_uses_the_higher_of_ledger_and_billed(
+    async def test_project_month_uses_the_higher_of_ledger_and_billed(
         self, test_engine: AsyncEngine
     ) -> None:
         _, baseline, _ = await budget._ledger_totals()
-        await set_admin_settings_row(test_engine, max_project_spend_total_usd=baseline + 100.0)
+        await set_admin_settings_row(test_engine, max_project_spend_month_usd=baseline + 100.0)
         fetches: list[object] = []
         with _billing_patch(fetches, total=baseline + 500.0, recent=50.0):
             async with job_with_costs(test_engine, [(10.0, None)]):
                 verdict = await budget.check_budget(provider_id="bedrock")
         assert verdict.ok is False
-        assert verdict.limit == "project_total"
+        assert verdict.limit == "project_month"
         _message(verdict, f"${baseline + 500.0:.2f}")
 
     async def test_the_ledger_wins_when_it_is_higher_than_the_billing(
         self, test_engine: AsyncEngine
     ) -> None:
         _, baseline, _ = await budget._ledger_totals()
-        await set_admin_settings_row(test_engine, max_project_spend_total_usd=baseline + 100.0)
+        await set_admin_settings_row(test_engine, max_project_spend_month_usd=baseline + 100.0)
         fetches: list[object] = []
         with _billing_patch(fetches, total=baseline + 10.0, recent=1.0):
             async with job_with_costs(test_engine, [(500.0, None)]):
                 verdict = await budget.check_budget(provider_id="bedrock")
         assert verdict.ok is False
-        assert verdict.limit == "project_total"
+        assert verdict.limit == "project_month"
         _message(verdict, f"${baseline + 500.0:.2f}")
 
     async def test_no_billed_total_counts_the_ledger_only(self, test_engine: AsyncEngine) -> None:
         _, baseline, _ = await budget._ledger_totals()
-        await set_admin_settings_row(test_engine, max_project_spend_total_usd=baseline + 100.0)
+        await set_admin_settings_row(test_engine, max_project_spend_month_usd=baseline + 100.0)
         fetches: list[object] = []
         with _billing_patch(fetches, total=None, recent=None):
             async with job_with_costs(test_engine, [(10.0, None)]):
                 verdict = await budget.check_budget(provider_id="anthropic")
         assert verdict.ok is True
 
-    async def test_project_total_exactly_at_the_limit_is_refused(
+    async def test_project_month_exactly_at_the_limit_is_refused(
         self, test_engine: AsyncEngine
     ) -> None:
         _, baseline, _ = await budget._ledger_totals()
-        await set_admin_settings_row(test_engine, max_project_spend_total_usd=baseline + 100.0)
+        await set_admin_settings_row(test_engine, max_project_spend_month_usd=baseline + 100.0)
         async with job_with_costs(test_engine, [(100.0, None)]):
             verdict = await budget.check_budget(provider_id="bedrock")
         assert verdict.ok is False
-        assert verdict.limit == "project_total"
+        assert verdict.limit == "project_month"
 
     async def test_project_24h_counts_only_the_last_24_hours(
         self, test_engine: AsyncEngine
@@ -296,7 +296,7 @@ class TestProjectSpend:
 
     async def test_the_ledger_is_read_live_at_each_check(self, test_engine: AsyncEngine) -> None:
         _, baseline, _ = await budget._ledger_totals()
-        await set_admin_settings_row(test_engine, max_project_spend_total_usd=baseline + 100.0)
+        await set_admin_settings_row(test_engine, max_project_spend_month_usd=baseline + 100.0)
         fetches: list[object] = []
         with _billing_patch(fetches, total=10.0, recent=1.0):
             async with committed(test_engine) as session:
@@ -310,7 +310,7 @@ class TestProjectSpend:
                     await session.execute(delete(Job).where(Job.id == job.id))
                     await session.commit()
         assert verdict.ok is False
-        assert verdict.limit == "project_total"
+        assert verdict.limit == "project_month"
         assert fetches == [24]  # the second check reuses the cached fetch
 
 
@@ -331,7 +331,7 @@ class TestBillingFreshness:
         self, test_engine: AsyncEngine
     ) -> None:
         _, baseline, _ = await budget._ledger_totals()
-        await set_admin_settings_row(test_engine, max_project_spend_total_usd=baseline + 100000.0)
+        await set_admin_settings_row(test_engine, max_project_spend_month_usd=baseline + 100000.0)
         clock = _Clock()
         fetches: list[object] = []
         with (
@@ -353,7 +353,7 @@ class TestBillingFreshness:
     ) -> None:
         """A failure is not cached for 10 minutes: every check fetches again."""
         _, baseline, _ = await budget._ledger_totals()
-        await set_admin_settings_row(test_engine, max_project_spend_total_usd=baseline + 100.0)
+        await set_admin_settings_row(test_engine, max_project_spend_month_usd=baseline + 100.0)
         fetches: list[object] = []
         with patch.object(budget, "get_provider", return_value=_billing_failing(fetches)):
             async with job_with_costs(test_engine, [(10.0, None)]):
@@ -366,7 +366,7 @@ class TestBillingFreshness:
         self, test_engine: AsyncEngine
     ) -> None:
         _, baseline, _ = await budget._ledger_totals()
-        await set_admin_settings_row(test_engine, max_project_spend_total_usd=baseline + 100.0)
+        await set_admin_settings_row(test_engine, max_project_spend_month_usd=baseline + 100.0)
         clock = _Clock()
         fetches: list[object] = []
         ok = _billing(fetches, total=10.0, recent=1.0)

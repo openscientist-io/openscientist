@@ -221,7 +221,7 @@ def test_construction_fails_without_a_model(spec: Spec) -> None:
 def test_get_cost_info_reports_zero_self_hosted_spend(spec: Spec) -> None:
     with _provider(spec) as p:
         info = p.get_cost_info()
-    assert info.total_spend_usd == 0.0
+    assert info.month_spend_usd == 0.0
     assert info.recent_spend_usd == 0.0
 
 

@@ -20,7 +20,7 @@ from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("limit", ["project_total", "project_24h"])
+@pytest.mark.parametrize("limit", ["project_month", "project_24h"])
 @pytest.mark.parametrize("deletion", ["repository", "sql", "loaded_orm"])
 async def test_deleting_charged_job_preserves_spend_and_exhausted_budget(
     test_engine: AsyncEngine, limit: str, deletion: str
@@ -56,11 +56,11 @@ async def test_deleting_charged_job_preserves_spend_and_exhausted_budget(
         with patch("openscientist.budget._provider_billing", return_value=None):
             before = await budget.project_spend()
             setting = (
-                "max_project_spend_total_usd"
-                if limit == "project_total"
+                "max_project_spend_month_usd"
+                if limit == "project_month"
                 else "max_project_spend_24h_usd"
             )
-            cap = before.total if limit == "project_total" else before.last_24h
+            cap = before.month if limit == "project_month" else before.last_24h
             assert cap > 0
             await set_admin_settings_row(test_engine, **{setting: cap})
             assert (await budget.check_budget(provider_id="anthropic")).limit == limit
@@ -82,7 +82,7 @@ async def test_deleting_charged_job_preserves_spend_and_exhausted_budget(
                         await db.delete(loaded)
                     await db.commit()
             after = await budget.project_spend()
-            assert after.ledger_total == before.ledger_total
+            assert after.ledger_month == before.ledger_month
             assert after.ledger_24h == before.ledger_24h
             assert (await budget.check_budget(provider_id="anthropic")).limit == limit
             async with AsyncSession(test_engine) as db:

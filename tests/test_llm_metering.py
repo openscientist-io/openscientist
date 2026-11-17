@@ -1295,7 +1295,7 @@ class TestNotMetered:
 
     @pytest_asyncio.fixture
     async def counting_budget(self, test_engine: AsyncEngine):
-        await set_admin_settings_row(test_engine, max_project_spend_total_usd=0.01)
+        await set_admin_settings_row(test_engine, max_project_spend_month_usd=0.01)
         try:
             yield
         finally:

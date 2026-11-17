@@ -633,7 +633,7 @@ class TestJobEndpoints:
         app.dependency_overrides[get_current_user_from_api_key] = override_get_user
         app.include_router(router)
 
-        test_job_db.stop_note = "Project spend total limit of $100.00 reached."
+        test_job_db.stop_note = "Project monthly spend limit of $100.00 reached."
         await db_session.commit()
 
         async with AsyncClient(
@@ -651,7 +651,7 @@ class TestJobEndpoints:
         assert data["status"] == "pending"
         assert data["current_iteration"] == 0
         assert data["max_iterations"] == 5
-        assert data["stop_note"] == "Project spend total limit of $100.00 reached."
+        assert data["stop_note"] == "Project monthly spend limit of $100.00 reached."
 
     @pytest.mark.asyncio
     async def test_get_nonexistent_job_returns_404(

@@ -23,7 +23,7 @@ _MIGRATION = (
 _ADMIN_SETTINGS_COLUMNS = {
     "id",
     "max_job_cost_usd",
-    "max_project_spend_total_usd",
+    "max_project_spend_month_usd",
     "max_project_spend_24h_usd",
     "warn_project_spend_24h_usd",
     "agent_cpu",
@@ -45,7 +45,7 @@ _CHANGE_COLUMNS = {"id", "changed_at", "changed_by", "setting", "old_value", "ne
 # NULL budgets mean no limit, 0 pauses new starts, and 1 day is the shortest session.
 _VALID_ROW: dict[str, object] = {
     "max_job_cost_usd": None,
-    "max_project_spend_total_usd": None,
+    "max_project_spend_month_usd": None,
     "max_project_spend_24h_usd": None,
     "warn_project_spend_24h_usd": None,
     "agent_cpu": 1e-9,
@@ -63,13 +63,13 @@ _VALID_ROW: dict[str, object] = {
 
 _INSERT = """
     INSERT INTO admin_settings (
-        max_job_cost_usd, max_project_spend_total_usd, max_project_spend_24h_usd,
+        max_job_cost_usd, max_project_spend_month_usd, max_project_spend_24h_usd,
         warn_project_spend_24h_usd, agent_cpu, executor_cpu, agent_memory_mib,
         executor_memory_mib, agent_timeout_seconds, executor_timeout_seconds,
         max_file_size_mb, max_concurrent_jobs, scheduler_window_hours,
         airgapped, session_duration_days
     ) VALUES (
-        :max_job_cost_usd, :max_project_spend_total_usd, :max_project_spend_24h_usd,
+        :max_job_cost_usd, :max_project_spend_month_usd, :max_project_spend_24h_usd,
         :warn_project_spend_24h_usd, :agent_cpu, :executor_cpu, :agent_memory_mib,
         :executor_memory_mib, :agent_timeout_seconds, :executor_timeout_seconds,
         :max_file_size_mb, :max_concurrent_jobs, :scheduler_window_hours,
@@ -78,8 +78,8 @@ _INSERT = """
 """
 
 
-def _migration() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("admin_settings", _MIGRATION)
+def _migration(path: Path = _MIGRATION) -> ModuleType:
+    spec = importlib.util.spec_from_file_location("admin_settings", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -112,16 +112,19 @@ async def test_downgrade_drops_both_tables_and_upgrade_creates_them(
     test_engine: AsyncEngine,
 ) -> None:
     module = _migration()
+    monthly = _migration(_MIGRATION.with_name("2026-11-16_1200_monthly_project_spend.py"))
 
     def run(connection: Connection) -> None:
         # DDL is transactional in Postgres, so rolling back keeps the shared schema.
         transaction = connection.begin()
         try:
             with Operations.context(MigrationContext.configure(connection)):
+                monthly.downgrade()
                 module.downgrade()
                 assert _table_columns(connection, "admin_settings") is None
                 assert _table_columns(connection, "admin_setting_changes") is None
                 module.upgrade()
+                monthly.upgrade()
                 assert _table_columns(connection, "admin_settings") == _ADMIN_SETTINGS_COLUMNS
                 assert _table_columns(connection, "admin_setting_changes") == _CHANGE_COLUMNS
         finally:
@@ -129,6 +132,40 @@ async def test_downgrade_drops_both_tables_and_upgrade_creates_them(
 
     async with test_engine.connect() as conn:
         await conn.run_sync(run)
+
+
+@pytest.mark.asyncio
+async def test_monthly_migration_preserves_the_limit_and_its_constraint(
+    test_engine: AsyncEngine,
+) -> None:
+    monthly = _migration(_MIGRATION.with_name("2026-11-16_1200_monthly_project_spend.py"))
+
+    def run(connection: Connection) -> None:
+        transaction = connection.begin()
+        try:
+            _insert_row(connection)
+            with Operations.context(MigrationContext.configure(connection)):
+                monthly.downgrade()
+                connection.execute(
+                    text("UPDATE admin_settings SET max_project_spend_total_usd = 42.0")
+                )
+                monthly.upgrade()
+            assert (
+                connection.scalar(text("SELECT max_project_spend_month_usd FROM admin_settings"))
+                == 42.0
+            )
+            with pytest.raises(
+                IntegrityError, match="ck_admin_settings_max_project_spend_month_usd"
+            ):
+                with connection.begin_nested():
+                    connection.execute(
+                        text("UPDATE admin_settings SET max_project_spend_month_usd = -1.0")
+                    )
+        finally:
+            transaction.rollback()
+
+    async with test_engine.connect() as connection:
+        await connection.run_sync(run)
 
 
 @pytest.mark.asyncio
@@ -165,7 +202,7 @@ async def test_the_bounds_accept_their_edges(test_engine: AsyncEngine) -> None:
     ("column", "value"),
     [
         ("max_job_cost_usd", 0.0),
-        ("max_project_spend_total_usd", 0.0),
+        ("max_project_spend_month_usd", 0.0),
         ("max_project_spend_24h_usd", 0.0),
         ("warn_project_spend_24h_usd", 0.0),
         ("agent_cpu", 0.0),
