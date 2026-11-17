@@ -71,9 +71,9 @@ def _drawer_route_handler(drawer: ui.element, route: str) -> Callable[[], None]:
     return handler
 
 
-async def _sign_out() -> None:
+def _sign_out() -> None:
     """Sign out with a same-origin POST, then land on the login page."""
-    await ui.run_javascript(
+    ui.run_javascript(
         "fetch('/auth/logout', {method: 'POST', headers: {'Content-Type': 'application/json'}, "
         "body: '{}'}).then(() => { window.location.assign('/login'); });"
     )
