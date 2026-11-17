@@ -191,6 +191,24 @@ _WS_DROP_HEADERS = frozenset(
 # RFC 6455 codes reserved for local use, which a close frame must not carry.
 _LOCAL_ONLY_CLOSE_CODES = {1005, 1006, 1015}
 
+# A budget refusal is a 400 invalid_request_error, the status a provider gives
+# an exhausted credit balance. Harnesses retry a 429 and read a 403 as bad
+# credentials. One body fits the Anthropic and the OpenAI error parsers.
+_BUDGET_REFUSAL_STATUS = 400
+
+
+def _budget_refusal_body(message: str | None) -> bytes:
+    return json.dumps(
+        {
+            "type": "error",
+            "error": {
+                "type": "invalid_request_error",
+                "code": "budget_exceeded",
+                "message": message or "Budget exhausted",
+            },
+        }
+    ).encode()
+
 
 def _endpoint_allowed(
     provider_id: str, method: str, path: str, raw_path: bytes, *, websocket: bool = False
@@ -467,7 +485,11 @@ def create_llm_proxy_app(
                         request.url.path,
                         result.message,
                     )
-                    return Response(result.message, status_code=403)
+                    return Response(
+                        _budget_refusal_body(result.message),
+                        status_code=_BUDGET_REFUSAL_STATUS,
+                        media_type="application/json",
+                    )
                 admission.reservation = result
             headers = {
                 k: v
@@ -565,17 +587,18 @@ def create_llm_proxy_app(
     )
 
 
-async def _refuse_websocket(send, status_code: int, detail: str) -> None:
+async def _refuse_websocket(send, status_code: int, detail: str, *, budget: bool = False) -> None:
     """End a websocket handshake with an HTTP status, so a dead run is
     refused the way the REST path refuses it, before any upstream is
-    touched."""
-    body = detail.encode()
+    touched. A budget refusal carries the provider-shaped error body."""
+    body = _budget_refusal_body(detail) if budget else detail.encode()
+    content_type = b"application/json" if budget else b"text/plain; charset=utf-8"
     await send(
         {
             "type": "websocket.http.response.start",
             "status": status_code,
             "headers": [
-                (b"content-type", b"text/plain; charset=utf-8"),
+                (b"content-type", content_type),
                 (b"content-length", str(len(body)).encode()),
             ],
         }
@@ -647,7 +670,9 @@ class _ResponsesWebsocketTerminator:
         verdict = await check_budget(job_id=UUID(run.job_id), provider_id=self._provider_id())
         if not verdict.ok:
             logger.warning("LLM proxy refused run %s with %s", run.job_id, verdict.message)
-            await _refuse_websocket(send, 403, verdict.message or "Budget exhausted")
+            await _refuse_websocket(
+                send, _BUDGET_REFUSAL_STATUS, verdict.message or "Budget exhausted", budget=True
+            )
             return
         query = scope.get("query_string", b"").decode()
         default_model = parse_qs(query).get("model", [get_settings().provider.model or "unknown"])[
@@ -857,7 +882,7 @@ class _ResponsesWebsocketTerminator:
                 buckets=buckets,
             )
             if isinstance(result, ModelCallRefused):
-                return 403, result.message or "Budget exhausted"
+                return _BUDGET_REFUSAL_STATUS, result.message or "Budget exhausted"
             admission.reservation = result
             if stream in active:
                 return 429, "Response stream already active"

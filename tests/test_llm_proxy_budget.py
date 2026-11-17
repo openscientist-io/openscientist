@@ -65,10 +65,14 @@ async def test_http_budget_gate(limit, spent, test_engine, placeholder_for):
                 headers={"x-api-key": placeholder_for(str(job.id))},
                 json={"model": "claude-sonnet-4-6", "messages": [], "max_tokens": 10},
             )
-        assert response.status_code == (403 if spent == 1.0 else 200)
+        assert response.status_code == (400 if spent == 1.0 else 200)
         assert len(recorded) == (0 if spent == 1.0 else 1)
         if spent == 1.0:
-            assert "limit" in response.text
+            body = response.json()
+            assert body["type"] == "error"
+            assert body["error"]["type"] == "invalid_request_error"
+            assert body["error"]["code"] == "budget_exceeded"
+            assert "limit" in body["error"]["message"]
 
 
 class TestWebsocketBudget:
@@ -89,7 +93,8 @@ class TestWebsocketBudget:
                         },
                         proxy=None,
                     )
-            assert raised.value.response.status_code == 403
+            assert raised.value.response.status_code == 400
+            assert "Job cost limit" in json.loads(raised.value.response.body)["error"]["message"]
             assert stub_upstream.handshakes == []
 
     @pytest.mark.parametrize("binary", [False, True])
@@ -119,7 +124,7 @@ class TestWebsocketBudget:
                 await connection.send(create)
                 error = json.loads(await connection.recv())
                 assert error["type"] == "error"
-                assert error["status"] == 403
+                assert error["status"] == 400
                 assert "Job cost limit" in error["error"]["message"]
             assert stub_upstream.frames == [create]
 
@@ -316,7 +321,7 @@ async def test_http_parallel_admission_holds_until_metered(test_engine, placehol
                         results = await asyncio.gather(*held, return_exceptions=aborted)
                 if aborted:
                     assert all(isinstance(result, httpx.ReadError) for result in results)
-                assert (await call()).status_code == (200 if aborted else 403)
+                assert (await call()).status_code == (200 if aborted else 400)
                 assert entered.qsize() == (1 if aborted else 0)
 
 
@@ -424,7 +429,7 @@ class TestAdmissionWebsocket:
                     for connection in connections[:4]:
                         assert json.loads(await connection.recv())["type"] == "response.completed"
                     await connections[0].send(create)
-                    assert json.loads(await connections[0].recv())["status"] == 403
+                    assert json.loads(await connections[0].recv())["status"] == 400
                     assert len(stub_upstream.frames) == 4
 
     async def test_aborted_connections_exhaust_reserved_budget(
@@ -455,12 +460,12 @@ class TestAdmissionWebsocket:
                             )
                             response = await connection.recv()
                             if response != "ready":
-                                assert json.loads(response)["status"] == 403
+                                assert json.loads(response)["status"] == 400
                                 break
                             with pytest.raises(ConnectionClosed):
                                 await connection.recv()
                     except InvalidStatus as exc:
-                        assert exc.response.status_code == 403
+                        assert exc.response.status_code == 400
                         break
                 else:
                     pytest.fail("Aborted websocket calls never exhausted the job budget")
@@ -666,7 +671,7 @@ async def test_aborted_http_calls_exhaust_reserved_budget(ending, test_engine, p
                         )
                     except httpx.TransportError:
                         continue
-                    assert response.status_code == 403
+                    assert response.status_code == 400
                     break
                 else:
                     pytest.fail("Aborted model calls never exhausted the job budget")

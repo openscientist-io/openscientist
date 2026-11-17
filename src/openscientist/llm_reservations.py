@@ -180,7 +180,8 @@ async def reserve_model_call(
     provider_id: str,
     buckets: TokenUsage,
 ) -> ModelCallRefused | ModelCallReservation:
-    """Return a refusal or a reservation against durable spend, reservations and debt."""
+    """Return a refusal, or a reservation of the call's worst case when the
+    spend before it is under every limit, so concurrent calls count it."""
     uid = UUID(job_id)
     amount = _cost(model, buckets)
     async with _budget_guard():
@@ -189,7 +190,6 @@ async def reserve_model_call(
             provider_id=provider_id,
             model=model,
             include_unpriced=True,
-            prospective_usd=amount,
         )
         if not verdict.ok:
             return ModelCallRefused(verdict.limit, verdict.message)

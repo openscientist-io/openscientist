@@ -208,8 +208,9 @@ async def _proxy_row(run: _Run, *, input_tokens: int, output_tokens: int, cost: 
         await session.commit()
 
 
-def _report_phase() -> AsyncMock:
-    """The report phase: the job moves to generating_report, then succeeds."""
+def _report_phase(written: bool = True) -> AsyncMock:
+    """The report phase: the job moves to generating_report, then the report is
+    written, or, without ``written``, the agent ends with no file and no error."""
 
     async def phase(
         executor: AbstractAgent[Provider],
@@ -218,12 +219,14 @@ def _report_phase() -> AsyncMock:
         description: str | None,
     ) -> _ReportOutcome:
         await _begin_report_phase(job_dir)
-        return _ReportOutcome(success=True, error="")
+        return _ReportOutcome(success=written, error="")
 
     return AsyncMock(side_effect=phase)
 
 
-async def _run_discovery(run: _Run, executor: MagicMock) -> dict[str, str]:
+async def _run_discovery(
+    run: _Run, executor: MagicMock, *, report_written: bool = True
+) -> dict[str, str]:
     """run_discovery_async with the agent and the report phase faked."""
     with (
         patch("openscientist.orchestrator.discovery._build_agent_executor", return_value=executor),
@@ -231,7 +234,10 @@ async def _run_discovery(run: _Run, executor: MagicMock) -> dict[str, str]:
             "openscientist.orchestrator.discovery._sync_version_metadata", new_callable=AsyncMock
         ),
         patch("openscientist.orchestrator.discovery._append_iteration_artifacts"),
-        patch("openscientist.orchestrator.discovery._run_report_generation_phase", _report_phase()),
+        patch(
+            "openscientist.orchestrator.discovery._run_report_generation_phase",
+            _report_phase(report_written),
+        ),
     ):
         return await run_discovery_async(run.job_dir)
 
@@ -239,7 +245,7 @@ async def _run_discovery(run: _Run, executor: MagicMock) -> dict[str, str]:
 async def _row(run: _Run) -> dict[str, str | None]:
     async with committed(run.engine) as session:
         job = (await session.execute(select(Job).where(Job.id == UUID(run.job_id)))).scalar_one()
-    return {"status": job.status, "stop_note": job.stop_note}
+    return {"status": job.status, "stop_note": job.stop_note, "error": job.error_message}
 
 
 async def _set_status(run: _Run, status: str) -> None:
@@ -418,6 +424,73 @@ class TestDiscoveryBudgetGate:
         assert row["status"] == "completed"
         assert row["stop_note"] is not None
         assert "could not be checked" in row["stop_note"]
+
+    async def test_a_call_refused_mid_iteration_stops_the_run_and_the_report_still_runs(
+        self, run: _Run, ask_via_broker: None, admin_settings_reader: None
+    ) -> None:
+        """The iteration's first call spends past the cap, the proxy refuses the
+        next one, and the agent ends the turn failed."""
+        await set_admin_settings_row(run.engine, max_job_cost_usd=0.5)
+        executor = _executor(run)
+
+        async def refused_turn(prompt: str, reset_session: bool = False) -> IterationResult:
+            await _proxy_row(run, input_tokens=100_000, output_tokens=50_000, cost=1.0)
+            return IterationResult(
+                outcome=TurnOutcome.FAILED,
+                output="",
+                tool_calls=1,
+                transcript=[],
+                error="API Error: 400 Job cost limit of $0.50 reached",
+            )
+
+        executor.run_iteration = AsyncMock(side_effect=refused_turn)
+        result = await _run_discovery(run, executor)
+        assert result["status"] == "completed"
+        assert executor.run_iteration.await_count == 1
+        row = await _row(run)
+        assert row["status"] == "completed"
+        assert row["stop_note"] == ("Job cost limit of $0.50 reached: the job has spent $1.00.")
+
+    async def test_a_failed_turn_under_every_limit_fails_the_job(
+        self, run: _Run, ask_via_broker: None, admin_settings_reader: None
+    ) -> None:
+        executor = _executor(run)
+        executor.run_iteration = AsyncMock(
+            return_value=IterationResult(
+                outcome=TurnOutcome.FAILED,
+                output="",
+                tool_calls=0,
+                transcript=[],
+                error="the model crashed",
+            )
+        )
+        result = await _run_discovery(run, executor)
+        assert result["status"] == "failed"
+        row = await _row(run)
+        assert row["status"] == "failed"
+        assert row["error"] == "Iteration 1 failed: the model crashed"
+
+    async def test_a_report_refused_by_a_project_limit_fails_with_the_limit(
+        self, run: _Run, ask_via_broker: None, admin_settings_reader: None
+    ) -> None:
+        with patch("openscientist.budget.get_provider", return_value=_billing_zero()):
+            await set_admin_settings_row(run.engine, max_project_spend_month_usd=0.5)
+            result = await _run_discovery(run, _executor(run, growing=True), report_written=False)
+        assert result["status"] == "failed"
+        row = await _row(run)
+        assert row["status"] == "failed"
+        assert row["error"] is not None
+        assert row["error"].startswith("Report generation failed: Project monthly spend limit")
+
+    async def test_a_report_missing_without_an_agent_error_says_so(
+        self, run: _Run, ask_via_broker: None, admin_settings_reader: None
+    ) -> None:
+        result = await _run_discovery(run, _executor(run), report_written=False)
+        assert result["status"] == "failed"
+        row = await _row(run)
+        assert row["error"] == (
+            "Report generation failed: the agent did not write the report file."
+        )
 
     async def test_cancellation_wins_over_a_reached_limit(
         self,
