@@ -3,6 +3,7 @@ is redrawn while the job is being deleted."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
@@ -11,7 +12,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
-from nicegui import ui
+from nicegui import background_tasks, ui
 from nicegui.client import Client
 from nicegui.testing import user_simulation
 from sqlalchemy import delete
@@ -159,7 +160,10 @@ async def test_a_deletion_that_raises_reports_the_failure_and_stays_on_the_page(
         await browser.open("/")
         browser.find("Remove job").click()
         await browser.should_see("Delete Job")
+        before = set(background_tasks.running_tasks)
         browser.find("Delete").click()
+        for task in background_tasks.running_tasks - before:
+            await asyncio.wait_for(task, 10)
         await browser.should_see(message)
         await browser.should_not_see("deleted successfully")
 
