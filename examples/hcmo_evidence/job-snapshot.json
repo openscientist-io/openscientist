@@ -1,0 +1,165 @@
+{
+  "config": {
+    "job_id": "hcmo-dark-phase-activity-001",
+    "research_question": "Does mouse 1 maintain mean dark-phase locomotor activity above 100 activity counts per hour under limited human interaction?",
+    "short_title": "Dark-phase locomotor activity",
+    "status": "completed",
+    "max_iterations": 3,
+    "started_at": "2026-08-20T09:00:00Z",
+    "ended_at": "2026-08-20T09:18:00Z",
+    "llm_provider": "fixture"
+  },
+  "data_summary": {"files": 1, "subjects": 1, "observations": 1},
+  "iteration": 3,
+  "hypotheses": [
+    {
+      "id": "H001",
+      "iteration_proposed": 1,
+      "statement": "Mouse 1 has mean dark-phase locomotor activity greater than 100 activity counts per hour during limited human interaction.",
+      "status": "supported",
+      "proposed_by": "agent",
+      "tested_at_iteration": 2,
+      "test_strategy": "Select the dark-phase interval, aggregate activity counts by hour, and compare the sample mean with the prespecified threshold of 100 counts/hour.",
+      "result": {"conclusion": "Supported for the exported observation interval."},
+      "spawned_hypotheses": []
+    }
+  ],
+  "findings": [
+    {
+      "id": "F001",
+      "iteration_discovered": 2,
+      "title": "Mean dark-phase activity exceeded the prespecified threshold",
+      "evidence": "The sample mean was 143.2 activity counts/hour for the exported 12-hour dark-phase observation, 43.2 counts/hour above the prespecified threshold.",
+      "status": "supported",
+      "inference_scope": "individual",
+      "experimental_unit_count": 1,
+      "supporting_hypotheses": ["H001"],
+      "analysis_ids": ["A001"],
+      "data_file_ids": ["D001"],
+      "result_ids": ["R001"],
+      "literature_support": ["L001"],
+      "plots": [],
+      "biological_interpretation": "The result demonstrates retained nocturnal activity for this subject and interval; it does not establish a population effect.",
+      "citations": [
+        {
+          "pmid": "12884972",
+          "snippet": "Reliable individual differences in home-cage behaviors such as running, swinging on bars, and burrowing were found.",
+          "explanation": "Supports the relevance of home-cage activity as a behavioral endpoint.",
+          "validation_status": "verified"
+        }
+      ]
+    }
+  ],
+  "literature": [
+    {
+      "id": "L001",
+      "pmid": "12884972",
+      "title": "Home-cage activity in heterogeneous stock (HS) mice as a model of baseline activity",
+      "abstract": "Reliable individual differences in home-cage behaviors such as running, swinging on bars, and burrowing were found.",
+      "relevance_to": ["F001"],
+      "retrieved_at_iteration": 2,
+      "search_query": "mouse home cage locomotor activity"
+    }
+  ],
+  "analysis_log": [
+    {
+      "id": "A001",
+      "iteration": 2,
+      "action": "execute_code",
+      "timestamp": "2026-08-20T09:08:00Z",
+      "description": "Computed the arithmetic mean of hourly activity counts in the prespecified dark-phase interval.",
+      "success": true,
+      "code_sha256": "db93ed80a6164427d39c0cf3e464cc8a93360c491836c3d0a125d6b0641e9f6a",
+      "input_file_ids": ["D001"],
+      "output_result_ids": ["R001"]
+    }
+  ],
+  "iteration_summaries": [],
+  "feedback_history": [],
+  "consensus_answer": "Yes for this one subject and observation interval; no population-level conclusion is supported.",
+  "data_files": [
+    {
+      "id": "D001",
+      "filename": "mouse-1-dark-phase-activity.csv",
+      "file_path": "data/mouse-1-dark-phase-activity.csv",
+      "file_type": "csv",
+      "file_size": 359,
+      "mime_type": "text/csv",
+      "sha256": "c378681128c7f6505a054340ccf8307216be6103392e03c6760aaeb4d326039b"
+    }
+  ],
+  "statistical_results": [
+    {
+      "id": "R001",
+      "label": "Sample mean dark-phase locomotor activity",
+      "type_iri": "http://purl.obolibrary.org/obo/STATO_0000401",
+      "value": 143.2,
+      "unit_iri": "http://qudt.org/vocab/unit/UNITLESS"
+    }
+  ],
+  "semantic_manifest": {
+    "contract_version": "0.2.0-poc",
+    "authoritative_state": "openscientist-postgresql",
+    "projection_mode": "deterministic-read-only",
+    "vocabularies": [
+      {
+        "id": "hcmo",
+        "version": "0.3.0",
+        "version_iri": "https://w3id.org/hcmo/ontology/hcm/0.3.0",
+        "sha256": "97b7123875568d1f75bd3405ad73fa4788cc1144543ae534b0ab1ab2d5a48dd5"
+      },
+      {
+        "id": "stato",
+        "version": "2026-04-20",
+        "version_iri": "http://purl.obolibrary.org/obo/stato/releases/2026-04-20/stato.owl",
+        "sha256": "7e8f945ee30c6b24139f0064d57c2edbcfc988f3f74811cad6b5c84819ce1494"
+      },
+      {
+        "id": "prov-o",
+        "version": "W3C Recommendation 2013-04-30",
+        "version_iri": "http://www.w3.org/ns/prov-o-20130430",
+        "sha256": "02a4d7409ee3e1f697a04e4980d8d208a847cc7fa5180ca0d187540abb66919f"
+      },
+      {
+        "id": "qudt-schema",
+        "version": "3.4.0",
+        "version_iri": "http://qudt.org/3.4.0/schema/qudt",
+        "sha256": "9035fc5191e1be880f849c935ce059526872eb7c847b965a3ab0c3d1e5d1303b"
+      }
+    ]
+  },
+  "semantic_context": {
+    "enclosure": {
+      "id": "cage-12",
+      "label": "Rack 3, cage 12",
+      "identifier": "rack-3-cage-12",
+      "width": 30.0,
+      "length": 45.0,
+      "height": 20.0,
+      "dimension_unit_iri": "http://qudt.org/vocab/unit/CentiM"
+    },
+    "subject": {
+      "id": "mouse-1",
+      "label": "Mouse 1",
+      "species": "Mus musculus",
+      "housing_start": "2026-08-19T00:00:00Z",
+      "housing_end": "2026-08-22T00:00:00Z"
+    },
+    "sensor": {
+      "id": "ir-sensor-1",
+      "label": "Left-wall infrared sensor",
+      "identifier": "ir-1",
+      "observed_property_id": "locomotor-activity",
+      "observed_property_label": "locomotor activity"
+    },
+    "observation": {
+      "id": "observation-dark-phase-1",
+      "result_id": "behavior-result-dark-phase-1",
+      "started_at": "2026-08-20T20:00:00Z",
+      "ended_at": "2026-08-21T08:00:00Z",
+      "behavior_type": "locomotor activity",
+      "condition_id": "limited-human-interaction",
+      "condition_label": "limited human interaction"
+    }
+  }
+}
