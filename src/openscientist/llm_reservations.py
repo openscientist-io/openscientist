@@ -17,7 +17,7 @@ from sqlalchemy import func, select
 from openscientist import budget
 from openscientist.agent.base import TokenUsage
 from openscientist.database.session import get_admin_session
-from openscientist.llm_metering import _ObservedCall, record_model_call
+from openscientist.llm_metering import CallTiming, _ObservedCall, record_model_call
 from openscientist.providers.pricing import estimate_cost_usd
 
 if TYPE_CHECKING:
@@ -59,6 +59,7 @@ class _Debt:
     estimated: bool
     created_at: datetime
     record_id: UUID | None = None
+    timing: CallTiming | None = None
 
 
 @dataclass
@@ -75,6 +76,7 @@ class ModelCallReservation:
     _id: object = field(default_factory=object)
     _debts: list[_Debt] | None = None
     _ended: tuple[list[_ObservedCall], bool] | None = None
+    _timing: CallTiming | None = None
     _closed: bool = False
 
     async def cancel(self) -> None:
@@ -85,12 +87,16 @@ class ModelCallReservation:
             self._closed = True
             _outstanding.pop(self._id, None)
 
-    async def settle(self, calls: list[_ObservedCall], *, complete: bool) -> None:
-        """Charge actual usage or a conservative estimate and retain failed writes."""
+    async def settle(
+        self, calls: list[_ObservedCall], *, complete: bool, timing: CallTiming | None = None
+    ) -> None:
+        """Charge actual usage or a conservative estimate and retain failed
+        writes. The call's ``timing`` is written with its first cost row."""
         if self._closed:
             return
         if self._ended is None:
             self._ended = (calls, complete)
+            self._timing = timing
         async with _budget_guard():
             await self._flush_locked()
 
@@ -115,6 +121,7 @@ class ModelCallReservation:
                         self.created_at,
                     )
                 ]
+            self._debts[0].timing = self._timing
         for debt in tuple(self._debts):
             if debt.record_id is None:
                 try:
@@ -133,6 +140,7 @@ class ModelCallReservation:
                 cost_usd=debt.cost,
                 estimated=debt.estimated,
                 created_at=debt.created_at,
+                timing=debt.timing,
             ):
                 self._debts.remove(debt)
         if not self._debts:
