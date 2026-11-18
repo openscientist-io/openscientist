@@ -32,7 +32,10 @@ from openscientist.webapp_components.pages.job_detail.common import (
     _report_tab_tooltip,
 )
 from openscientist.webapp_components.pages.job_detail.prompt import add_prompt_head_html
-from openscientist.webapp_components.pages.job_detail.report import _render_report_tab
+from openscientist.webapp_components.pages.job_detail.report import (
+    _render_report_regeneration_notices,
+    _render_report_tab,
+)
 from openscientist.webapp_components.pages.job_detail.timeline import (
     _render_timeline_tab,
     _stats_model,
@@ -204,6 +207,7 @@ def _render_job_status_notices(context: _JobDetailContext) -> None:
     if context.job_info.status == JobStatus.FAILED and context.job_info.error:
         error_info = get_user_friendly_error(context.job_info.error)
         render_error_card(error_info, context.job_info, context.job_dir)
+    _render_report_regeneration_notices(context)
     if context.job_info.status == JobStatus.CANCELLED:
         _render_cancelled_notice(context.job_info)
     if context.ks_load_error:

@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections.abc import Collection
 from uuid import UUID
 
-from sqlalchemy import func, update
+from sqlalchemy import case, func, update
 
 from openscientist.database.models.job import Job as JobModel
-from openscientist.job.types import JobStatus
+from openscientist.job.types import FailedPhase, JobStatus
 
 # JobStatus is a StrEnum, so these member sets match the container's string statuses too.
 #: Statuses after which a job holds no slot, so the scheduler stops counting it.
@@ -33,6 +33,7 @@ def status_update_statement(
     *,
     allowed_from: Collection[JobStatus | str],
     error_message: str | None = None,
+    failed_phase: FailedPhase | None = None,
     cancellation_reason: str | None = None,
     stop_note: str | None = None,
     takes_slot: bool = False,
@@ -42,10 +43,27 @@ def status_update_statement(
     ``allowed_from``; ``takes_slot`` stamps the slot start, ``stamps_end``
     stamps the slot end, and each caller adds its own ``.returning(...)``.
     The container's writer passes neither, so its writes never touch the
-    times the web owns."""
+    times the web owns.
+
+    A failure records ``failed_phase``, by default the report phase when the
+    job leaves report generation and the iterations otherwise. Any other
+    status clears the phase, and running again clears the last error."""
     values: dict[str, object] = {"status": _value(status)}
     if error_message:
         values["error_message"] = error_message
+    elif status == JobStatus.RUNNING:
+        values["error_message"] = None
+    if status == JobStatus.FAILED:
+        values["failed_phase"] = (
+            failed_phase.value
+            if failed_phase
+            else case(
+                (JobModel.status == JobStatus.GENERATING_REPORT.value, FailedPhase.REPORT.value),
+                else_=FailedPhase.ITERATIONS.value,
+            )
+        )
+    else:
+        values["failed_phase"] = None
     if cancellation_reason:
         values["cancellation_reason"] = cancellation_reason
     if stop_note:

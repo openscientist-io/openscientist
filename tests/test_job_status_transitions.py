@@ -1013,6 +1013,24 @@ async def test_a_report_that_crashes_fails_the_job(
         result = await run(tmp_path / str(job))
     assert result["status"] == "failed"
     assert await _ending(test_engine, job) == ("failed", "report exploded")
+    assert await _phase(test_engine, job) == "report"
+
+
+async def test_a_regeneration_that_fails_before_its_report_phase_is_a_report_failure(
+    make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path
+) -> None:
+    job = await make_job(JobStatus.RUNNING)
+    with (
+        _report_run(job, None),
+        patch(
+            "openscientist.orchestrator.discovery._run_report_generation_phase",
+            side_effect=RuntimeError("no session"),
+        ),
+    ):
+        result = await regenerate_report_async(tmp_path / str(job))
+    assert result["status"] == "failed"
+    assert await _ending(test_engine, job) == ("failed", "no session")
+    assert await _phase(test_engine, job) == "report"
 
 
 @pytest.mark.parametrize("run", [run_discovery_async, regenerate_report_async])
@@ -1048,3 +1066,110 @@ async def test_a_regeneration_cancelled_before_its_report_reports_cancelled(
         result = await regenerate_report_async(tmp_path / str(job))
     assert result["status"] == "cancelled"
     assert await _status(test_engine, job) == "cancelled"
+
+
+async def _phase(test_engine: AsyncEngine, job_id: UUID) -> str | None:
+    async with test_engine.connect() as conn:
+        phase = (
+            await conn.execute(text("SELECT failed_phase FROM jobs WHERE id = :id"), {"id": job_id})
+        ).scalar_one()
+    return None if phase is None else str(phase)
+
+
+async def _set_phase(test_engine: AsyncEngine, job_id: UUID, phase: str) -> None:
+    async with test_engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE jobs SET failed_phase = :phase WHERE id = :id"),
+            {"phase": phase, "id": job_id},
+        )
+
+
+@pytest.mark.parametrize(
+    ("failing_from", "phase"),
+    [
+        (JobStatus.GENERATING_REPORT, "report"),
+        (JobStatus.RUNNING, "iterations"),
+        (JobStatus.AWAITING_FEEDBACK, "iterations"),
+    ],
+)
+async def test_a_failure_records_the_phase_the_job_failed_in(
+    make_job: MakeJob,
+    test_engine: AsyncEngine,
+    tmp_path: Path,
+    failing_from: JobStatus,
+    phase: str,
+) -> None:
+    job = await make_job(failing_from)
+    assert await update_job_status(
+        tmp_path / str(job), "failed", error_message="boom", allowed_from=(failing_from.value,)
+    )
+    assert await _phase(test_engine, job) == phase
+
+
+async def test_a_job_that_runs_again_after_a_failure_drops_its_phase_and_error(
+    make_job: MakeJob, test_engine: AsyncEngine
+) -> None:
+    job = await make_job(JobStatus.FAILED, error="Report generation failed: stalled")
+    await _set_phase(test_engine, job, "report")
+    await set_job_status(str(job), JobStatus.RUNNING, allowed_from={JobStatus.FAILED})
+    assert await _ending(test_engine, job) == ("running", None)
+    assert await _phase(test_engine, job) is None
+
+
+async def test_a_job_that_failed_writing_its_report_can_regenerate_it(
+    make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path
+) -> None:
+    job = await make_job(JobStatus.FAILED, error="Report generation failed: stalled")
+    await _set_phase(test_engine, job, "report")
+    manager = await _manager(tmp_path, test_engine)
+    with patch("openscientist.job_manager.threading.Thread") as thread:
+        await manager.regenerate_report(str(job))
+    assert thread.call_args.kwargs["kwargs"] == {"run_mode": "report_only"}
+
+
+async def test_a_job_that_failed_during_its_iterations_cannot_regenerate_a_report(
+    make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path
+) -> None:
+    job = await make_job(JobStatus.FAILED, error="Agent container exited with code 1")
+    await _set_phase(test_engine, job, "iterations")
+    manager = await _manager(tmp_path, test_engine)
+    with (
+        patch("openscientist.job_manager.threading.Thread") as thread,
+        pytest.raises(ValueError, match="no report to regenerate"),
+    ):
+        await manager.regenerate_report(str(job))
+    thread.assert_not_called()
+
+
+async def test_a_regeneration_that_crashes_leaves_a_completed_job_completed(
+    make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path, runner: MagicMock
+) -> None:
+    """The earlier report stays the job's result, the crash stays readable,
+    and the owner is not told a job they see completed has failed."""
+    job = await make_job(JobStatus.COMPLETED)
+    manager = await _manager(tmp_path, test_engine)
+    with (
+        patch.object(manager, "_start_next_queued_job"),
+        patch.object(manager, "_send_status_notification") as told,
+    ):
+        await asyncio.to_thread(manager._run_job_in_container, str(job), run_mode="report_only")
+    runner.launch.assert_called_once()
+    assert JobStatus.FAILED not in [call.args[1] for call in told.call_args_list]
+    status, error = await _ending(test_engine, job)
+    assert status == "completed"
+    assert "exited with code 1" in (error or "")
+    assert await _phase(test_engine, job) is None
+
+
+async def test_a_regeneration_that_crashes_leaves_a_report_failure_regenerable(
+    make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path, runner: MagicMock
+) -> None:
+    """A crash before the container reaches the report step is still a report failure."""
+    job = await make_job(JobStatus.FAILED, error="Report generation failed: stalled")
+    await _set_phase(test_engine, job, "report")
+    manager = await _manager(tmp_path, test_engine)
+    with patch.object(manager, "_start_next_queued_job"):
+        await asyncio.to_thread(manager._run_job_in_container, str(job), run_mode="report_only")
+    runner.launch.assert_called_once()
+    assert await _status(test_engine, job) == "failed"
+    assert await _phase(test_engine, job) == "report"

@@ -19,6 +19,7 @@ from openscientist.job_files import (
 )
 from openscientist.webapp_components.components.agent_markdown import render_agent_markdown
 from openscientist.webapp_components.components.badges import transform_pmid_references
+from openscientist.webapp_components.components.banners import render_alert_banner
 from openscientist.webapp_components.pages.job_detail.common import _JobDetailContext
 from openscientist.webapp_components.utils.permissions import admin_access
 
@@ -36,10 +37,10 @@ def _download_pdf_report(job_id: str) -> None:
 def _can_regenerate_report(context: _JobDetailContext) -> bool:
     """Whether the admin "Regenerate report" control should be shown.
 
-    Admin-only, and only for completed jobs (the report phase reuses the
-    persisted findings, which only exist once the job has finished).
+    Admin-only, and only for a job whose findings are complete, one that
+    completed or failed writing its report.
     """
-    return is_current_user_admin() and context.job_info.status == JobStatus.COMPLETED
+    return is_current_user_admin() and context.job_info.report_regenerable
 
 
 async def _regenerate_report(context: _JobDetailContext) -> None:
@@ -73,7 +74,7 @@ def _confirm_regenerate_report(context: _JobDetailContext) -> None:
         ui.label("Regenerate report?").classes("text-lg font-bold")
         ui.label(
             "This re-runs only the report-generation step using the existing "
-            "findings and overwrites the current report. The investigation "
+            "findings and replaces any current report. The investigation "
             "iterations are not re-run."
         ).classes("text-sm text-gray-600")
         with ui.row().classes("w-full justify-end gap-2"):
@@ -106,15 +107,34 @@ def _render_report_actions(context: _JobDetailContext, report_path: Path, pdf_pa
             icon="folder_zip",
         ).props("color=accent outline")
 
-        # Admin-only: re-run just the report phase against the persisted
-        # findings. Visible only to admins and only for completed jobs.
         if _can_regenerate_report(context):
-            with ui.button(
-                "Regenerate Report",
-                on_click=lambda: _confirm_regenerate_report(context),
-                icon="refresh",
-            ).props("color=warning outline"):
-                ui.tooltip("Admin: re-run the report step using existing findings")
+            _render_regenerate_button(context)
+
+
+def _render_regenerate_button(context: _JobDetailContext) -> None:
+    with ui.button(
+        "Regenerate Report",
+        on_click=lambda: _confirm_regenerate_report(context),
+        icon="refresh",
+    ).props("color=warning outline"):
+        ui.tooltip("Admin: re-run the report step using existing findings")
+
+
+def _render_report_regeneration_notices(context: _JobDetailContext) -> None:
+    """For an admin, the regeneration of a job that failed writing its report,
+    and why the last regeneration of a completed job failed."""
+    if not is_current_user_admin():
+        return
+    job_info = context.job_info
+    if job_info.status is JobStatus.COMPLETED and job_info.error:
+        render_alert_banner(
+            title="The last report regeneration failed",
+            message=job_info.error,
+            severity="warning",
+        )
+    elif job_info.status is JobStatus.FAILED and job_info.report_regenerable:
+        with ui.row().classes("w-full justify-end mb-4"):
+            _render_regenerate_button(context)
 
 
 def _report_html_available(job_dir: Path) -> bool:

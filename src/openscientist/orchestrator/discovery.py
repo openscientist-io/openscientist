@@ -27,6 +27,7 @@ from openscientist.database.models import JobDataFile
 from openscientist.database.models.job import Job as JobModel
 from openscientist.database.session import async_session_local
 from openscientist.exec_broker_client import ask_budget
+from openscientist.job.types import FailedPhase
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import (
     FeedbackWaitResult,
@@ -447,6 +448,7 @@ async def regenerate_report_async(job_dir: Path) -> dict[str, Any]:
                 job_dir,
                 "failed",
                 error_message=str(e),
+                failed_phase=FailedPhase.REPORT,
                 allowed_from=("running", "generating_report"),
             )
         except Exception as status_error:

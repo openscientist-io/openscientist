@@ -242,7 +242,7 @@ class TestJobManagerRegenerateReport:
         with patch(
             "openscientist.job_manager.get_job", new_callable=AsyncMock, return_value=db_job
         ):
-            with pytest.raises(ValueError, match="not completed"):
+            with pytest.raises(ValueError, match="no report to regenerate"):
                 await manager.regenerate_report(str(db_job.id))
 
     async def test_already_running_raises(self, manager):

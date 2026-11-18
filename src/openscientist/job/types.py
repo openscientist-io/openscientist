@@ -27,6 +27,13 @@ class JobStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class FailedPhase(StrEnum):
+    """The phase a failed job failed in."""
+
+    ITERATIONS = "iterations"
+    REPORT = "report"
+
+
 def completed_iterations(status: str, iteration: int) -> int:
     """A job running or awaiting feedback is mid-iteration, so one fewer is complete, floored at 0."""
     if status in (JobStatus.RUNNING, JobStatus.AWAITING_FEEDBACK):
@@ -68,6 +75,7 @@ class JobInfo:
     cancellation_reason: str | None = None
     queue_reason: str | None = None
     stop_note: str | None = None
+    failed_phase: FailedPhase | None = None
     use_hypotheses: bool = False
     investigation_mode: str = "autonomous"
     owner_id: str | None = None
@@ -82,6 +90,13 @@ class JobInfo:
         d = asdict(self)
         d["status"] = self.status.value
         return d
+
+    @property
+    def report_regenerable(self) -> bool:
+        """Whether the job's findings are complete, so its report can be written again."""
+        return self.status is JobStatus.COMPLETED or (
+            self.status is JobStatus.FAILED and self.failed_phase == FailedPhase.REPORT
+        )
 
     @classmethod
     def from_db_model(
@@ -124,5 +139,8 @@ class JobInfo:
             version_info=getattr(job, "version_info", None),
             queue_reason=getattr(job, "queue_reason", None),
             stop_note=getattr(job, "stop_note", None),
+            failed_phase=(
+                FailedPhase(job.failed_phase) if getattr(job, "failed_phase", None) else None
+            ),
             is_public=bool(getattr(job, "is_public", False)),
         )
