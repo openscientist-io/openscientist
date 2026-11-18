@@ -11,7 +11,12 @@ import pytest
 
 from openscientist.agent.base import AgentConfig
 from openscientist.agent.claude_code_agent import ClaudeCodeAgent
+from openscientist.providers.anthropic import AnthropicProvider
 from openscientist.providers.base import ClaudeCompatible
+from openscientist.providers.bedrock import BedrockProvider
+from openscientist.providers.cborg import CborgProvider
+from openscientist.providers.foundry import FoundryProvider
+from openscientist.providers.vertex import VertexProvider
 from openscientist.settings import get_settings
 from tests.helpers import StubClaudeProvider
 
@@ -183,6 +188,30 @@ def test_build_options_defaults_to_provider_model(tmp_path: Path) -> None:
     options = agent._build_options()
 
     assert options.model == "stub-model"
+
+
+@pytest.mark.parametrize(
+    ("provider_class", "eager"),
+    [
+        (AnthropicProvider, True),
+        (BedrockProvider, True),
+        (FoundryProvider, True),
+        (VertexProvider, True),
+        (CborgProvider, False),
+    ],
+)
+def test_tool_input_streams_as_written_where_the_platform_supports_it(
+    tmp_path: Path, provider_class: type[ClaudeCompatible], eager: bool
+) -> None:
+    """A buffered tool argument arrives only once the model has finished it,
+    so a long report written in one Write sends nothing for minutes and the
+    CLI's idle watchdog aborts the call. The stub carries the provider's
+    choice, since building the real provider validates its configuration."""
+    provider = type(
+        "Provider", (_StubProvider,), {"streams_tool_input": provider_class.streams_tool_input}
+    )()
+    options = _make_agent(tmp_path, provider=provider)._build_options()
+    assert (options.env.get("CLAUDE_CODE_ENABLE_FINE_GRAINED_TOOL_STREAMING") == "1") is eager
 
 
 def test_apply_provider_env_sets_vars(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
