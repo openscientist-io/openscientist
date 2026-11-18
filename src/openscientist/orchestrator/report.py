@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from uuid import UUID
 
@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from openscientist.agent.base import AbstractAgent, IterationResult
 from openscientist.artifact_packager import TRANSCRIPT_SUFFIX
+from openscientist.database.models import CostRecord
 from openscientist.database.models.job import Job as JobModel
 from openscientist.database.session import async_session_local
 from openscientist.exceptions import OpenScientistError
@@ -166,6 +167,39 @@ _MAX_REPORT_ATTEMPTS = 3
 _MAX_CONSENSUS_ATTEMPTS = 3
 
 
+def _prompt_too_long(result: IterationResult) -> bool:
+    """Whether the turn was refused for overflowing the model's context. The
+    Claude Code CLI answers with this text, and the API error that other
+    harnesses relay carries it too."""
+    return "prompt is too long" in f"{result.output}\n{result.error}".lower()
+
+
+async def _last_known_context_tokens(job_id: str) -> int | None:
+    """The context the job's latest measured model call carried, as its input,
+    cache-read and cache-write tokens. A call refused for its size is not
+    billed, so it leaves no row, and an estimated row measures nothing."""
+    try:
+        async with asyncio.timeout(_STAMP_DEADLINE_SECONDS):
+            async with async_session_local() as session:
+                context: int | None = await session.scalar(
+                    select(
+                        CostRecord.input_tokens
+                        + CostRecord.cache_read_tokens
+                        + CostRecord.cache_write_tokens
+                    )
+                    .where(
+                        CostRecord.job_id == UUID(job_id),
+                        ~CostRecord.operation_type.endswith("_estimated", autoescape=True),
+                    )
+                    .order_by(CostRecord.created_at.desc(), CostRecord.id.desc())
+                    .limit(1)
+                )
+                return context
+    except Exception as e:
+        logger.warning("Could not read the last context size of job %s: %s", job_id, e)
+        return None
+
+
 async def _run_report_turn(
     executor: AbstractAgent[Provider],
     job_dir: Path,
@@ -177,30 +211,55 @@ async def _run_report_turn(
 
     The turn continues the agent's existing session, because a weak model drops
     into chat mode when handed a large "write this" prompt as its first message.
-    A regeneration run, which has no prior session, starts one here.
+    A regeneration run, which has no prior session, starts one here. A turn
+    refused for overflowing the context retries in a fresh session, its outline
+    budgeted for half the context the job's last measured call carried.
     """
     report_path = job_dir / "final_report.md"
     # Snapshot the existing report's mtime (None if it does not exist) so a
     # stale file from a prior run cannot be mistaken for this turn's output.
     baseline_mtime_ns = report_path.stat().st_mtime_ns if report_path.exists() else None
     file_write_tool = executor.file_write_tool
-    context_window_tokens = executor.model_profile.context_window_tokens
-    prompt = build_report_prompt(
-        research_question,
-        ks,
-        job_dir=job_dir,
-        description=description,
-        file_write_tool=file_write_tool,
-        context_window_tokens=context_window_tokens,
-    )
+    budget_tokens = executor.model_profile.context_window_tokens
+
+    def report_prompt() -> str:
+        return build_report_prompt(
+            research_question,
+            ks,
+            job_dir=job_dir,
+            description=description,
+            file_write_tool=file_write_tool,
+            context_window_tokens=budget_tokens,
+        )
+
+    prompt = report_prompt()
     logger.info("Report generation turn (prompt: %d chars)", len(prompt))
 
     result = await executor.run_iteration(prompt, reset_session=False)
+    overflow: str | None = None
     for attempt in range(1, _MAX_REPORT_ATTEMPTS + 1):
         if _ensure_report_written(report_path, result, baseline_mtime_ns=baseline_mtime_ns):
             if attempt > 1:
                 logger.info("Report written on attempt %d", attempt)
             return result, True
+        overflow = None
+        if _prompt_too_long(result):
+            known = await _last_known_context_tokens(job_dir.name)
+            size = f"last known context {known} tokens" if known else "no context size known"
+            overflow = f"The report prompt was too long for the model's context ({size})."
+            if attempt == _MAX_REPORT_ATTEMPTS:
+                break
+            budget_tokens = min(budget_tokens, known or budget_tokens) // 2
+            logger.warning(
+                "Report attempt %d/%d was too long for the model's context (%s); "
+                "retrying in a fresh session with the prompt budgeted for %d tokens",
+                attempt,
+                _MAX_REPORT_ATTEMPTS,
+                size,
+                budget_tokens,
+            )
+            result = await executor.run_iteration(report_prompt(), reset_session=True)
+            continue
         if attempt == _MAX_REPORT_ATTEMPTS:
             break
         logger.warning(
@@ -213,10 +272,13 @@ async def _run_report_turn(
                 job_dir=job_dir,
                 description=description,
                 file_write_tool=file_write_tool,
-                context_window_tokens=context_window_tokens,
+                context_window_tokens=budget_tokens,
             ),
             reset_session=False,
         )
+    if overflow is not None:
+        logger.error("Report not written after %d attempts: %s", _MAX_REPORT_ATTEMPTS, overflow)
+        return replace(result, error=overflow), False
     logger.error("Report file not written after %d attempts", _MAX_REPORT_ATTEMPTS)
     return result, False
 
