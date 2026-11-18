@@ -20,7 +20,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from openscientist.admin_settings import current_admin_settings
+from openscientist.admin_settings import costs_visible, current_admin_settings, hide_cost_amounts
 from openscientist.budget import check_budget
 from openscientist.container_manager import ContainerManager, get_container_manager
 from openscientist.database.models.job import Job as JobModel
@@ -253,12 +253,15 @@ def create_exec_broker_app(*, manager: Callable[[], ContainerManager]) -> Starle
             # The server's own 500 for an internal error, which the run retries.
             logger.exception("Budget check failed for job %s", job_id)
             return Response("the budget check failed", status_code=500)
+        message = verdict.message
+        if not await costs_visible(False):
+            message = hide_cost_amounts(message)
         return JSONResponse(
             {
                 "request_id": request_id,
                 "ok": verdict.ok,
                 "limit": verdict.limit,
-                "message": verdict.message,
+                "message": message,
             }
         )
 

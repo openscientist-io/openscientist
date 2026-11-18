@@ -9,8 +9,13 @@ from typing import Any, Self
 from nicegui import app, ui
 from nicegui.events import GenericEventArguments, UploadEventArguments
 
-from openscientist.admin_settings import current_admin_settings
-from openscientist.auth import can_current_user_start_jobs, get_current_user_id, require_auth
+from openscientist.admin_settings import costs_visible, current_admin_settings, hide_cost_amounts
+from openscientist.auth import (
+    can_current_user_start_jobs,
+    get_current_user_id,
+    is_current_user_admin,
+    require_auth,
+)
 from openscientist.exceptions import BudgetExceededError, IterationLimitError
 from openscientist.providers import check_provider_config
 from openscientist.upload_limits import MAX_UPLOAD_FILES_PER_REQUEST
@@ -110,7 +115,10 @@ async def _submit_job(
         ui.navigate.to(f"/job/{job_id}")
     except (BudgetExceededError, IterationLimitError) as exc:
         logger.warning("Job creation refused by an admin limit: %s", exc)
-        ui.notify(str(exc), type="negative")
+        message = str(exc)
+        if not await costs_visible(is_current_user_admin()):
+            message = hide_cost_amounts(message) or message
+        ui.notify(message, type="negative")
     except Exception as exc:
         logger.error("Error creating job: %s", exc, exc_info=True)
         _notify_creation_error(exc)

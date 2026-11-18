@@ -13,7 +13,8 @@ from uuid import UUID
 import httpx
 from sqlalchemy import select
 
-from openscientist.database.models import User
+from openscientist.admin_settings import costs_visible, hide_cost_amounts
+from openscientist.database.models import Administrator, User
 from openscientist.database.session import thread_safe_admin_session
 from openscientist.settings import get_settings
 
@@ -156,10 +157,23 @@ async def notify_job_started(topic: str, job_id: str, title: str, base_url: str)
     )
 
 
+async def _notification_message(topic: str, message: str | None) -> str | None:
+    if message is None or await costs_visible(False):
+        return message
+    async with thread_safe_admin_session() as session:
+        administrator = await session.scalar(
+            select(Administrator.user_id)
+            .join(User, User.id == Administrator.user_id)
+            .where(User.ntfy_topic == topic)
+        )
+    return message if administrator is not None else hide_cost_amounts(message)
+
+
 async def notify_job_completed(
     topic: str, job_id: str, title: str, base_url: str, stop_note: str | None = None
 ) -> bool:
     """Send notification when a job completes successfully."""
+    stop_note = await _notification_message(topic, stop_note)
     message = f"Your job '{title}' has completed successfully."
     if stop_note:
         message = f"Your job '{title}' has completed: {stop_note}"
@@ -175,6 +189,7 @@ async def notify_job_completed(
 
 async def notify_job_failed(topic: str, job_id: str, title: str, error: str, base_url: str) -> bool:
     """Send notification when a job fails."""
+    error = await _notification_message(topic, error) or ""
     short_error = error[:100] + "..." if len(error) > 100 else error
     return await send_notification(
         topic=topic,
@@ -190,6 +205,7 @@ async def notify_job_cancelled(
     topic: str, job_id: str, title: str, reason: str | None, base_url: str
 ) -> bool:
     """Send notification when a job is cancelled."""
+    reason = await _notification_message(topic, reason)
     msg = f"Your job '{title}' was cancelled."
     if reason:
         msg += f" Reason: {reason}"
@@ -207,6 +223,7 @@ async def notify_job_budget_hold(
     topic: str, job_id: str, title: str, reason: str, base_url: str
 ) -> bool:
     """Send notification when a queued job is held by a budget limit."""
+    reason = await _notification_message(topic, reason) or ""
     return await send_notification(
         topic=topic,
         title="Job Waiting on Budget",

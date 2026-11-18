@@ -41,6 +41,7 @@ class AdminSettingsValues:
     session_duration_days: int
     updated_at: datetime
     updated_by: UUID | None
+    show_job_costs: bool = True
 
 
 def _inf_or_none(value: float) -> float | None:
@@ -141,6 +142,7 @@ async def current_admin_settings() -> AdminSettingsValues:
             session_duration_days=row.session_duration_days,
             updated_at=row.updated_at,
             updated_by=row.updated_by,
+            show_job_costs=row.show_job_costs,
         )
 
 
@@ -148,3 +150,22 @@ def current_admin_settings_sync() -> AdminSettingsValues:
     """current_admin_settings() from a thread without a running loop, the way
     job_manager and container_manager call database code through run_sync."""
     return run_sync(current_admin_settings())
+
+
+async def costs_visible(is_admin: bool) -> bool:
+    """Whether this viewer may see monetary amounts."""
+    return is_admin or (await current_admin_settings()).show_job_costs
+
+
+def hide_cost_amounts(message: str | None) -> str | None:
+    """Render generated budget refusals without monetary amounts."""
+    if message is None:
+        return None
+    for prefix, public_message in (
+        ("Job cost limit of $", "The job reached its cost limit."),
+        ("Project monthly spend limit of $", "The project reached its monthly cost limit."),
+        ("Project 24-hour spend limit of $", "The project reached its 24-hour cost limit."),
+    ):
+        if message.startswith(prefix):
+            return public_message
+    return message

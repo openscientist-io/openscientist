@@ -164,6 +164,26 @@ async def test_a_save_records_only_the_changed_settings(
 
 
 @pytest.mark.asyncio
+async def test_cost_visibility_persists_with_history(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = User(email="visibility-admin@example.com", name="Admin")
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+    await _write_row(db_session)
+    _admin(monkeypatch, db_session, user)
+    _floor(monkeypatch, False)
+    success, _ = await settings_panel.save_admin_settings(
+        AdminAccess(), _values(show_job_costs=False)
+    )
+    assert success
+    db_session.expire_all()
+    assert (await _row(db_session)).show_job_costs is False
+    assert ("Show job costs to users", "on", "off") in await _change_pairs(db_session)
+
+
+@pytest.mark.asyncio
 async def test_an_unchanged_save_writes_no_history(
     db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -359,7 +379,10 @@ def test_every_setting_column_has_a_form_field() -> None:
         "updated_at",
         "updated_by",
     }
-    form = {column for column, *_ in settings_panel._FIELDS} | {settings_panel._AIRGAP[0]}
+    form = {column for column, *_ in settings_panel._FIELDS} | {
+        settings_panel._AIRGAP[0],
+        settings_panel._COST_VISIBILITY[0],
+    }
     assert form == columns
 
 

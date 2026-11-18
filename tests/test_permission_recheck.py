@@ -613,6 +613,7 @@ def _poll_context(
         job_manager=None,
         ks_data=None,
         action_counts={},
+        show_costs=True,
         state={
             "status": JobStatus.AWAITING_FEEDBACK,
             "stats_model": None,
@@ -629,6 +630,7 @@ async def test_viewer_whose_share_is_removed_stops_receiving_status_updates(
 ) -> None:
     viewer = job_actors["viewer"]
     _page_cookie(monkeypatch, viewer["session_id"])
+    monkeypatch.setattr(timeline_module, "is_current_user_admin", lambda: False)
     job_dir = tmp_path / str(job_actors["job_id"])
     probe = await job_detail_common._page_snapshot(
         str(job_actors["job_id"]), str(viewer["user_id"]), job_dir

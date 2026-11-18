@@ -385,14 +385,15 @@ async def _add_log_row(
 
 
 @pytest.mark.asyncio
-async def test_an_idle_tick_runs_only_the_snapshot_and_sends_nothing(
+async def test_an_idle_tick_reads_snapshot_and_visibility_without_updates(
     database: Forwarder,
     running_job: dict[str, str],
     served_page: ServedPage,
     wire_recorder: list[WireMessage],
 ) -> None:
-    """A tick over an unchanged job runs the snapshot and nothing else, and
-    puts no update on the wire."""
+    """An unchanged job reads its snapshot and cost policy without sending updates."""
+    from openscientist.admin_settings import costs_visible
+
     job = running_job
     client = await _build(served_page, job)
     client.tab_id = "wire-test-socket"
@@ -403,10 +404,11 @@ async def test_an_idle_tick_runs_only_the_snapshot_and_sends_nothing(
     assert job_manager is not None
     with _Statements() as baseline:
         await _page_snapshot(job["job_id"], job["owner_id"], job_manager.jobs_dir / job["job_id"])
+        await costs_visible(False)
     with _Statements() as tick:
         sent = await _tick(client, timer, wire_recorder)
     assert not sent, f"an idle tick put {len(sent)} updates on the wire"
-    assert list(tick) == list(baseline), "the idle tick ran more than the snapshot"
+    assert list(tick) == list(baseline), "the idle tick ran more than the snapshot and cost policy"
 
 
 @pytest.mark.asyncio
