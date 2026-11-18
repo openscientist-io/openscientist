@@ -81,6 +81,12 @@ uv run openscientist
 
 The setup wizard hides keys and other secrets as you type or paste them, so press Enter when finished.
 
+A configured server can instead run the images CI pushed to `ghcr.io/openscientist-io`, tagged `sha-<commit>` for each `main` commit and `vX.Y.Z` for each release. Check out the same commit first so the compose file matches the images. The command dumps the database into `backups/`, keeping the newest ten, and starts the previous images again when the new ones do not become healthy.
+
+```bash
+uv run openscientist deploy sha-<commit>
+```
+
 ## Code Quality
 
 All PRs must pass:

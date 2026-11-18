@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import time
 import urllib.request
@@ -26,6 +27,21 @@ IMAGE_TAGS = {
     "OPENSCIENTIST_AGENT_IMAGE": "openscientist-agent:latest",
     "OPENSCIENTIST_LAUNCHER_IMAGE": "openscientist-launcher:latest",
 }
+
+#: The registry the images workflow pushes to, and each image's .env key and repository there.
+REGISTRY = "ghcr.io/openscientist-io"
+REGISTRY_IMAGES = {
+    "OPENSCIENTIST_BASE_IMAGE": "openscientist-base",
+    "OPENSCIENTIST_EXECUTOR_IMAGE": "openscientist-executor",
+    "OPENSCIENTIST_AGENT_IMAGE": "openscientist-agent",
+    "OPENSCIENTIST_LAUNCHER_IMAGE": "openscientist-launcher",
+    "OPENSCIENTIST_WEB_IMAGE": "openscientist-web",
+}
+#: Database dumps a deploy takes, kept in the checkout, newest first by name.
+BACKUPS_DIR = "backups"
+BACKUPS_KEPT = 10
+_DUMP_IN_CONTAINER = "/tmp/openscientist-deploy.dump"
+_DOCKER_TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
 
 console = Console()
 
@@ -199,17 +215,143 @@ def start(
         console.print(f"[red]Starting the stack failed (exit {code}).[/red]")
         return code
     values = envfiles.file_values(root, "env")
-    port = int(values.get("PORT") or "8080")
-    base_url = values.get("OPENSCIENTIST_BASE_URL") or f"http://localhost:{port}"
-    console.print("Waiting for the stack to become healthy...")
-    if not wait_for_health(f"http://localhost:{port}", health_timeout):
-        console.print(
-            "[red]The stack did not become healthy in time. Check the logs with `docker compose logs`.[/red]"
-        )
+    base_url = values.get("OPENSCIENTIST_BASE_URL") or _local_url(values)
+    if not _healthy(values, health_timeout):
         return 1
     console.print(f"OpenScientist is up at {base_url}")
     _offer_pubmed_mirror(root, run, values)
     return 0
+
+
+def deploy(
+    root: Path, tag: str, run: CommandRunner = run_command, health_timeout: float = HEALTH_TIMEOUT
+) -> int:
+    """Run the stack on the registry images tagged ``tag``.
+
+    .env names the pulled images and their digests before the database dump,
+    because compose reads no file without the digests, and gets its previous
+    values back when the dump fails. A stack that does not start or turn
+    healthy is started again on the images it ran before, and the deploy still
+    fails. A migration that already ran stays, and the dump is what restores it."""
+    if not _DOCKER_TAG.fullmatch(tag):
+        console.print(f"[red]{tag!r} is not a Docker image tag.[/red]")
+        return 2
+    images = {key: f"{REGISTRY}/{repository}:{tag}" for key, repository in REGISTRY_IMAGES.items()}
+    env = envfiles.docker_env(root)
+    for image in images.values():
+        code = run(("docker", "pull", image), env)
+        if code:
+            console.print(f"[red]Pulling {image} failed (exit {code}).[/red]")
+            return code
+    envfiles.record_host_project_dir(root)
+    values = envfiles.file_values(root, "env")
+    previous = {key: values.get(key, "") for key in (*images, *_DIGEST_KEYS)}
+    for key, image in images.items():
+        envfiles.set_file_value(root, "env", key, image)
+    code = record_image_digests(root)
+    if not code:
+        code = dump_database(root, run, tag)
+        if code:
+            console.print(f"[red]Dumping the database failed (exit {code}).[/red]")
+    if code:
+        _restore(root, previous)
+        return code
+    if _start_pulled(root, run, health_timeout) == 0:
+        console.print(f"Deployed {tag}.")
+        return 0
+    console.print("[red]The deploy failed. Starting the previous images again.[/red]")
+    _restore(root, previous)
+    if _start_pulled(root, run, health_timeout):
+        console.print("[red]The previous images did not come back either.[/red]")
+    return 1
+
+
+_DIGEST_KEYS = ("AGENT_IMAGE_DIGESTS", "EXECUTOR_IMAGE_DIGESTS")
+
+
+def _restore(root: Path, previous: Mapping[str, str]) -> None:
+    for key, value in previous.items():
+        envfiles.set_file_value(root, "env", key, value)
+
+
+def dump_database(root: Path, run: CommandRunner, tag: str) -> int:
+    """Dump the stack's database into the backups directory, keeping the newest
+    ``BACKUPS_KEPT`` dumps; 0 on success."""
+    values = envfiles.file_values(root, "env")
+    user = values.get("POSTGRES_USER") or "openscientist"
+    database = values.get("POSTGRES_DB") or "openscientist"
+    backups = root / BACKUPS_DIR
+    backups.mkdir(exist_ok=True)
+    target = backups / f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{tag}.dump"
+    compose = ("docker", "compose", "-f", COMPOSE_FILE)
+    env = envfiles.docker_env(root)
+    for argv in (
+        (*compose, "up", "-d", "--wait", "postgres"),
+        (
+            *compose,
+            "exec",
+            "-T",
+            "postgres",
+            "pg_dump",
+            "-U",
+            user,
+            "-d",
+            database,
+            "-Fc",
+            "-f",
+            _DUMP_IN_CONTAINER,
+        ),
+        (*compose, "cp", f"postgres:{_DUMP_IN_CONTAINER}", str(target)),
+        (*compose, "exec", "-T", "postgres", "rm", "-f", _DUMP_IN_CONTAINER),
+    ):
+        code = run(argv, env)
+        if code:
+            return code
+    for old in sorted(backups.glob("*.dump"), reverse=True)[BACKUPS_KEPT:]:
+        old.unlink()
+    return 0
+
+
+def _start_pulled(root: Path, run: CommandRunner, health_timeout: float) -> int:
+    """Start the stack on the images and digests .env names, without building; 0 once healthy."""
+    values = envfiles.file_values(root, "env")
+    code = prepare_jobs_dir(root, run, image_tag(values, "OPENSCIENTIST_BASE_IMAGE"))
+    if code:
+        console.print(f"[red]Preparing the jobs directory failed (exit {code}).[/red]")
+        return code
+    code = run(
+        (
+            "docker",
+            "compose",
+            "-f",
+            COMPOSE_FILE,
+            "up",
+            "-d",
+            "--remove-orphans",
+            "--no-build",
+            WEB_SERVICE,
+        ),
+        envfiles.docker_env(root),
+    )
+    if code:
+        console.print(f"[red]Starting the stack failed (exit {code}).[/red]")
+        return code
+    return 0 if _healthy(values, health_timeout) else 1
+
+
+def _local_url(values: Mapping[str, str]) -> str:
+    return f"http://localhost:{int(values.get('PORT') or '8080')}"
+
+
+def _healthy(values: Mapping[str, str], timeout: float) -> bool:
+    """Wait for the stack's /health on this host, reporting a stack that never answers."""
+    console.print("Waiting for the stack to become healthy...")
+    if wait_for_health(_local_url(values), timeout):
+        return True
+    console.print(
+        "[red]The stack did not become healthy in time. Check the logs with `docker compose logs`.[/red]"
+    )
+    return False
 
 
 def stop(root: Path, run: CommandRunner = run_command) -> int:

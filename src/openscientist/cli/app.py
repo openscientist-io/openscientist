@@ -47,6 +47,25 @@ def stop() -> None:
         raise typer.Exit(exit_code)
 
 
+@app.command()
+def deploy(
+    tag: str = typer.Argument(help="Registry tag of the images, such as sha-<commit> or v1.2.3."),
+) -> None:
+    """Run the configured stack on the registry images tagged TAG, dumping the database first."""
+    root = Path.cwd()
+    _require(preflight.docker_findings(preflight.HOST))
+    envfiles.migrate_owner_launcher_keys(root)
+    if not envfiles.is_configured(root):
+        console.print(
+            "[red]This checkout is not configured. Run `uv run openscientist setup` first.[/red]"
+        )
+        raise typer.Exit(1)
+    _require(preflight.start_findings(root, preflight.HOST))
+    exit_code = stack.deploy(root, tag, stack.run_command)
+    if exit_code:
+        raise typer.Exit(exit_code)
+
+
 @app.callback(invoke_without_command=True)
 def default_command(ctx: click.Context) -> None:
     """Set up when the checkout is not configured, then start the stack."""
