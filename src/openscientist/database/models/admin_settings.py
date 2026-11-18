@@ -72,6 +72,9 @@ class AdminSettings(Base):
     scheduler_window_hours: Mapped[float] = mapped_column(Float, nullable=False)
     airgapped: Mapped[bool] = mapped_column(Boolean, nullable=False)
     session_duration_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    show_job_costs: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")

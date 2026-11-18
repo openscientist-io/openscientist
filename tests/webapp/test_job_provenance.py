@@ -88,6 +88,7 @@ def test_the_job_page_shows_the_run_environment() -> None:
         owner_name=None,
         spend=0.0,
         direct_access=False,
+        show_costs=True,
         action_counts={},
     )
     with (

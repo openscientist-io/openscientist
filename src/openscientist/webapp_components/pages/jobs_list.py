@@ -10,6 +10,7 @@ from nicegui import ui
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from openscientist.admin_settings import costs_visible, hide_cost_amounts
 from openscientist.auth import (
     can_current_user_start_jobs,
     get_current_user_id,
@@ -148,13 +149,14 @@ def _render_badges(
     jobs: list[Job],
     spends: dict[UUID, float],
     badge_counts: dict[str, object],
+    show_costs: bool = True,
 ) -> None:
     """Render aggregate job counters and the user's total spend, skipping the
     rebuild when what a previous render showed stays unchanged."""
     status_counts = {
         status.value: sum(1 for job in jobs if job.status == status.value) for status in JobStatus
     }
-    total_cost = format_spend(sum(spends.get(job.id, 0.0) for job in jobs))
+    total_cost = format_spend(sum(spends.get(job.id, 0.0) for job in jobs)) if show_costs else None
     shown: dict[str, object] = {**status_counts, "total_cost": total_cost}
     if shown == badge_counts:
         return
@@ -167,7 +169,7 @@ def _render_badges(
                 ("Total Jobs", len(jobs), ""),
                 ("Running", status_counts.get("running", 0), "blue"),
                 ("Completed", status_counts.get("completed", 0), "green"),
-                ("Total Cost", total_cost, "green"),
+                *([("Total Cost", total_cost, "green")] if total_cost is not None else []),
             ]
         )
 
@@ -197,7 +199,10 @@ async def _fetch_shared_jobs(current_user_id: str) -> list[tuple[Job, User, JobS
 
 
 def _owned_rows(
-    db_jobs: list[Job], findings_counts: dict[UUID, int], spends: dict[UUID, float]
+    db_jobs: list[Job],
+    findings_counts: dict[UUID, int],
+    spends: dict[UUID, float],
+    show_costs: bool = True,
 ) -> list[dict[str, Any]]:
     """Build owned-jobs table rows."""
     return [
@@ -205,10 +210,11 @@ def _owned_rows(
             "job_id": str(job.id),
             "question": job.research_question,
             "status": job.status,
-            "error": job.error_message or "",
+            "error": (job.error_message if show_costs else hide_cost_amounts(job.error_message))
+            or "",
             "iterations": f"{completed_iterations(job.status, job.current_iteration)}/{job.max_iterations}",
             "findings": findings_counts.get(job.id, 0),
-            "cost": format_spend(spends.get(job.id, 0.0)),
+            **({"cost": format_spend(spends.get(job.id, 0.0))} if show_costs else {}),
             "created": job.created_at.isoformat()[:19],
             "is_public": job.is_public,
             "can_share": True,
@@ -223,6 +229,7 @@ def _shared_rows(
     findings_counts: dict[UUID, int],
     current_user_is_admin: bool,
     spends: dict[UUID, float],
+    show_costs: bool = True,
 ) -> list[dict[str, Any]]:
     """Build shared-jobs table rows."""
     rows: list[dict[str, Any]] = []
@@ -234,10 +241,11 @@ def _shared_rows(
                 "owner": owner.name,
                 "permission": share.permission_level,
                 "status": job.status,
-                "error": job.error_message or "",
+                "error": (job.error_message if show_costs else hide_cost_amounts(job.error_message))
+                or "",
                 "iterations": f"{completed_iterations(job.status, job.current_iteration)}/{job.max_iterations}",
                 "findings": findings_counts.get(job.id, 0),
-                "cost": format_spend(spends.get(job.id, 0.0)),
+                **({"cost": format_spend(spends.get(job.id, 0.0))} if show_costs else {}),
                 "created": job.created_at.isoformat()[:19],
                 "is_public": job.is_public,
                 "can_share": False,
@@ -255,6 +263,18 @@ class _JobList:
     empty: ui.element
     error: ui.label
     noun: str
+
+    def set_cost_visibility(self, columns: list[dict[str, str]], show_costs: bool) -> None:
+        if any(column["name"] == "cost" for column in self.table.columns) == show_costs:
+            return
+        self.table.columns = [
+            column for column in columns if show_costs or column["name"] != "cost"
+        ]
+        if not show_costs:
+            for row in self.table.rows:
+                row.pop("cost", None)
+                row["error"] = hide_cost_amounts(row.get("error")) or ""
+        self.table.update()
 
     def show(self, rows: list[dict[str, Any]]) -> None:
         """Show ``rows`` or the empty state when there are none, keeping the wire
@@ -288,19 +308,24 @@ async def _refresh_owned_jobs(
 ) -> None:
     """Refresh owned jobs table and summary badges."""
     try:
+        show_costs = await costs_visible(is_current_user_admin())
+        view.set_cost_visibility(_OWNED_COLUMNS, show_costs)
+        if not show_costs and badge_counts.get("total_cost") is not None:
+            badges_container.clear()
+            badge_counts.clear()
         db_jobs = await _fetch_owned_jobs(current_user_id)
         async with get_session_ctx() as session:
             user_uuid = UUID(current_user_id)
             await set_current_user(session, user_uuid)
             job_ids = [j.id for j in db_jobs]
             findings_counts = await _batch_findings_counts(session, job_ids)
-            spends = await job_spends(session, job_ids)
+            spends = await job_spends(session, job_ids) if show_costs else {}
     except Exception as exc:
         logger.error("Failed to load jobs: %s", exc, exc_info=True)
         view.show_load_error()
         return
-    _render_badges(badges_container, db_jobs, spends, badge_counts)
-    view.show(_owned_rows(db_jobs, findings_counts, spends))
+    _render_badges(badges_container, db_jobs, spends, badge_counts, show_costs)
+    view.show(_owned_rows(db_jobs, findings_counts, spends, show_costs))
 
 
 async def _refresh_shared_jobs(
@@ -311,6 +336,8 @@ async def _refresh_shared_jobs(
 ) -> None:
     """Refresh shared jobs table."""
     try:
+        show_costs = await costs_visible(is_current_user_admin())
+        view.set_cost_visibility(_SHARED_COLUMNS, show_costs)
         shared_jobs = await _fetch_shared_jobs(current_user_id)
         job_ids = [job.id for job, _, _ in shared_jobs]
         async with get_admin_session() as session:
@@ -319,12 +346,12 @@ async def _refresh_shared_jobs(
         # recipient's own RLS session.
         async with get_session_ctx() as session:
             await set_current_user(session, UUID(current_user_id))
-            spends = await job_spends(session, job_ids)
+            spends = await job_spends(session, job_ids) if show_costs else {}
     except Exception as exc:
         logger.error("Failed to load shared jobs: %s", exc, exc_info=True)
         view.show_load_error()
         return
-    view.show(_shared_rows(shared_jobs, findings_counts, current_user_is_admin, spends))
+    view.show(_shared_rows(shared_jobs, findings_counts, current_user_is_admin, spends, show_costs))
 
 
 def _render_load_error(marker: str) -> ui.label:

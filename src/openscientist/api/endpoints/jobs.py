@@ -26,11 +26,11 @@ from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import FormData
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from openscientist.admin_settings import current_admin_settings
+from openscientist.admin_settings import costs_visible, current_admin_settings, hide_cost_amounts
 from openscientist.api.auth import get_current_user_from_api_key
 from openscientist.api.utils import parse_uuid
 from openscientist.artifact_packager import create_artifacts_zip_file
-from openscientist.database.models import Job, User
+from openscientist.database.models import Administrator, Job, User
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session
 from openscientist.file_loader import FileTooBigError, validate_uploaded_file
@@ -224,7 +224,16 @@ def _get_jobs_dir() -> Path:
     return Path(jobs_dir)
 
 
-def _job_response_fields(job: Job) -> _JobResponseFields:
+async def _viewer_costs_visible(session: AsyncSession, user: User) -> bool:
+    # The administrators row policy shows a row only to the user it belongs to.
+    await set_current_user(session, user.id)
+    administrator = await session.scalar(
+        select(Administrator.user_id).where(Administrator.user_id == user.id)
+    )
+    return await costs_visible(administrator is not None)
+
+
+def _job_response_fields(job: Job, show_costs: bool) -> _JobResponseFields:
     """Return common response fields shared by job response models."""
     return {
         "id": str(job.id),
@@ -238,24 +247,24 @@ def _job_response_fields(job: Job) -> _JobResponseFields:
         "current_iteration": job.current_iteration,
         "pdb_code": job.pdb_code,
         "space_group": job.space_group,
-        "queue_reason": job.queue_reason,
-        "stop_note": job.stop_note,
+        "queue_reason": job.queue_reason if show_costs else hide_cost_amounts(job.queue_reason),
+        "stop_note": job.stop_note if show_costs else hide_cost_amounts(job.stop_note),
         "is_public": job.is_public,
     }
 
 
-def _job_to_response(job: Job) -> JobResponse:
+def _job_to_response(job: Job, show_costs: bool) -> JobResponse:
     """Convert Job model to JobResponse."""
-    return JobResponse(**_job_response_fields(job))
+    return JobResponse(**_job_response_fields(job, show_costs))
 
 
-def _job_to_detail_response(job: Job) -> JobDetailResponse:
+def _job_to_detail_response(job: Job, show_costs: bool) -> JobDetailResponse:
     """Convert Job model to JobDetailResponse."""
     return JobDetailResponse(
-        **_job_response_fields(job),
+        **_job_response_fields(job, show_costs),
         investigation_mode=job.investigation_mode,
         result_summary=job.result_summary,
-        error_message=job.error_message,
+        error_message=job.error_message if show_costs else hide_cost_amounts(job.error_message),
         version_info=job.version_info,
     )
 
@@ -499,7 +508,9 @@ async def create_job(
         logger.info("Rejected job creation for user %s: %s", user.email, e)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
+            detail=(
+                str(e) if await _viewer_costs_visible(session, user) else hide_cost_amounts(str(e))
+            ),
         ) from e
     except Exception as e:
         logger.exception("Failed to create job for user %s", user.email)
@@ -516,7 +527,7 @@ async def create_job(
             detail="Job created but could not be loaded",
         )
 
-    return _job_to_response(created_job)
+    return _job_to_response(created_job, await _viewer_costs_visible(session, user))
 
 
 @router.get("", response_model=JobListResponse)
@@ -561,8 +572,9 @@ async def list_jobs(
     result = await session.execute(stmt)
     jobs = result.scalars().all()
 
+    show_costs = await _viewer_costs_visible(session, user)
     return JobListResponse(
-        jobs=[_job_to_response(job) for job in jobs],
+        jobs=[_job_to_response(job, show_costs) for job in jobs],
         total=total,
     )
 
@@ -582,7 +594,7 @@ async def get_job(
             detail="Job not found or access denied",
         )
 
-    return _job_to_detail_response(job)
+    return _job_to_detail_response(job, await _viewer_costs_visible(session, user))
 
 
 @router.get("/{job_id}/status", response_model=JobStatusResponse)
@@ -600,14 +612,15 @@ async def get_job_status(
             detail="Job not found or access denied",
         )
 
+    show_costs = await _viewer_costs_visible(session, user)
     return JobStatusResponse(
         id=str(job.id),
         status=job.status,
         current_iteration=job.current_iteration,
         max_iterations=job.max_iterations,
-        error_message=job.error_message,
-        queue_reason=job.queue_reason,
-        stop_note=job.stop_note,
+        error_message=job.error_message if show_costs else hide_cost_amounts(job.error_message),
+        queue_reason=job.queue_reason if show_costs else hide_cost_amounts(job.queue_reason),
+        stop_note=job.stop_note if show_costs else hide_cost_amounts(job.stop_note),
     )
 
 
@@ -668,7 +681,7 @@ async def update_job_visibility(
         not_owned_detail="Only the job owner can change its visibility",
     )
     logger.info("Set job %s is_public=%s for user %s", job.id, job.is_public, user.email)
-    return _job_to_detail_response(job)
+    return _job_to_detail_response(job, await _viewer_costs_visible(session, user))
 
 
 @router.get("/{job_id}/report")

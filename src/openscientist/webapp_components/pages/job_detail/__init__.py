@@ -1,13 +1,15 @@
 """Job detail page shell: context, notices and tab wiring."""
 
 import logging
+from dataclasses import replace
 from typing import Any
 from uuid import UUID
 
 from nicegui import ui
 from sqlalchemy import select
 
-from openscientist.auth import get_current_user_id, require_auth
+from openscientist.admin_settings import costs_visible, hide_cost_amounts
+from openscientist.auth import get_current_user_id, is_current_user_admin, require_auth
 from openscientist.job.repository import get_job, get_share_permission
 from openscientist.job.types import JobInfo, JobStatus
 from openscientist.webapp_components.components.banners import render_error_card
@@ -154,6 +156,7 @@ async def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
     probe = await _page_snapshot(job_id, user_id, job_dir)
     snapshot = probe[1] if probe is not None else None
     spend = snapshot.job.spend if snapshot is not None else 0.0
+    show_costs = await costs_visible(is_current_user_admin())
     attachments = await _load_attachments(job_id, user_id) if direct_access else []
     share_dialog, delete_dialog, notifications_dialog = _create_page_dialogs(
         job_id,
@@ -176,9 +179,10 @@ async def _build_job_detail_context(job_id: str) -> _JobDetailContext | None:
         ks_load_error=ks_load_error,
         spend=spend,
         direct_access=direct_access,
+        show_costs=show_costs,
         state=_initial_job_state(
             job_info,
-            _stats_model(job_info, ks_data, spend if direct_access else None),
+            _stats_model(job_info, ks_data, spend if direct_access else None, show_costs),
             snapshot,
         ),
         share_dialog=share_dialog,
@@ -202,8 +206,11 @@ def _render_ks_loading_notice(ks_load_error: str) -> None:
 
 def _render_job_status_notices(context: _JobDetailContext) -> None:
     if context.job_info.status == JobStatus.FAILED and context.job_info.error:
-        error_info = get_user_friendly_error(context.job_info.error)
-        render_error_card(error_info, context.job_info, context.job_dir)
+        job_info = context.job_info
+        if not context.show_costs:
+            job_info = replace(job_info, error=hide_cost_amounts(job_info.error))
+        error_info = get_user_friendly_error(job_info.error)
+        render_error_card(error_info, job_info, context.job_dir)
     if context.job_info.status == JobStatus.CANCELLED:
         _render_cancelled_notice(context.job_info)
     if context.ks_load_error:
@@ -247,11 +254,12 @@ async def _render_job_tabs(context: _JobDetailContext) -> None:
     tabs.set_value(timeline_tab)
 
     with _tab_pane(tabs, timeline_tab):
-        await _render_timeline_tab(context)
+        start_timeline_polling = await _render_timeline_tab(context)
     with _tab_pane(tabs, report_tab):
         _render_report_tab(context, tabs, report_tab)
     with _tab_pane(tabs, chat_tab):
         await _render_chat_tab(context)
+    start_timeline_polling()
 
 
 @ui.page("/job/{job_id}")
@@ -266,5 +274,11 @@ async def job_detail_page(job_id: str) -> None:
     ui.page_title(f"{_job_page_title(context.job_info)} - OpenScientist")
     add_prompt_head_html()
     render_navigator()
-    _render_job_status_notices(context)
+
+    @ui.refreshable
+    def render_notices() -> None:
+        _render_job_status_notices(context)
+
+    render_notices()
+    context.state["refresh_notices"] = render_notices.refresh
     await _render_job_tabs(context)

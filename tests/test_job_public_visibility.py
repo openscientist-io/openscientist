@@ -923,6 +923,7 @@ def test_stats_content_shows_the_owner_label_to_viewers() -> None:
         owner_name=owner,
         spend=0.0,
         direct_access=False,
+        show_costs=True,
         action_counts={},
     )
     with (

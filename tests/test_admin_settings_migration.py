@@ -231,3 +231,30 @@ async def test_the_checks_reject_their_out_of_bounds_value(
 
     async with test_engine.connect() as conn:
         await conn.run_sync(run)
+
+
+@pytest.mark.asyncio
+async def test_cost_visibility_migration_defaults_existing_rows_to_visible(
+    test_engine: AsyncEngine,
+) -> None:
+    migration = _migration(_MIGRATION.with_name("2026-11-18_1200_job_cost_visibility.py"))
+
+    def run(connection: Connection) -> None:
+        transaction = connection.begin()
+        try:
+            with Operations.context(MigrationContext.configure(connection)):
+                migration.downgrade()
+                _insert_row(connection)
+                migration.upgrade()
+                assert connection.scalar(text("SELECT show_job_costs FROM admin_settings")) is True
+                connection.execute(text("UPDATE admin_settings SET show_job_costs = false"))
+                assert connection.scalar(text("SELECT show_job_costs FROM admin_settings")) is False
+                migration.downgrade()
+                assert "show_job_costs" not in (
+                    _table_columns(connection, "admin_settings") or set()
+                )
+        finally:
+            transaction.rollback()
+
+    async with test_engine.connect() as connection:
+        await connection.run_sync(run)

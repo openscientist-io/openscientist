@@ -202,3 +202,66 @@ async def test_the_total_cost_follows_a_new_cost_row_on_the_next_tick(
     labels = _summary_labels(client)
     assert "Total Cost: $2.00" in labels
     assert "Total Cost: $1.23" not in labels
+
+
+@pytest.mark.asyncio
+async def test_cost_visibility_changes_remove_and_restore_table_payloads(
+    database: Forwarder,
+    cost_owner: dict[str, Any],
+    served_page: ServedPage,
+    test_engine: AsyncEngine,
+) -> None:
+    from sqlalchemy import update
+
+    from openscientist.database.models.admin_settings import AdminSettings
+
+    client = await _open(served_page, cost_owner["owner_token"])
+    try:
+        for show_costs in (False, True):
+            async with AsyncSession(test_engine) as session:
+                await session.execute(update(AdminSettings).values(show_job_costs=show_costs))
+                await session.commit()
+            with client:
+                for refresh in _refresh_callbacks(client):
+                    await refresh()
+            tables = [
+                element for element in client.elements.values() if isinstance(element, ui.table)
+            ]
+            for table in tables:
+                assert any(column["name"] == "cost" for column in table.columns) is show_costs
+                assert all(("cost" in row) is show_costs for row in table.rows)
+            assert (
+                any(label.startswith("Total Cost:") for label in _summary_labels(client))
+                is show_costs
+            )
+    finally:
+        async with AsyncSession(test_engine) as session:
+            await session.execute(update(AdminSettings).values(show_job_costs=True))
+            await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_initial_hidden_costs_are_absent_from_both_tables(
+    database: Forwarder,
+    cost_owner: dict[str, Any],
+    served_page: ServedPage,
+    test_engine: AsyncEngine,
+) -> None:
+    from sqlalchemy import update
+
+    from openscientist.database.models.admin_settings import AdminSettings
+
+    try:
+        async with AsyncSession(test_engine) as session:
+            await session.execute(update(AdminSettings).values(show_job_costs=False))
+            await session.commit()
+        client = await _open(served_page, cost_owner["owner_token"])
+        tables = [element for element in client.elements.values() if isinstance(element, ui.table)]
+        for table in tables:
+            assert all(column["name"] != "cost" for column in table.columns)
+            assert all("cost" not in row for row in table.rows)
+        assert not any(label.startswith("Total Cost:") for label in _summary_labels(client))
+    finally:
+        async with AsyncSession(test_engine) as session:
+            await session.execute(update(AdminSettings).values(show_job_costs=True))
+            await session.commit()

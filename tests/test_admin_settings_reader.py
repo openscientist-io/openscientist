@@ -177,3 +177,50 @@ async def test_the_sync_form_runs_from_a_worker_thread(
         assert values.airgap_locked is False
     finally:
         await reset_admin_settings_row(test_engine)
+
+
+@pytest.mark.asyncio
+async def test_cost_visibility_follows_live_policy(
+    web_login: None, no_floor: None, test_engine: AsyncEngine
+) -> None:
+    from openscientist.admin_settings import costs_visible
+    from tests.admin_row import set_admin_settings_row
+
+    try:
+        await reset_admin_settings_row(test_engine)
+        assert await costs_visible(False)
+        await set_admin_settings_row(test_engine, show_job_costs=False)
+        assert not await costs_visible(False)
+        assert await costs_visible(True)
+        await set_admin_settings_row(test_engine, show_job_costs=True)
+        assert await costs_visible(False)
+    finally:
+        await reset_admin_settings_row(test_engine)
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        (None, None),
+        (
+            "Job cost limit of $12.00 reached: the job has spent $12.50.",
+            "The job reached its cost limit.",
+        ),
+        (
+            "Project monthly spend limit of $100.00 reached: the project has spent $101.00.",
+            "The project reached its monthly cost limit.",
+        ),
+        (
+            "Project 24-hour spend limit of $10.00 reached: the project has spent $11.00.",
+            "The project reached its 24-hour cost limit.",
+        ),
+        ("The budget could not be checked.", "The budget could not be checked."),
+        ("Samples cost $12.00.", "Samples cost $12.00."),
+    ],
+)
+def test_only_generated_budget_messages_hide_amounts(
+    message: str | None, expected: str | None
+) -> None:
+    from openscientist.admin_settings import hide_cost_amounts
+
+    assert hide_cost_amounts(message) == expected

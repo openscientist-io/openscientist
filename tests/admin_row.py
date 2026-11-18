@@ -34,6 +34,7 @@ _DEFAULTS: dict[str, object] = {
     "scheduler_window_hours": 24.0,
     "airgapped": False,
     "session_duration_days": 30,
+    "show_job_costs": True,
 }
 
 _INSERT = """
@@ -42,13 +43,13 @@ _INSERT = """
         warn_project_spend_24h_usd, agent_cpu, executor_cpu, agent_memory_mib,
         executor_memory_mib, agent_timeout_seconds, executor_timeout_seconds,
         max_file_size_mb, max_concurrent_jobs, scheduler_window_hours,
-        airgapped, session_duration_days, updated_at, updated_by
+        airgapped, session_duration_days, show_job_costs, updated_at, updated_by
     ) VALUES (
         :max_job_cost_usd, :max_project_spend_month_usd, :max_project_spend_24h_usd,
         :warn_project_spend_24h_usd, :agent_cpu, :executor_cpu, :agent_memory_mib,
         :executor_memory_mib, :agent_timeout_seconds, :executor_timeout_seconds,
         :max_file_size_mb, :max_concurrent_jobs, :scheduler_window_hours,
-        :airgapped, :session_duration_days, :updated_at, :updated_by
+        :airgapped, :session_duration_days, :show_job_costs, :updated_at, :updated_by
     )
 """
 

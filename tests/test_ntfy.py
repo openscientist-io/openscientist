@@ -20,6 +20,11 @@ from openscientist.ntfy import (
 from openscientist.settings import get_settings
 
 
+@pytest.fixture(autouse=True)
+def visible_costs(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("openscientist.ntfy.costs_visible", AsyncMock(return_value=True))
+
+
 @contextlib.contextmanager
 def recorded_ntfy() -> Iterator[list[httpx.Request]]:
     """Route ntfy HTTP traffic through a recording mock transport.
