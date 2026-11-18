@@ -179,6 +179,8 @@ def _query_azure_cost_usd(
 class FoundryProvider(ClaudeCompatible):
     """Azure AI Foundry provider."""
 
+    streams_tool_input = True
+
     @property
     def id(self) -> str:
         return "foundry"

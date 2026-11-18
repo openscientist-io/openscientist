@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 class AnthropicProvider(ClaudeCompatible):
     """Direct Anthropic API provider (API key or OAuth token from claude login)."""
 
+    streams_tool_input = True
+
     @property
     def id(self) -> str:
         return "anthropic"

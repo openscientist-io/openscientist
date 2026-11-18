@@ -668,6 +668,11 @@ class ClaudeCompatible(Provider, abc.ABC):
     #: or None for providers with no routing flag (direct API, CBORG).
     mode_flag: ClassVar[str | None] = None
 
+    #: Whether the platform streams a tool's input as the model writes it
+    #: (``eager_input_streaming``). Claude Code asks for it on its own only for
+    #: platforms it reaches without a custom base URL, which the LLM proxy is.
+    streams_tool_input: ClassVar[bool] = False
+
     #: Model fallback when OPENSCIENTIST_MODEL is unset.
     default_claude_model: ClassVar[str] = "claude-sonnet-5-5"
 
