@@ -130,6 +130,7 @@ _DROP_REQUEST_HEADERS = frozenset(
         "trailer",
         "x-api-key",
         "authorization",
+        "accept-encoding",
     }
 )
 _DROP_RESPONSE_HEADERS = frozenset(
@@ -496,6 +497,8 @@ def create_llm_proxy_app(
                 for k, v in request.headers.items()
                 if k.lower() not in _DROP_REQUEST_HEADERS and not k.lower().startswith("x-goog-")
             }
+            # The metering decoders read the raw bytes, so ask for no compression.
+            headers["accept-encoding"] = "identity"
             path = (
                 request.scope.get("raw_path", request.url.path.encode()).decode("ascii")
                 if provider() == "bedrock"

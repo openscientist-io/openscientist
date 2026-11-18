@@ -651,6 +651,29 @@ class TestProxyForwarding:
         assert resp.status_code == 200
         assert len(recorded) == 1
 
+    def test_forwards_accept_encoding_identity(self, placeholder_for):
+        """A client advertising gzip must not get a compressed upstream body,
+        since the metering decoders read the raw bytes."""
+        recorded: list[dict] = []
+        app = create_llm_proxy_app(
+            upstream=lambda: LlmUpstream(
+                "https://upstream.test", StaticHeadersSigning({"x-api-key": "REAL"})
+            ),
+            client=_recording_upstream(recorded),
+            provider_id=lambda: "anthropic",
+        )
+        with TestClient(app) as client:
+            resp = client.post(
+                "/v1/messages",
+                headers={
+                    "x-api-key": placeholder_for("run"),
+                    "accept-encoding": "gzip, deflate, br, zstd",
+                },
+                json={},
+            )
+        assert resp.status_code == 200
+        assert recorded[0]["headers"]["accept-encoding"] == "identity"
+
     @pytest.mark.parametrize(
         ("provider", "path"),
         [
