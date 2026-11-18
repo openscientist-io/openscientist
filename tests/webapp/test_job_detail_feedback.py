@@ -11,6 +11,7 @@ The page is built the way NiceGUI serves it (see ``served_page``).
 from __future__ import annotations
 
 import asyncio
+import gc
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import AbstractContextManager, nullcontext
 from datetime import UTC, datetime, timedelta
@@ -29,7 +30,8 @@ from openscientist.database.models import FeedbackHistory, Job, Session, User
 from openscientist.job.types import JobStatus
 from openscientist.job_manager import JobManager
 from openscientist.knowledge_state import KnowledgeState
-from openscientist.webapp_components.pages.job_detail import job_detail_page
+from openscientist.webapp_components.pages.job_detail import feedback, job_detail_page
+from openscientist.webapp_components.utils.permissions import JobAccess
 from tests.db_outage import Forwarder
 from tests.webapp.conftest import ServedPage, fire_click_twice, in_event_context
 
@@ -203,3 +205,36 @@ async def test_a_failed_save_leaves_the_feedback_buttons_usable(
         status = (await db.execute(select(Job.status).where(Job.id == job_id))).scalar_one()
     assert stored == 0
     assert status == JobStatus.AWAITING_FEEDBACK.value
+
+
+@pytest.mark.asyncio
+async def test_feedback_is_confirmed_although_the_page_redraws(
+    database: Forwarder,
+    test_engine: AsyncEngine,
+    feedback_job: dict[str, str],
+    served_page: ServedPage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The job page's poll clears the page while the submit checks access,
+    and the submit still resumes the job and confirms it."""
+    job_id = UUID(feedback_job["job_id"])
+    client = await _served(served_page, feedback_job)
+    button = _button(client, "Submit & Continue")
+    with client:
+        _feedback_input(client).value = FEEDBACK
+    real_access = feedback.current_job_access
+
+    async def redrawn_access(job_id: str, expected_user_id: str) -> JobAccess | None:
+        client.content.clear()
+        gc.collect()
+        return await real_access(job_id, expected_user_id)
+
+    monkeypatch.setattr(feedback, "current_job_access", redrawn_access)
+
+    await _fire_once(button, client, monkeypatch)
+
+    async with AsyncSession(test_engine) as db:
+        status = (await db.execute(select(Job.status).where(Job.id == job_id))).scalar_one()
+    assert status == JobStatus.RUNNING.value
+    notifies = [data for _target, kind, data in client.outbox.messages if kind == "notify"]
+    assert any(data.get("message") == "Continuing to next iteration" for data in notifies)

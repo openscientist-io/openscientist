@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from openscientist.auth import middleware
+from tests.page_request import page_request_storage
 
 
 def _make_fake_context(session_token: str | None = None):
@@ -38,6 +39,7 @@ async def test_require_auth_rejects_invalid_cookie_session(monkeypatch):
     fake_app, fake_ui, storage = _make_fake_context(session_token="bad-token")
     monkeypatch.setattr(middleware, "app", fake_app)
     monkeypatch.setattr(middleware, "ui", fake_ui)
+    monkeypatch.setattr(middleware, "storage", page_request_storage(fake_ui.context.client.request))
 
     async def _fake_validate_session(_token: str):
         return None
@@ -63,6 +65,7 @@ async def test_require_auth_accepts_valid_session_and_populates_storage(monkeypa
     fake_app, fake_ui, storage = _make_fake_context(session_token="good-token")
     monkeypatch.setattr(middleware, "app", fake_app)
     monkeypatch.setattr(middleware, "ui", fake_ui)
+    monkeypatch.setattr(middleware, "storage", page_request_storage(fake_ui.context.client.request))
 
     async def _fake_validate_session(_token: str):
         return {
@@ -114,6 +117,7 @@ def _signed_in_ui(monkeypatch, response_timeout: float) -> MagicMock:
     ui.context.client.page.response_timeout = response_timeout
     monkeypatch.setattr(middleware, "app", SimpleNamespace(storage=SimpleNamespace(user={})))
     monkeypatch.setattr(middleware, "ui", ui)
+    monkeypatch.setattr(middleware, "storage", page_request_storage(ui.context.client.request))
 
     async def _valid(_token: str):
         return {"user_id": "u", "email": "visitor@example.com", "name": "Visitor"}

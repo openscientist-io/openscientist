@@ -9,7 +9,7 @@ from functools import wraps
 from typing import Any
 from urllib.parse import quote, unquote, urlsplit
 
-from nicegui import app, ui
+from nicegui import app, storage, ui
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -75,13 +75,11 @@ async def validate_session(session_token: str) -> dict[str, Any] | None:
 def get_session_token() -> str | None:
     """The login cookie's session token on the current page's request, or None outside a page.
 
-    Event handlers run in the page's client, so they read the cookie the page was built with."""
-    try:
-        if hasattr(ui.context, "client") and hasattr(ui.context.client, "request"):
-            return ui.context.client.request.cookies.get("session_token")
-    except Exception:
-        logger.debug("Could not read session cookie", exc_info=True)
-    return None
+    NiceGUI binds every event and timer to the request its page was built
+    with, so a handler whose own element the page has since deleted still
+    reads that cookie."""
+    request = storage.request_contextvar.get()
+    return None if request is None else request.cookies.get("session_token")
 
 
 def _store_authenticated_user(user_info: dict[str, Any]) -> None:
