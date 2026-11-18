@@ -9,13 +9,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from starlette.responses import StreamingResponse
 
-from openscientist.job.types import JobInfo, JobStatus
+from openscientist.job.types import FailedPhase, JobInfo, JobStatus
 from openscientist.report.download import report_download_response
 from openscientist.webapp_components.pages.job_detail import iterations, report
 from openscientist.webapp_components.utils.permissions import AdminAccess
 
 
-def _context(status: JobStatus, failed_phase: str | None = None) -> SimpleNamespace:
+def _context(status: JobStatus, failed_phase: FailedPhase | None = None) -> SimpleNamespace:
     """Minimal stand-in carrying only what _can_regenerate_report reads."""
     return SimpleNamespace(
         job_info=JobInfo(
@@ -42,15 +42,15 @@ def _action_context() -> SimpleNamespace:
         (True, JobStatus.COMPLETED, None, True),
         (False, JobStatus.COMPLETED, None, False),
         (True, JobStatus.RUNNING, None, False),
-        (True, JobStatus.FAILED, "report", True),
-        (False, JobStatus.FAILED, "report", False),
-        (True, JobStatus.FAILED, "iterations", False),
+        (True, JobStatus.FAILED, FailedPhase.REPORT, True),
+        (False, JobStatus.FAILED, FailedPhase.REPORT, False),
+        (True, JobStatus.FAILED, FailedPhase.ITERATIONS, False),
         (True, JobStatus.FAILED, None, False),
         (False, JobStatus.RUNNING, None, False),
     ],
 )
 def test_can_regenerate_report_gating(
-    is_admin: bool, status: JobStatus, failed_phase: str | None, expected: bool
+    is_admin: bool, status: JobStatus, failed_phase: FailedPhase | None, expected: bool
 ) -> None:
     with patch.object(report, "is_current_user_admin", return_value=is_admin):
         assert report._can_regenerate_report(_context(status, failed_phase)) is expected  # type: ignore[arg-type]

@@ -63,9 +63,10 @@ def _job(connection: Connection, status: str, error: str | None) -> str:
 
 
 def _phase(connection: Connection, job_id: str) -> str | None:
-    return connection.execute(
+    phase: str | None = connection.execute(
         text("SELECT failed_phase FROM jobs WHERE id = :id"), {"id": job_id}
     ).scalar_one()
+    return phase
 
 
 @pytest.mark.asyncio
