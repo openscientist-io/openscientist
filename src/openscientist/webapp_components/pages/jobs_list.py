@@ -37,6 +37,7 @@ from openscientist.webapp_components.components.dialogs import (
     render_delete_dialog,
     render_share_dialog,
 )
+from openscientist.webapp_components.components.feedback import render_feedback_button
 from openscientist.webapp_components.components.job_table import (
     render_actions_slot_with_delete,
     render_cost_slot,
@@ -391,7 +392,9 @@ async def jobs_page() -> None:
     if not can_start_jobs:
         render_pending_approval_notice()
 
-    badges_container = ui.row().classes("w-full")
+    with ui.row().classes("w-full items-start no-wrap"):
+        badges_container = ui.row().classes("grow")
+        render_feedback_button()
     owned_badge_counts: dict[str, object] = {}
 
     with ui.tabs().classes("w-full") as tabs:

@@ -38,6 +38,7 @@ from .session import Session
 from .skill import Skill
 from .skill_source import SkillSource
 from .user import User
+from .user_feedback import UserFeedback
 
 __all__ = [
     "APIKey",
@@ -65,6 +66,7 @@ __all__ = [
     "Skill",
     "SkillSource",
     "User",
+    "UserFeedback",
     "finding_hypotheses",
     "finding_literature",
 ]
