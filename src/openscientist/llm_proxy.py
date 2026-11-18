@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import re
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
@@ -330,6 +331,49 @@ def _meter(
     return meter
 
 
+@dataclass
+class _CallTiming:
+    job_id: str
+    kind: RunKind
+    path: str
+    started: float
+    status: int | None = None
+    headers_at: float | None = None
+    first_chunk_at: float | None = None
+    max_gap: float = 0
+    max_gap_after_bytes: int = 0
+    body_bytes: int = 0
+    chunks: int = 0
+    content_encoding: str = "identity"
+    request_id: str = "none"
+
+    def log(self, outcome: str) -> None:
+        logger.info(
+            "LLM proxy timing job_id=%s kind=%s path=%s status=%s "
+            "headers_ms=%s first_chunk_ms=%s max_gap_ms=%.3f max_gap_after_bytes=%d "
+            "body_bytes=%d chunks=%d content_encoding=%s request_id=%s "
+            "elapsed_ms=%.3f outcome=%s",
+            self.job_id,
+            self.kind,
+            self.path,
+            self.status if self.status is not None else "none",
+            f"{(self.headers_at - self.started) * 1000:.3f}"
+            if self.headers_at is not None
+            else "none",
+            f"{(self.first_chunk_at - self.started) * 1000:.3f}"
+            if self.first_chunk_at is not None
+            else "none",
+            self.max_gap * 1000,
+            self.max_gap_after_bytes,
+            self.body_bytes,
+            self.chunks,
+            self.content_encoding,
+            self.request_id,
+            (time.monotonic() - self.started) * 1000,
+            outcome,
+        )
+
+
 class _MeteredStreamResponse(Response):
     """Stream upstream bytes while holding admission through cancellation-safe metering."""
 
@@ -342,6 +386,7 @@ class _MeteredStreamResponse(Response):
         admission: _Admission,
         status_code: int,
         headers: dict[str, str],
+        timing: _CallTiming,
     ) -> None:
         super().__init__(status_code=status_code, headers=headers)
         # Response init sizes the header for its empty body buffer, but the
@@ -353,9 +398,13 @@ class _MeteredStreamResponse(Response):
         self._decoder = decoder
         self._meter = meter
         self._admission = admission
+        self._timing = timing
 
     async def __call__(self, scope, receive, send) -> None:
         outcome = "cut"
+        timing = self._timing
+        timing_outcome = "client_gone"
+        previous_chunk_at = timing.headers_at
 
         async def finish() -> None:
             with suppress(Exception):
@@ -370,13 +419,33 @@ class _MeteredStreamResponse(Response):
                     "headers": self.raw_headers,
                 }
             )
+            timing_outcome = "upstream_error"
             async for chunk in self._upstream.aiter_raw():
+                arrived = time.monotonic()
+                if timing.first_chunk_at is None:
+                    timing.first_chunk_at = arrived
+                if previous_chunk_at is not None:
+                    gap = arrived - previous_chunk_at
+                    if gap > timing.max_gap:
+                        timing.max_gap = gap
+                        timing.max_gap_after_bytes = timing.body_bytes
+                previous_chunk_at = arrived
                 if self._decoder is not None:
                     self._decoder.feed(chunk)
+                timing_outcome = "client_gone"
                 await send({"type": "http.response.body", "body": chunk, "more_body": True})
+                timing.body_bytes += len(chunk)
+                timing.chunks += 1
+                timing_outcome = "upstream_error"
+            timing_outcome = "client_gone"
             await send({"type": "http.response.body", "body": b"", "more_body": False})
             outcome = "end"
+            timing_outcome = "end"
+        except asyncio.CancelledError:
+            timing_outcome = "client_gone"
+            raise
         finally:
+            timing.log(timing_outcome)
             await self._admission.owner.settle(self._admission, finish())
 
 
@@ -521,17 +590,39 @@ def create_llm_proxy_app(
             )
             upstream_req = client.build_request(request.method, url, headers=headers, content=body)
             attempted = True
+            timing = _CallTiming(run.job_id, run.kind, request.url.path, time.monotonic())
             try:
                 upstream_resp = await client.send(upstream_req, stream=True)
-            except (Exception, asyncio.CancelledError) as exc:
-                if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)):
+            except (Exception, asyncio.CancelledError) as exception:
+                if isinstance(
+                    exception, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+                ):
                     attempted = False
                 logger.warning(
-                    "LLM proxy call ended before response headers for run %s (%s)",
+                    "LLM proxy call ended before response headers for run %s (%s) "
+                    "elapsed_ms=%.3f exception=%s",
                     run.job_id,
                     run.kind,
+                    (time.monotonic() - timing.started) * 1000,
+                    type(exception).__name__,
+                )
+                timing.log(
+                    "client_gone"
+                    if isinstance(exception, asyncio.CancelledError)
+                    else "upstream_error"
                 )
                 raise
+            timing.headers_at = time.monotonic()
+            timing.status = upstream_resp.status_code
+            timing.content_encoding = upstream_resp.headers.get("content-encoding", "identity")
+            timing.request_id = next(
+                (
+                    upstream_resp.headers[name]
+                    for name in ("request-id", "x-request-id", "apim-request-id", "x-ms-request-id")
+                    if name in upstream_resp.headers
+                ),
+                "none",
+            )
             resp_headers = {
                 k: v
                 for k, v in upstream_resp.headers.items()
@@ -560,6 +651,7 @@ def create_llm_proxy_app(
                 admission=admission,
                 status_code=upstream_resp.status_code,
                 headers=resp_headers,
+                timing=timing,
             )
             transferred = True
             return response
