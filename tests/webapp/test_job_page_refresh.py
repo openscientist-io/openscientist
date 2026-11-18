@@ -181,12 +181,13 @@ def _timer(client: Client) -> ui.timer:
 async def _tick(
     client: Client, timer: ui.timer, wire_recorder: list[WireMessage]
 ) -> list[WireMessage]:
-    """Fire the poll once, the way the live timer would, and return the
-    update messages it put on the wire."""
+    """Fire the poll once, the way the live timer would, inside the timer's
+    own slot, and return the update messages it put on the wire."""
     callback = timer.callback
     assert callback is not None
+    assert timer.parent_slot is not None
     wire_recorder.clear()
-    with client:
+    with timer.parent_slot:
         await callback()
     await drain_outbox(client)
     return [m for m in wire_recorder if m.event == "update" and m.room == client.id]

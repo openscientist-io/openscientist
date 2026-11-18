@@ -336,6 +336,10 @@ async def test_the_job_page_follows_the_job_from_feedback_to_completion(
             patch.object(middleware, "ui", mock_ui),
             patch.object(middleware, "validate_session", _validated),
             patch("openscientist.webapp_components.utils.permissions.validate_session", _validated),
+            patch(
+                "openscientist.webapp_components.utils.permissions.get_session_token",
+                return_value="test-token",
+            ),
         ):
             stack.enter_context(patcher)
         # Alice opens her job's page: the page renders with the feedback panel.

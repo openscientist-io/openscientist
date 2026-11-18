@@ -44,6 +44,7 @@ from openscientist.webapp_components.pages.job_detail import iterations as itera
 from openscientist.webapp_components.pages.job_detail import report as report_module
 from openscientist.webapp_components.pages.job_detail import timeline as timeline_module
 from openscientist.webapp_components.utils import client_guard, permissions
+from tests.page_request import page_request_storage
 
 
 async def _create_user(db: AsyncSession, name: str) -> User:
@@ -68,9 +69,8 @@ async def _create_job(db: AsyncSession, owner: User | None, status: str = "runni
 
 def _page_cookie(monkeypatch: pytest.MonkeyPatch, session_id: object) -> None:
     """Give the page's request the login cookie the actor signed in with."""
-    page_ui = MagicMock()
-    page_ui.context.client.request.cookies = {"session_token": str(session_id)}
-    monkeypatch.setattr(middleware, "ui", page_ui)
+    request = SimpleNamespace(cookies={"session_token": str(session_id)})
+    monkeypatch.setattr(middleware, "storage", page_request_storage(request))
 
 
 def _refusal_ui(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
@@ -109,7 +109,9 @@ async def _purge(test_engine: AsyncEngine, *statements) -> None:
 
 @pytest.fixture(autouse=True)
 def _no_real_nicegui(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep the real NiceGUI ui out of these tests so no script client gets created."""
+    """Keep the real NiceGUI ui out of these tests so no script client gets
+    created, and run handlers in a stand-in page client."""
+    monkeypatch.setattr(client_guard, "ui", MagicMock())
     monkeypatch.setattr(client_guard, "is_client_connected", lambda: True)
     monkeypatch.setattr(client_guard, "safe_run_javascript", lambda code: None)
     monkeypatch.setattr(chat_module, "safe_run_javascript", lambda code: None)

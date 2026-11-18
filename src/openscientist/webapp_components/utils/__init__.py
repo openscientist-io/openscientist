@@ -4,6 +4,7 @@ from openscientist.webapp_components.utils.auth import is_dev_mode
 from openscientist.webapp_components.utils.client_guard import (
     ClientGuard,
     guard_client,
+    in_page_client,
     is_client_connected,
     safe_run_javascript,
     session_checked_timer,
@@ -22,6 +23,7 @@ __all__ = [
     "get_event_value",
     "get_uploaded_files",
     "guard_client",
+    "in_page_client",
     "is_client_connected",
     "is_dev_mode",
     "safe_run_javascript",

@@ -1,18 +1,23 @@
-"""Notification controls follow the server airgap policy."""
+"""Notification controls follow the server airgap policy, and a test
+notification is confirmed even when the page deletes the dialog meanwhile."""
 
-from collections.abc import AsyncIterator
+import gc
+from collections.abc import AsyncIterator, Awaitable
+from contextlib import AbstractContextManager, nullcontext
 from uuid import uuid4
 
 import pytest
 import pytest_asyncio
-from nicegui import ui
+from nicegui import background_tasks, ui
+from nicegui.client import Client
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.database.models import User
 from openscientist.settings import get_settings
+from openscientist.webapp_components.components import notifications
 from openscientist.webapp_components.components.notifications import _render_notifications_content
-from tests.webapp.conftest import OpenBrowser
+from tests.webapp.conftest import OpenBrowser, in_event_context
 
 
 @pytest_asyncio.fixture
@@ -75,3 +80,67 @@ async def test_notification_controls_follow_airgap_policy(
             and control.enabled
             for control in controls
         )
+
+
+async def _render_into_page(client: Client, user_id: str) -> None:
+    """Render the dialog's content into the page, keeping no reference to it."""
+    with client:
+        content = ui.column()
+
+        async def reload_content() -> None:
+            await _render_notifications_content(content, user_id, reload_content)
+
+        await reload_content()
+
+
+def _click_test_button(client: Client) -> Awaitable[None]:
+    """Click Send Test Notification the way NiceGUI's socket handler does,
+    returning the handler's task without keeping the button alive."""
+    button = next(
+        element
+        for element in client.elements.values()
+        if isinstance(element, ui.button) and element.text == "Send Test Notification"
+    )
+    listener = next(iter(button._event_listeners.values()))
+    assert listener.handler is not None
+    scheduled: list[Awaitable[None]] = []
+
+    def _capture(
+        awaitable: Awaitable[None],
+        *,
+        name: str = "",
+        context: AbstractContextManager[object] | None = None,
+    ) -> None:
+        scheduled.append(in_event_context(awaitable, context))
+
+    with pytest.MonkeyPatch.context() as capture:
+        capture.setattr(background_tasks, "create_or_defer", _capture)
+        with client, button.parent_slot or nullcontext():
+            listener.handler(None)
+    assert len(scheduled) == 1
+    return scheduled[0]
+
+
+@pytest.mark.asyncio
+async def test_a_test_notification_is_confirmed_although_the_page_redraws(
+    monkeypatch: pytest.MonkeyPatch,
+    notification_user: User,
+    browser_client: OpenBrowser,
+) -> None:
+    """The job page's poll clears the page, the dialog included, while the
+    test notification is sent, and the user still learns it was sent."""
+    monkeypatch.setattr(get_settings().airgap, "enabled", False)
+    client = await browser_client(None)
+    await _render_into_page(client, str(notification_user.id))
+
+    async def redrawn_send(**_message: object) -> bool:
+        client.content.clear()
+        gc.collect()
+        return True
+
+    monkeypatch.setattr(notifications, "send_notification", redrawn_send)
+
+    await _click_test_button(client)
+
+    notifies = [data for _target, kind, data in client.outbox.messages if kind == "notify"]
+    assert any(data.get("message") == "Test sent!" for data in notifies)

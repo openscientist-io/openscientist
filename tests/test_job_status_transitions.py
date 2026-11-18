@@ -40,6 +40,7 @@ from openscientist.orchestrator.report import (
 )
 from openscientist.webapp_components.components import badges, common, dialogs
 from openscientist.webapp_components.pages.job_detail import feedback
+from openscientist.webapp_components.utils import client_guard
 from openscientist.webapp_components.utils.permissions import JobAccess
 from tests.admin_row import reset_admin_settings_row, set_admin_settings_row
 
@@ -540,6 +541,7 @@ async def test_deleting_a_job_cancels_it_only_while_it_is_active(
             "current_job_access",
             AsyncMock(return_value=JobAccess(is_owner=True, can_edit=True)),
         ),
+        patch.object(client_guard, "ui"),
         patch.object(dialogs, "ui") as mock_ui,
     ):
         dialogs.render_delete_dialog(job_id, manager)

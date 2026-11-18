@@ -483,6 +483,7 @@ class TestRenderDeleteDialog:
 
     async def test_confirm_cancels_the_active_job_before_deleting_it(self):
         from openscientist.webapp_components.components import dialogs
+        from openscientist.webapp_components.utils import client_guard
 
         job_id = str(uuid4())
         owner = str(uuid4())
@@ -494,6 +495,7 @@ class TestRenderDeleteDialog:
         from openscientist.webapp_components.utils.permissions import JobAccess
 
         with (
+            patch.object(client_guard, "ui", mock_ui),
             patch.object(dialogs, "ui", mock_ui),
             patch.object(dialogs, "get_current_user_id", return_value=owner),
             patch.object(

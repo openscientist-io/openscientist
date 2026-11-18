@@ -14,6 +14,7 @@ from openscientist.database.session import get_admin_session
 from openscientist.share_service import find_share_target_by_email
 from openscientist.webapp_components.components.badges import render_job_id_badge
 from openscientist.webapp_components.components.common import render_dialog_actions
+from openscientist.webapp_components.utils.client_guard import in_page_client
 from openscientist.webapp_components.utils.permissions import (
     current_job_access,
     revalidate_session,
@@ -220,6 +221,7 @@ class _ShareDialogController:
         finally:
             self._syncing_public_switch = False
 
+    @in_page_client
     async def on_public_change(self, event: Any) -> None:
         """Persist a visibility change made with the switch."""
         if self._syncing_public_switch:
@@ -271,6 +273,7 @@ class _ShareDialogController:
             with self.shares_container:
                 ui.label("Failed to load shares").classes("text-red-600")
 
+    @in_page_client
     async def revoke_share(self, share_id: str) -> None:
         """Revoke share and refresh list on success."""
         try:
@@ -307,6 +310,7 @@ class _ShareDialogController:
             return False
         return True
 
+    @in_page_client
     async def add_user(self) -> None:
         """Look up the typed email exactly and reveal the share controls for a match."""
         email = (self.email_input.value or "").strip()
@@ -326,6 +330,7 @@ class _ShareDialogController:
             return
         self.select_user(target.email, target.name or target.email)
 
+    @in_page_client
     async def do_share(self) -> None:
         """Create/update share for selected user and refresh list."""
         email = self.selected_user_state["email"]
@@ -427,19 +432,14 @@ def render_share_dialog(job_id: str) -> PreparedDialog:
     return PreparedDialog(dialog, controller.refresh_shares)
 
 
+@in_page_client
 async def confirm_delete_job(
     job_id: str,
     job_manager: "JobManager",
     on_deleted: Callable[[], None | Awaitable[None]] | None,
     dialog: ui.dialog,
 ) -> None:
-    """Delete a job (cancelling it first when active) as its current owner.
-
-    The page may be redrawn while the job is deleted, since its status poll
-    finds the job gone and clears the page, so every message after an await
-    goes through the page's client rather than the confirm button's slot.
-    """
-    client = ui.context.client
+    """Delete a job (cancelling it first when active) as its current owner."""
     dialog.close()
     try:
         current_user_id = get_current_user_id()
@@ -448,8 +448,7 @@ async def confirm_delete_job(
             return
         access = await current_job_access(job_id, current_user_id)
         if access is None or not access.is_owner:
-            with client:
-                ui.notify("Only the job owner can delete this job", type="negative")
+            ui.notify("Only the job owner can delete this job", type="negative")
             return
 
         job_info = await job_manager.get_job(job_id)
@@ -458,21 +457,18 @@ async def confirm_delete_job(
 
         await job_manager.delete_job(job_id)
     except ValueError:
-        with client:
-            ui.notify("Invalid job or job cannot be deleted in its current state.", type="negative")
+        ui.notify("Invalid job or job cannot be deleted in its current state.", type="negative")
         return
     except Exception as e:
         logger.error("Failed to delete job %s: %s", job_id, e, exc_info=True)
-        with client:
-            ui.notify("Failed to delete job. Please try again.", type="negative")
+        ui.notify("Failed to delete job. Please try again.", type="negative")
         return
     short_id = job_id[-8:] if len(job_id) > 8 else job_id
-    with client:
-        ui.notify(f"Job {short_id} deleted successfully", type="positive")
-        if on_deleted:
-            result = on_deleted()
-            if result is not None:
-                await result
+    ui.notify(f"Job {short_id} deleted successfully", type="positive")
+    if on_deleted:
+        result = on_deleted()
+        if result is not None:
+            await result
 
 
 def render_delete_dialog(
