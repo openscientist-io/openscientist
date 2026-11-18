@@ -91,7 +91,10 @@ def _floor(monkeypatch: pytest.MonkeyPatch, enabled: bool) -> None:
     monkeypatch.setattr(
         settings_panel,
         "get_settings",
-        lambda: SimpleNamespace(airgap=SimpleNamespace(enabled=enabled)),
+        lambda: SimpleNamespace(
+            airgap=SimpleNamespace(enabled=enabled),
+            provider=SimpleNamespace(provider_id="anthropic"),
+        ),
     )
 
 

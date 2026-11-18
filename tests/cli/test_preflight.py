@@ -285,6 +285,89 @@ def test_a_mounted_path_under_the_home_tilde_that_exists_passes(
     assert preflight.start_findings(checkout, _host()) == []
 
 
+# --- which bill the Foundry project spend limits count ------------------------
+
+_AZURE_LOGIN = {
+    "AZURE_TENANT_ID": "tenant",
+    "AZURE_CLIENT_ID": "client",
+    "AZURE_CLIENT_SECRET": "secret",
+}
+_LEDGER_ONLY = (
+    "With Foundry, the project spend limits count only OpenScientist's own cost record, "
+    "priced from token counts, and never the Azure bill."
+)
+
+
+def _foundry(checkout: Path, **values: str) -> list[str]:
+    """The warnings preflight gives for Foundry with these Azure settings in .env."""
+    envfiles.set_file_value(checkout, "env", "OPENSCIENTIST_PROVIDER", "foundry")
+    for key, value in values.items():
+        envfiles.set_file_value(checkout, "env", key, value)
+    return _warnings(preflight.start_findings(checkout, _host()))
+
+
+def test_foundry_without_billing_settings_names_the_optional_billing_keys(
+    checkout: Path, free_ports: None
+) -> None:
+    assert _foundry(checkout) == [
+        f"{_LEDGER_ONLY} AZURE_SUBSCRIPTION_ID, AZURE_TENANT_ID, AZURE_CLIENT_ID and "
+        "AZURE_CLIENT_SECRET are optional billing settings that let them also count the "
+        "Azure bill from Azure Cost Management."
+    ]
+
+
+def test_foundry_with_a_subscription_alone_names_the_missing_azure_login(
+    checkout: Path, free_ports: None
+) -> None:
+    assert _foundry(checkout, AZURE_SUBSCRIPTION_ID="subscription") == [
+        f"{_LEDGER_ONLY} AZURE_SUBSCRIPTION_ID is set, but AZURE_TENANT_ID, AZURE_CLIENT_ID "
+        "and AZURE_CLIENT_SECRET are not. Set all four to count the Azure bill."
+    ]
+
+
+def test_foundry_with_an_azure_login_alone_names_the_missing_subscription(
+    checkout: Path, free_ports: None
+) -> None:
+    assert _foundry(checkout, **_AZURE_LOGIN) == [
+        f"{_LEDGER_ONLY} AZURE_TENANT_ID, AZURE_CLIENT_ID and AZURE_CLIENT_SECRET are set, "
+        "but AZURE_SUBSCRIPTION_ID is not. Set all four to count the Azure bill."
+    ]
+
+
+def test_foundry_with_part_of_the_azure_login_names_each_missing_key(
+    checkout: Path, free_ports: None
+) -> None:
+    assert _foundry(checkout, AZURE_SUBSCRIPTION_ID="subscription", AZURE_TENANT_ID="t") == [
+        f"{_LEDGER_ONLY} AZURE_SUBSCRIPTION_ID and AZURE_TENANT_ID are set, but "
+        "AZURE_CLIENT_ID and AZURE_CLIENT_SECRET are not. Set all four to count the Azure bill."
+    ]
+
+
+def test_foundry_with_full_billing_settings_says_the_whole_subscription_is_counted(
+    checkout: Path, free_ports: None
+) -> None:
+    assert _foundry(checkout, AZURE_SUBSCRIPTION_ID="subscription", **_AZURE_LOGIN) == [
+        "With Foundry, the project spend limits count the larger of OpenScientist's own cost "
+        "record and the Azure bill of the whole subscription, which includes the spend of "
+        "every other deployment sharing it. Set AZURE_RESOURCE_GROUP to count one resource "
+        "group only."
+    ]
+
+
+def test_foundry_with_a_resource_group_says_that_group_is_counted(
+    checkout: Path, free_ports: None
+) -> None:
+    assert _foundry(
+        checkout,
+        AZURE_SUBSCRIPTION_ID="subscription",
+        AZURE_RESOURCE_GROUP="openscientist-prod",
+        **_AZURE_LOGIN,
+    ) == [
+        "With Foundry, the project spend limits count the larger of OpenScientist's own cost "
+        "record and the Azure bill of resource group openscientist-prod."
+    ]
+
+
 # --- names another checkout's stack holds -------------------------------------
 
 

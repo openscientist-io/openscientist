@@ -14,6 +14,8 @@ from tests.cli.conftest import env_value, wizard_input, wizard_tail
 runner = CliRunner()
 
 FOUNDRY_URL = "https://res.services.ai.azure.com/anthropic"
+#: Enter on each of Foundry's five optional Azure billing settings.
+NO_BILLING = [""] * 5
 
 
 def _setup(answers: str) -> str:
@@ -36,8 +38,8 @@ def _assigned(checkout: Path, key: str) -> bool:
 
 
 def test_switching_foundry_from_resource_to_url_keeps_only_the_url(checkout: Path, monkeypatch):
-    _setup(wizard_input("5", ["res", "", "key", "", "n"]))
-    _rerun(["", FOUNDRY_URL, "", "", "n"])
+    _setup(wizard_input("5", ["res", "", "key", "", *NO_BILLING, "n"]))
+    _rerun(["", FOUNDRY_URL, "", "", *NO_BILLING, "n"])
     assert env_value(checkout, ".env", "ANTHROPIC_FOUNDRY_RESOURCE") == ""
     assert _assigned(checkout, "ANTHROPIC_FOUNDRY_RESOURCE")
     assert env_value(checkout, ".env", "ANTHROPIC_FOUNDRY_BASE_URL") == FOUNDRY_URL
@@ -47,8 +49,8 @@ def test_switching_foundry_from_resource_to_url_keeps_only_the_url(checkout: Pat
 
 
 def test_switching_foundry_from_url_to_resource_keeps_only_the_resource(checkout: Path):
-    _setup(wizard_input("5", ["", FOUNDRY_URL, "key", "", "n"]))
-    _rerun(["res", "", "", "", "n"])
+    _setup(wizard_input("5", ["", FOUNDRY_URL, "key", "", *NO_BILLING, "n"]))
+    _rerun(["res", "", "", "", *NO_BILLING, "n"])
     assert env_value(checkout, ".env", "ANTHROPIC_FOUNDRY_RESOURCE") == "res"
     assert env_value(checkout, ".env", "ANTHROPIC_FOUNDRY_BASE_URL") == ""
 
@@ -124,12 +126,12 @@ def test_a_dash_clears_saved_text_path_and_secret_answers(
     tail = wizard_tail()
     tail[6], tail[7] = "google-id", "google-secret"  # GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
     tail[15] = str(phenix)  # PHENIX_HOST_PATH
-    _setup("\n".join(["5", "res", "", "key", "claude-x", "n", *tail]) + "\n")
+    _setup("\n".join(["5", "res", "", "key", "claude-x", *NO_BILLING, "n", *tail]) + "\n")
     assert env_value(checkout, ".env", "GOOGLE_CLIENT_SECRET") == "google-secret"
 
     rerun_tail = [""] * len(tail)
     rerun_tail[6], rerun_tail[7], rerun_tail[15] = "-", "-", "-"
-    _rerun(["", "", "", "-", "n"], rerun_tail)
+    _rerun(["", "", "", "-", *NO_BILLING, "n"], rerun_tail)
 
     saved = envfiles.current_values(checkout)
     for key in (
@@ -149,12 +151,12 @@ def test_a_dash_on_a_setting_with_a_default_restores_the_default(checkout: Path,
     tail = wizard_tail()
     tail[0] = "http://127.0.0.1:9000"  # OPENSCIENTIST_BASE_URL
     tail[6], tail[7] = "google-id", "google-secret"  # GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
-    _setup("\n".join(["5", "res", "", "key", "claude-x", "n", *tail]) + "\n")
+    _setup("\n".join(["5", "res", "", "key", "claude-x", *NO_BILLING, "n", *tail]) + "\n")
     assert env_value(checkout, ".env", "OPENSCIENTIST_DEV_MODE") == "true"
 
     rerun_tail = [""] * len(tail)
     rerun_tail[0], rerun_tail[12], rerun_tail[14] = "-", "-", "-"
-    _rerun(["", "", "", "", "n"], rerun_tail)
+    _rerun(["", "", "", "", *NO_BILLING, "n"], rerun_tail)
 
     assert env_value(checkout, ".env", "OPENSCIENTIST_BASE_URL") == "http://localhost:8080"
     for key in ("OPENSCIENTIST_DEV_MODE", "OPENSCIENTIST_AIRGAPPED"):
@@ -164,10 +166,10 @@ def test_a_dash_on_a_setting_with_a_default_restores_the_default(checkout: Path,
 
 
 def test_both_foundry_endpoints_saved_are_rejected_until_one_is_cleared(checkout: Path):
-    _setup(wizard_input("5", ["res", "", "key", "", "n"]))
+    _setup(wizard_input("5", ["res", "", "key", "", *NO_BILLING, "n"]))
     envfiles.set_file_value(checkout, "env", "ANTHROPIC_FOUNDRY_BASE_URL", FOUNDRY_URL)
     # Enter keeps both and is refused, then a dash clears the resource.
-    output = _rerun(["", "", "", "", "-", "", "", "", "n"])
+    output = _rerun(["", "", "", "", *NO_BILLING, "-", "", "", "", *NO_BILLING, "n"])
     assert "ANTHROPIC_FOUNDRY_RESOURCE" in output
     assert "Those answers do not validate" in output
     assert env_value(checkout, ".env", "ANTHROPIC_FOUNDRY_RESOURCE") == ""

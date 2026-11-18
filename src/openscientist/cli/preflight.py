@@ -24,6 +24,7 @@ from rich.text import Text
 from openscientist.cli import envfiles
 from openscientist.cli.stack import COMPOSE_FILE, IMAGE_TAGS, image_tag
 from openscientist.docker_memory import parse_docker_memory_mib
+from openscientist.providers.foundry import azure_bill
 
 #: ``host.docker.internal:host-gateway`` in the compose file needs this engine.
 MIN_ENGINE = (20, 10)
@@ -372,6 +373,13 @@ def _shared_names(root: Path, values: dict[str, str], host: Host) -> list[Findin
     return list(clashes.values())
 
 
+def _foundry_bill(values: dict[str, str]) -> list[Finding]:
+    """Under Foundry, which bill the project spend limits count."""
+    if values.get("OPENSCIENTIST_PROVIDER") != "foundry":
+        return []
+    return [Finding(False, azure_bill(values).message)]
+
+
 def start_findings(root: Path, host: Host = HOST) -> list[Finding]:
     """What building and starting the stack needs beyond a working Docker."""
     info, _ = _docker_info(host)
@@ -385,6 +393,7 @@ def start_findings(root: Path, host: Host = HOST) -> list[Finding]:
     findings += _ports(root, values, host)
     findings += _shared_names(root, values, host)
     findings += _git(root, host)
+    findings += _foundry_bill(values)
     return findings
 
 

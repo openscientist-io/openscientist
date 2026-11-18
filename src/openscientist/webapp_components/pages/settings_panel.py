@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from openscientist.admin_settings import AdminSettingsValues, current_admin_settings
 from openscientist.auth import get_current_user_id, is_current_user_admin
 from openscientist.database.models import AdminSettingChange, AdminSettings, User
+from openscientist.providers.foundry import azure_bill
 from openscientist.settings import (
     AirgapSettings,
     AuthSettings,
@@ -322,6 +323,14 @@ async def _render_settings(container: ui.column) -> None:
             ui.label("Settings").classes("text-lg font-bold mb-2")
             numbers: dict[str, ui.number] = {}
             no_limit: dict[str, ui.checkbox] = {}
+            provider = get_settings().provider
+            if provider.provider_id == "foundry":
+                bill = azure_bill(provider.model_dump(by_alias=True))
+                render_alert_banner(
+                    title="Project spend limits and the Azure bill",
+                    message=bill.message,
+                    severity="info" if bill.counted else "warning",
+                )
             for group_title, columns in _GROUPS:
                 ui.label(group_title).classes("text-subtitle2 font-bold text-gray-700 mt-4")
                 # As many columns as fit, each at least 15rem wide.
