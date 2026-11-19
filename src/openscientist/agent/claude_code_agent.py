@@ -278,6 +278,14 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
             mcp_servers[openadmodels_spec.name] = cast(
                 McpHttpServerConfig, openadmodels_spec.to_sdk_config()
             )
+        cli_env: dict[str, str] = {}
+        if self._config.chat:
+            cli_env["CLAUDE_CODE_DISABLE_ATTACHMENTS"] = "1"
+        # A buffered tool argument arrives only once the model has finished
+        # it, so one long Write sends nothing for minutes and the CLI's idle
+        # watchdog aborts the call.
+        if self._provider.streams_tool_input:
+            cli_env["CLAUDE_CODE_ENABLE_FINE_GRAINED_TOOL_STREAMING"] = "1"
 
         return ClaudeAgentOptions(
             system_prompt=self._config.system_prompt,
@@ -285,7 +293,7 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
             disallowed_tools=["WebSearch", "WebFetch"] if settings.airgap.enabled else [],
             setting_sources=[] if self._config.chat else None,
             skills=[] if self._config.chat else None,
-            env={"CLAUDE_CODE_DISABLE_ATTACHMENTS": "1"} if self._config.chat else {},
+            env=cli_env,
             mcp_servers=mcp_servers,
             model=self._model_override or self._provider.claude_model_name(),
             can_use_tool=self._allow_all_tools,

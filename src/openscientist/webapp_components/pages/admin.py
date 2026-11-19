@@ -38,7 +38,7 @@ from openscientist.webapp_components.components.job_table import render_job_id_s
 from openscientist.webapp_components.components.navigation import render_navigator
 from openscientist.webapp_components.pages.billing import render_billing_panel
 from openscientist.webapp_components.pages.settings_panel import render_settings_panel
-from openscientist.webapp_components.utils import session_checked_timer
+from openscientist.webapp_components.utils import in_page_client, session_checked_timer
 from openscientist.webapp_components.utils.permissions import admin_access
 
 if TYPE_CHECKING:
@@ -707,6 +707,7 @@ def _open_delete_user_dialog(
     dialog.open()
 
 
+@in_page_client
 async def _confirm_delete_user(
     user_id: str,
     *,
@@ -1310,6 +1311,7 @@ async def _show_token_created_dialog(magic_link: str) -> None:
     dialog.open()
 
 
+@in_page_client
 async def _confirm_revoke_review_token(
     token_id: str,
     *,

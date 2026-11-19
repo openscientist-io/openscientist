@@ -19,6 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from openscientist.auth import middleware
 from openscientist.database.models import Job, JobShare, Session, User
 from openscientist.webapp_components.components import dialogs as dialog_module
+from openscientist.webapp_components.utils import client_guard
+from tests.page_request import page_request_storage
 
 
 @dataclass(frozen=True)
@@ -90,9 +92,11 @@ def _owner_page(world: ShareWorld) -> Iterator[MagicMock]:
         "can_start_jobs": True,
     }
     with (
+        patch.object(client_guard, "ui"),
         patch.object(dialog_module, "ui") as dialog_ui,
         patch.object(dialog_module, "get_current_user_id", return_value=str(world.owner.id)),
         patch.object(middleware, "ui", page_ui),
+        patch.object(middleware, "storage", page_request_storage(page_ui.context.client.request)),
         patch.object(middleware, "app", page_app),
     ):
         yield dialog_ui

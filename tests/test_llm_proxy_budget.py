@@ -563,8 +563,7 @@ async def test_http_cancellation_before_headers_releases_admission(
                         await asyncio.gather(*held, return_exceptions=True)
                 release.set()
                 async with asyncio.timeout(5):
-                    with pytest.raises(httpx.ConnectError):
-                        await call()
+                    assert (await call()).status_code == 502
                 assert entered.qsize() == 1
                 assert caplog.text.count("ended before response headers") == 5
 
@@ -671,6 +670,8 @@ async def test_aborted_http_calls_exhaust_reserved_budget(ending, test_engine, p
                         )
                     except httpx.TransportError:
                         continue
+                    if response.status_code == 502:
+                        continue
                     assert response.status_code == 400
                     break
                 else:
@@ -688,7 +689,7 @@ async def test_aborted_http_calls_exhaust_reserved_budget(ending, test_engine, p
         (httpx.WriteTimeout, True),
     ],
 )
-async def test_transport_failure_settlement(failure, charged, test_engine, placeholder_for):
+async def test_transport_failure_settlement(failure, charged, test_engine, placeholder_for, caplog):
     from tests.test_llm_reservations import rows
 
     async def upstream(request):
@@ -704,12 +705,13 @@ async def test_transport_failure_settlement(failure, charged, test_engine, place
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://proxy"
             ) as client:
-                with pytest.raises(failure):
-                    await client.post(
-                        "/v1/messages",
-                        headers={"x-api-key": placeholder_for(str(job.id))},
-                        json={"model": "claude-sonnet-4-6", "max_tokens": 10},
-                    )
+                response = await client.post(
+                    "/v1/messages",
+                    headers={"x-api-key": placeholder_for(str(job.id))},
+                    json={"model": "claude-sonnet-4-6", "max_tokens": 10},
+                )
+            assert response.status_code == 502
+            assert f"{failure.__name__}: Upstream unavailable" in caplog.text
             recorded = await rows(test_engine, job.id)
             assert len(recorded) == int(charged)
             if recorded:

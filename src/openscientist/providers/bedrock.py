@@ -109,6 +109,8 @@ def _bedrock_base_url(region: str) -> str:
 class BedrockProvider(ClaudeCompatible):
     """AWS Bedrock provider."""
 
+    streams_tool_input = True
+
     @property
     def id(self) -> str:
         return "bedrock"

@@ -14,6 +14,7 @@ from openscientist.database.session import get_admin_session
 from openscientist.share_service import find_share_target_by_email
 from openscientist.webapp_components.components.badges import render_job_id_badge
 from openscientist.webapp_components.components.common import render_dialog_actions
+from openscientist.webapp_components.utils.client_guard import in_page_client
 from openscientist.webapp_components.utils.permissions import (
     current_job_access,
     revalidate_session,
@@ -220,6 +221,7 @@ class _ShareDialogController:
         finally:
             self._syncing_public_switch = False
 
+    @in_page_client
     async def on_public_change(self, event: Any) -> None:
         """Persist a visibility change made with the switch."""
         if self._syncing_public_switch:
@@ -271,6 +273,7 @@ class _ShareDialogController:
             with self.shares_container:
                 ui.label("Failed to load shares").classes("text-red-600")
 
+    @in_page_client
     async def revoke_share(self, share_id: str) -> None:
         """Revoke share and refresh list on success."""
         try:
@@ -307,6 +310,7 @@ class _ShareDialogController:
             return False
         return True
 
+    @in_page_client
     async def add_user(self) -> None:
         """Look up the typed email exactly and reveal the share controls for a match."""
         email = (self.email_input.value or "").strip()
@@ -326,6 +330,7 @@ class _ShareDialogController:
             return
         self.select_user(target.email, target.name or target.email)
 
+    @in_page_client
     async def do_share(self) -> None:
         """Create/update share for selected user and refresh list."""
         email = self.selected_user_state["email"]
@@ -427,6 +432,7 @@ def render_share_dialog(job_id: str) -> PreparedDialog:
     return PreparedDialog(dialog, controller.refresh_shares)
 
 
+@in_page_client
 async def confirm_delete_job(
     job_id: str,
     job_manager: "JobManager",
@@ -450,17 +456,19 @@ async def confirm_delete_job(
             await job_manager.cancel_job(job_id)
 
         await job_manager.delete_job(job_id)
-        short_id = job_id[-8:] if len(job_id) > 8 else job_id
-        ui.notify(f"Job {short_id} deleted successfully", type="positive")
-        if on_deleted:
-            result = on_deleted()
-            if result is not None:
-                await result
     except ValueError:
         ui.notify("Invalid job or job cannot be deleted in its current state.", type="negative")
+        return
     except Exception as e:
         logger.error("Failed to delete job %s: %s", job_id, e, exc_info=True)
         ui.notify("Failed to delete job. Please try again.", type="negative")
+        return
+    short_id = job_id[-8:] if len(job_id) > 8 else job_id
+    ui.notify(f"Job {short_id} deleted successfully", type="positive")
+    if on_deleted:
+        result = on_deleted()
+        if result is not None:
+            await result
 
 
 def render_delete_dialog(

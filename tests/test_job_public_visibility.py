@@ -38,6 +38,7 @@ from openscientist.job.types import JobInfo, JobStatus
 from openscientist.share_service import set_job_public, viewer_has_direct_access
 from openscientist.webapp_components.components import dialogs as dialog_module
 from openscientist.webapp_components.pages.job_detail import _owner_name, timeline
+from openscientist.webapp_components.utils import client_guard
 from tests.helpers import enable_rls, fake_admin_session
 
 # Saved reports that may inline uploads, the agent's raw tool output, and the
@@ -736,6 +737,7 @@ async def test_switch_change_persists_and_refreshes(db_session: AsyncSession, te
     job = await _job(db_session, test_user, is_public=False)
     controller = _switch_controller(str(job.id))
     with (
+        patch.object(client_guard, "ui"),
         patch.object(dialog_module, "ui") as mock_ui,
         patch.object(dialog_module, "get_current_user_id", return_value=str(test_user.id)),
         patch.object(dialog_module, "get_admin_session", fake_admin_session(db_session)),
@@ -759,6 +761,7 @@ async def test_switch_change_is_ignored_while_syncing(db_session: AsyncSession, 
     controller = _switch_controller(str(job.id))
     controller._syncing_public_switch = True
     with (
+        patch.object(client_guard, "ui"),
         patch.object(dialog_module, "ui") as mock_ui,
         patch.object(dialog_module, "get_current_user_id", return_value=str(test_user.id)),
         patch.object(dialog_module, "get_admin_session", fake_admin_session(db_session)),
@@ -776,6 +779,7 @@ async def test_switch_change_requires_sign_in(db_session: AsyncSession, test_use
     job = await _job(db_session, test_user, is_public=False)
     controller = _switch_controller(str(job.id))
     with (
+        patch.object(client_guard, "ui"),
         patch.object(dialog_module, "ui") as mock_ui,
         patch.object(dialog_module, "get_current_user_id", return_value=None),
         patch.object(dialog_module, "get_admin_session", fake_admin_session(db_session)),
@@ -814,6 +818,7 @@ async def test_switch_change_failure_notifies_an_error(db_session: AsyncSession,
     job = await _job(db_session, test_user, is_public=False)
     controller = _switch_controller(str(job.id))
     with (
+        patch.object(client_guard, "ui"),
         patch.object(dialog_module, "ui") as mock_ui,
         patch.object(dialog_module, "get_current_user_id", return_value=str(test_user.id)),
         patch.object(dialog_module, "get_admin_session", fake_admin_session(db_session)),

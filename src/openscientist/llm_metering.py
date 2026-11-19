@@ -6,14 +6,14 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 
 from openscientist.agent.base import TokenUsage
-from openscientist.database.models import CostRecord
+from openscientist.database.models import CostRecord, LlmCallTiming
 from openscientist.database.models.job import Job as JobModel
 from openscientist.database.retry import retry_async
 from openscientist.database.session import get_admin_session
@@ -39,6 +39,46 @@ class _ObservedCall:
     model: str
     buckets: TokenUsage
     usage_reported: bool = True
+
+
+CallEnding = Literal["complete", "client_disconnected", "upstream_ended_early"]
+
+
+@dataclass(frozen=True)
+class CallTiming:
+    """How long the upstream took to answer one Messages call, every duration
+    counted from ``started_at``. The tokens come only from a complete final usage."""
+
+    started_at: datetime
+    model: str
+    streamed: bool
+    status_code: int | None
+    headers_seconds: float | None
+    first_event_seconds: float | None
+    longest_event_gap_seconds: float | None
+    duration_seconds: float
+    input_tokens: int | None
+    output_tokens: int | None
+    ended: CallEnding
+
+    def insert(self, *, job_id: UUID | None, kind: RunKind, cost_record_id: UUID | None = None):
+        """The statement that stores this timing for the run of ``job_id``."""
+        return insert(LlmCallTiming).values(
+            created_at=self.started_at,
+            job_id=job_id,
+            cost_record_id=cost_record_id,
+            run_kind=kind,
+            model=self.model,
+            streamed=self.streamed,
+            status_code=self.status_code,
+            headers_seconds=self.headers_seconds,
+            first_event_seconds=self.first_event_seconds,
+            longest_event_gap_seconds=self.longest_event_gap_seconds,
+            duration_seconds=self.duration_seconds,
+            input_tokens=self.input_tokens,
+            output_tokens=self.output_tokens,
+            ended=self.ended,
+        )
 
 
 def _int(value: object) -> int:
@@ -485,8 +525,11 @@ async def record_model_call(
     cost_usd: float | None = None,
     estimated: bool = False,
     created_at: datetime | None = None,
+    timing: CallTiming | None = None,
 ) -> bool:
-    """Persist a cost row idempotently or settle it when its job no longer exists."""
+    """Persist a cost row idempotently, with the call's ``timing`` when given.
+    A call whose job was deleted while it ran is still recorded, without a job
+    or owner, so the project limits count it."""
     try:
         uid = UUID(job_id)
     except ValueError:
@@ -510,15 +553,14 @@ async def record_model_call(
             job = await session.get(JobModel, uid)
             if job is None:
                 logger.warning(
-                    "Cost of job %s was not saved: the job no longer exists "
-                    "(provider=%s model=%s input=%d output=%d)",
+                    "Job %s no longer exists, so the cost of its model call is recorded "
+                    "without a job (provider=%s model=%s input=%d output=%d)",
                     job_id,
                     provider_id,
                     model,
                     buckets.input_tokens,
                     buckets.output_tokens,
                 )
-                return True
             if record_id is None:
                 record_id = await session.scalar(select(func.uuidv7()))
             operation, iteration = _operation_labels(job, kind)
@@ -535,8 +577,8 @@ async def record_model_call(
                 )
             statement = insert(CostRecord).values(
                 id=record_id,
-                job_id=uid,
-                user_id=job.owner_id,
+                job_id=job.id if job is not None else None,
+                user_id=job.owner_id if job is not None else None,
                 iteration=iteration,
                 operation_type=f"{operation}_estimated" if estimated else operation,
                 provider=provider_id,
@@ -551,6 +593,14 @@ async def record_model_call(
             if created_at is not None:
                 statement = statement.values(created_at=created_at)
             await session.execute(statement.on_conflict_do_nothing(index_elements=[CostRecord.id]))
+            if timing is not None:
+                await session.execute(
+                    timing.insert(
+                        job_id=job.id if job is not None else None,
+                        kind=kind,
+                        cost_record_id=record_id,
+                    ).on_conflict_do_nothing(index_elements=[LlmCallTiming.cost_record_id])
+                )
             await session.commit()
             return True
 
@@ -574,3 +624,22 @@ async def record_model_call(
             e,
         )
         return False
+
+
+async def record_call_timing(*, job_id: str, kind: RunKind, timing: CallTiming) -> None:
+    """Persist the timing of a call that left no cost row."""
+
+    async def _write() -> None:
+        async with get_admin_session() as session:
+            job = await session.get(JobModel, UUID(job_id))
+            await session.execute(
+                timing.insert(job_id=job.id if job is not None else None, kind=kind)
+            )
+            await session.commit()
+
+    try:
+        await retry_async(
+            _write, within=_WRITE_RETRY_SECONDS, what=f"writing a call timing of job {job_id}"
+        )
+    except Exception:
+        logger.exception("Call timing of job %s was not saved", job_id)

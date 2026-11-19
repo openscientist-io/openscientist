@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from functools import wraps
 from typing import TYPE_CHECKING, Any
 
@@ -53,6 +53,24 @@ def guard_client[F: Callable[..., Any]](func: F) -> F:
     return sync_wrapper  # type: ignore[return-value]
 
 
+def in_page_client[**P, R](
+    handler: Callable[P, Awaitable[R]],
+) -> Callable[P, Coroutine[Any, Any, R]]:
+    """Run an async handler inside its page's client, taken when it starts.
+
+    A handler runs in the slot of the element that started it, and once the
+    page deletes that element, notifications, navigation and new elements
+    can no longer reach the client. The page's content outlives every
+    element the page clears."""
+
+    @wraps(handler)
+    async def in_client(*args: P.args, **kwargs: P.kwargs) -> R:
+        with ui.context.client:
+            return await handler(*args, **kwargs)
+
+    return in_client
+
+
 def session_checked_timer(
     interval: float, callback: Callable[[], Awaitable[None]], user_id: str
 ) -> ui.timer:
@@ -66,6 +84,7 @@ def session_checked_timer(
 
     @wraps(callback)
     @guard_client
+    @in_page_client
     async def checked_tick() -> None:
         if not await session_still_valid_for(user_id):
             timer.deactivate()

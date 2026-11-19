@@ -14,6 +14,7 @@ from openscientist.database.session import get_session_ctx
 from openscientist.ntfy import ensure_user_has_topic, get_subscription_url, send_notification
 from openscientist.settings import get_settings
 from openscientist.webapp_components.components.badges import render_job_id_badge
+from openscientist.webapp_components.utils.client_guard import in_page_client
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,7 @@ def _render_ntfy_test_button(ntfy_topic: str) -> None:
     """Render button to send a test ntfy notification."""
     ui.separator().classes("my-2")
 
+    @in_page_client
     async def send_test() -> None:
         success = await send_notification(
             topic=ntfy_topic,
@@ -123,6 +125,7 @@ async def _render_notifications_content(
 
     with content_container:
 
+        @in_page_client
         async def toggle_notifications(event: Any) -> None:
             new_value = event.value
             try:

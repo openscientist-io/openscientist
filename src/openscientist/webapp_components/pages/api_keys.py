@@ -20,7 +20,7 @@ from openscientist.webapp_components.components.common import (
     render_empty_state,
 )
 from openscientist.webapp_components.components.navigation import render_navigator
-from openscientist.webapp_components.utils import get_event_value
+from openscientist.webapp_components.utils import get_event_value, in_page_client
 from openscientist.webapp_components.utils.permissions import revalidate_session
 
 logger = logging.getLogger(__name__)
@@ -286,6 +286,7 @@ def _open_revoke_dialog(
 ) -> None:
     """Open confirmation dialog for key revocation."""
 
+    @in_page_client
     async def do_revoke() -> None:
         try:
             requester_id = get_current_user_id()

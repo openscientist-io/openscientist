@@ -5,12 +5,13 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
 from nicegui import ui
 from nicegui.client import Client
+from nicegui.testing import user_simulation
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
@@ -155,3 +156,28 @@ async def test_reviewer_cannot_create_key_from_open_page(
             select(APIKey).where(APIKey.user_id == user_id, APIKey.name == "forbidden")
         )
         assert list(keys) == []
+
+
+@pytest.mark.asyncio
+async def test_revoking_a_key_keeps_the_users_other_keys_listed(
+    database: Forwarder, key_holders: dict[str, str], test_engine: AsyncEngine
+) -> None:
+    async with AsyncSession(test_engine, expire_on_commit=False) as db:
+        spare = APIKey(user_id=UUID(key_holders["user_id"]), name="spare", key_hash=uuid4().hex)
+        db.add(spare)
+        await db.commit()
+    async with user_simulation(root=api_keys_page) as browser:
+        browser.http_client.cookies.set("session_token", key_holders["user_token"])
+        await browser.open("/")
+        await browser.should_see(kind=ui.table, retries=50)
+        browser.find(ui.table).trigger(
+            "revoke", {"id": key_holders["user_key"], "name": "user-script", "user_name": ""}
+        )
+        await browser.should_see("Revoke API Key")
+        browser.find(kind=ui.button, content="Revoke").click()
+        await browser.should_see("API key revoked", retries=50)
+        await browser.should_see(kind=ui.table, retries=50)
+        rows = {
+            str(row["id"]): row for table in browser.find(ui.table).elements for row in table.rows
+        }
+        assert str(spare.id) in rows

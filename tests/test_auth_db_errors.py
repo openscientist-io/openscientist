@@ -24,6 +24,7 @@ from openscientist.auth.fastapi_routes import router
 from openscientist.database.models import Session, User
 from openscientist.database.models.session import hash_session_token
 from tests.db_outage import Forwarder
+from tests.page_request import page_request_storage
 
 
 @pytest_asyncio.fixture
@@ -55,6 +56,7 @@ def visitor(session_token: str, monkeypatch: pytest.MonkeyPatch) -> dict[str, ob
     ui.context.client.page.response_timeout = _RESPONSE_TIMEOUT
     monkeypatch.setattr(middleware, "app", SimpleNamespace(storage=SimpleNamespace(user=storage)))
     monkeypatch.setattr(middleware, "ui", ui)
+    monkeypatch.setattr(middleware, "storage", page_request_storage(ui.context.client.request))
     return storage
 
 
@@ -176,6 +178,7 @@ async def test_a_visitor_with_a_garbage_token_is_sent_to_login(
     ui.context.client.page.response_timeout = _RESPONSE_TIMEOUT
     monkeypatch.setattr(middleware, "app", SimpleNamespace(storage=SimpleNamespace(user=storage)))
     monkeypatch.setattr(middleware, "ui", ui)
+    monkeypatch.setattr(middleware, "storage", page_request_storage(ui.context.client.request))
     result = await middleware.require_auth(page)()
     assert not ran
     assert storage == {}

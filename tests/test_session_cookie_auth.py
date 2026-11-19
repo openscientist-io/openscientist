@@ -29,6 +29,7 @@ from openscientist.settings import clear_settings_cache
 from openscientist.webapp_components.artifact_routes import router as job_router
 from openscientist.webapp_components.share_routes import router as share_router
 from tests.db_outage import Forwarder
+from tests.page_request import page_request_storage
 
 _PLOT = b"\x89PNG\r\n\x1a\ncookie-auth-plot"
 
@@ -66,14 +67,15 @@ def _stored_browser(monkeypatch: pytest.MonkeyPatch, user: User, token: str) -> 
     monkeypatch.setattr(middleware, "app", SimpleNamespace(storage=SimpleNamespace(user=storage)))
 
 
-def _page_visitor(cookies: dict[str, str]) -> SimpleNamespace:
-    """The NiceGUI context of a page request carrying ``cookies``."""
+def _visit_page(monkeypatch: pytest.MonkeyPatch, cookies: dict[str, str]) -> None:
+    """Make the page being built answer a request carrying ``cookies``."""
     ui = MagicMock()
     ui.context.client.request.cookies = cookies
     ui.context.client.request.url.path = "/jobs"
     ui.context.client.request.url.query = ""
     ui.context.client.page.response_timeout = 5.0
-    return ui
+    monkeypatch.setattr(middleware, "ui", ui)
+    monkeypatch.setattr(middleware, "storage", page_request_storage(ui.context.client.request))
 
 
 @pytest_asyncio.fixture
@@ -118,7 +120,7 @@ async def test_a_page_without_the_login_cookie_stays_signed_out_even_with_a_stor
     the login cookie the page must not run."""
     user, token = visitor_login
     _stored_browser(monkeypatch, user, token)
-    monkeypatch.setattr(middleware, "ui", _page_visitor({"session": "browser-id"}))
+    _visit_page(monkeypatch, {"session": "browser-id"})
 
     ran = False
 
@@ -142,9 +144,7 @@ async def test_a_page_with_the_valid_login_cookie_still_reaches_the_page(
     user, token = visitor_login
     storage: dict[str, object] = {}
     monkeypatch.setattr(middleware, "app", SimpleNamespace(storage=SimpleNamespace(user=storage)))
-    monkeypatch.setattr(
-        middleware, "ui", _page_visitor({"session": "browser-id", "session_token": token})
-    )
+    _visit_page(monkeypatch, {"session": "browser-id", "session_token": token})
 
     ran = False
 

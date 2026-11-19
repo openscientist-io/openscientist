@@ -309,32 +309,48 @@ class ProviderSettings(BaseSettings):
         alias="ANTHROPIC_FOUNDRY_API_KEY",
         description="API key for the Anthropic endpoint in Azure AI Foundry.",
     )
-    # Azure Cost Management (enables billing data for the foundry provider)
+    # Optional Foundry billing settings. Set the subscription and the service
+    # principal together, and the project spend limits also count the Azure bill.
     azure_subscription_id: str | None = Field(
         default=None,
         alias="AZURE_SUBSCRIPTION_ID",
-        description="Azure subscription id whose billing data shows in the admin panel.",
+        description=(
+            "Optional billing setting. Azure subscription whose bill the project spend "
+            "limits count, read from Azure Cost Management. Leave empty to count only "
+            "OpenScientist's own cost record."
+        ),
     )
     azure_resource_group: str | None = Field(
         default=None,
         alias="AZURE_RESOURCE_GROUP",
-        description="Azure resource group that scopes the Cost Management query.",
+        description=(
+            "Optional billing setting. Resource group the Azure bill is read for. Leave "
+            "empty to read the whole subscription, including the spend of every other "
+            "deployment sharing it."
+        ),
     )
-    # Azure AD service principal (for the Cost Management API)
     azure_tenant_id: str | None = Field(
         default=None,
         alias="AZURE_TENANT_ID",
-        description="Azure AD tenant id of the Cost Management service principal.",
+        description=(
+            "Optional billing setting. Tenant of the service principal that reads the Azure bill."
+        ),
     )
     azure_client_id: str | None = Field(
         default=None,
         alias="AZURE_CLIENT_ID",
-        description="Azure AD client id of the Cost Management service principal.",
+        description=(
+            "Optional billing setting. Client id of the service principal that reads the "
+            "Azure bill."
+        ),
     )
     azure_client_secret: str | None = Field(
         default=None,
         alias="AZURE_CLIENT_SECRET",
-        description="Azure AD client secret of the Cost Management service principal.",
+        description=(
+            "Optional billing setting. Client secret of the service principal that reads "
+            "the Azure bill."
+        ),
     )
 
     @model_validator(mode="after")

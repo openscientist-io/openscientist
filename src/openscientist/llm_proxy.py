@@ -11,9 +11,11 @@ import json
 import logging
 import os
 import re
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from urllib.parse import parse_qs, unquote_to_bytes
 from uuid import UUID
 
@@ -33,11 +35,15 @@ from openscientist.job_container.secrets import RunKind, proxy_run
 from openscientist.listener import bind_listener
 from openscientist.llm_airgap import airgap_refusal, http_airgap_refusal
 from openscientist.llm_metering import (
+    CallEnding,
+    CallTiming,
     _model_from_body,
     _model_from_path,
     _ObservedCall,
     _ResponsesDecoder,
+    _SseStream,
     _usage_decoder,
+    record_call_timing,
     record_model_call,
 )
 from openscientist.llm_reservations import (
@@ -130,6 +136,7 @@ _DROP_REQUEST_HEADERS = frozenset(
         "trailer",
         "x-api-key",
         "authorization",
+        "accept-encoding",
     }
 )
 _DROP_RESPONSE_HEADERS = frozenset(
@@ -296,24 +303,27 @@ def _meter(
     provider_id: str,
     status_code: int,
     reservation: ModelCallReservation | None = None,
+    clock: _CallClock | None = None,
 ) -> Callable[[str], Awaitable[None]]:
-    """Settle the model call using complete usage or its conservative reservation."""
+    """Settle the model call using complete usage or its conservative
+    reservation, with the timing ``clock`` measured."""
 
     async def meter(outcome: str) -> None:
         if decoder is None:
             return
         calls, reason = decoder.finalize(outcome)
+        timing = clock.timing(calls, reason) if clock is not None else None
         if status_code >= 400:
             if (
                 reservation is not None
                 and not any(call.usage_reported for call in calls)
                 and _unbilled_error(provider_id, status_code, decoder.error_code)
             ):
-                await reservation.cancel()
+                await _cancel_reservation(reservation, job_id, kind, timing)
                 return
             reason = f"upstream returned {status_code}"
         if reservation is not None:
-            await reservation.settle(calls, complete=reason is None)
+            await reservation.settle(calls, complete=reason is None, timing=timing)
         else:
             for call in calls:
                 await record_model_call(
@@ -329,6 +339,100 @@ def _meter(
     return meter
 
 
+#: An upstream silent this long between two stream events is logged as stalled.
+_STALLED_EVENT_GAP_SECONDS = 120.0
+
+
+class _CallClock:
+    """Times one Messages call on the monotonic clock from the moment the
+    proxy sends it upstream."""
+
+    def __init__(self, job_id: str, kind: RunKind, model: str) -> None:
+        self.job_id = job_id
+        self.kind = kind
+        self.model = model
+        self.started_at = datetime.now(UTC)
+        self.started = time.monotonic()
+        self.finished = self.started
+        self.status: int | None = None
+        self.headers_at: float | None = None
+        self.events: _SseStream | None = None
+        self.first_event_at: float | None = None
+        self.last_event_at: float | None = None
+        self.longest_gap: float | None = None
+        self.stopped = False
+        self.ended: CallEnding = "upstream_ended_early"
+
+    def headers(self, response: httpx.Response) -> None:
+        self.headers_at = time.monotonic()
+        self.status = response.status_code
+        if "text/event-stream" in response.headers.get("content-type", ""):
+            self.events = _SseStream()
+
+    def chunk(self, chunk: bytes) -> None:
+        if self.events is None:
+            return
+        arrived = time.monotonic()
+        for data in self.events.feed(chunk):
+            if self.last_event_at is None:
+                self.first_event_at = arrived
+            else:
+                gap = arrived - self.last_event_at
+                self.longest_gap = max(gap, self.longest_gap or 0.0)
+                if gap > _STALLED_EVENT_GAP_SECONDS:
+                    logger.warning(
+                        "LLM proxy waited %.1f s between stream events for run %s (%s)",
+                        gap,
+                        self.job_id,
+                        self.kind,
+                    )
+            self.last_event_at = arrived
+            with suppress(ValueError):
+                event = json.loads(data)
+                self.stopped |= isinstance(event, dict) and event.get("type") == "message_stop"
+
+    def end(self, ended: CallEnding) -> None:
+        """Stop the clock. A stream that closed before its ``message_stop``
+        ended early, however cleanly its connection closed."""
+        self.finished = time.monotonic()
+        self.ended = (
+            "upstream_ended_early"
+            if ended == "complete" and self.events is not None and not self.stopped
+            else ended
+        )
+
+    def timing(self, calls: list[_ObservedCall], reason: str | None) -> CallTiming:
+        """The stored timing, with the tokens of a complete call's final usage."""
+        usage = calls[0] if len(calls) == 1 else None
+        if reason is not None or self.ended != "complete" or not usage or not usage.usage_reported:
+            usage = None
+        return CallTiming(
+            started_at=self.started_at,
+            model=self.model,
+            streamed=self.events is not None,
+            status_code=self.status,
+            headers_seconds=self._since_start(self.headers_at),
+            first_event_seconds=self._since_start(self.first_event_at),
+            longest_event_gap_seconds=self.longest_gap,
+            duration_seconds=self.finished - self.started,
+            input_tokens=usage.buckets.input_tokens if usage else None,
+            output_tokens=usage.buckets.output_tokens if usage else None,
+            ended=self.ended,
+        )
+
+    def _since_start(self, moment: float | None) -> float | None:
+        return None if moment is None else moment - self.started
+
+
+async def _cancel_reservation(
+    reservation: ModelCallReservation, job_id: str, kind: RunKind, timing: CallTiming | None
+) -> None:
+    """Release an unbilled call, still storing its timing."""
+    await reservation.cancel()
+    if timing is not None:
+        await record_call_timing(job_id=job_id, kind=kind, timing=timing)
+
+
 class _MeteredStreamResponse(Response):
     """Stream upstream bytes while holding admission through cancellation-safe metering."""
 
@@ -341,6 +445,7 @@ class _MeteredStreamResponse(Response):
         admission: _Admission,
         status_code: int,
         headers: dict[str, str],
+        clock: _CallClock | None,
     ) -> None:
         super().__init__(status_code=status_code, headers=headers)
         # Response init sizes the header for its empty body buffer, but the
@@ -352,9 +457,11 @@ class _MeteredStreamResponse(Response):
         self._decoder = decoder
         self._meter = meter
         self._admission = admission
+        self._clock = clock
 
     async def __call__(self, scope, receive, send) -> None:
         outcome = "cut"
+        ended: CallEnding = "client_disconnected"
 
         async def finish() -> None:
             with suppress(Exception):
@@ -369,13 +476,25 @@ class _MeteredStreamResponse(Response):
                     "headers": self.raw_headers,
                 }
             )
+            ended = "upstream_ended_early"
             async for chunk in self._upstream.aiter_raw():
+                if self._clock is not None:
+                    self._clock.chunk(chunk)
                 if self._decoder is not None:
                     self._decoder.feed(chunk)
+                ended = "client_disconnected"
                 await send({"type": "http.response.body", "body": chunk, "more_body": True})
+                ended = "upstream_ended_early"
+            ended = "client_disconnected"
             await send({"type": "http.response.body", "body": b"", "more_body": False})
             outcome = "end"
+            ended = "complete"
+        except asyncio.CancelledError:
+            ended = "client_disconnected"
+            raise
         finally:
+            if self._clock is not None:
+                self._clock.end(ended)
             await self._admission.owner.settle(self._admission, finish())
 
 
@@ -427,6 +546,7 @@ def create_llm_proxy_app(
             return Response("Job request admission unavailable", status_code=429)
         transferred = False
         attempted = False
+        failed_timing: CallTiming | None = None
         try:
             try:
                 body = await read_request_body(request, limit=_MAX_REQUEST_BYTES)
@@ -496,6 +616,8 @@ def create_llm_proxy_app(
                 for k, v in request.headers.items()
                 if k.lower() not in _DROP_REQUEST_HEADERS and not k.lower().startswith("x-goog-")
             }
+            # The metering decoders read the raw bytes, so ask for no compression.
+            headers["accept-encoding"] = "identity"
             path = (
                 request.scope.get("raw_path", request.url.path.encode()).decode("ascii")
                 if provider() == "bedrock"
@@ -518,17 +640,38 @@ def create_llm_proxy_app(
             )
             upstream_req = client.build_request(request.method, url, headers=headers, content=body)
             attempted = True
+            sent = time.monotonic()
+            clock = (
+                _CallClock(run.job_id, run.kind, model)
+                if model is not None and request.url.path == "/v1/messages"
+                else None
+            )
             try:
                 upstream_resp = await client.send(upstream_req, stream=True)
-            except (Exception, asyncio.CancelledError) as exc:
-                if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)):
+            except (Exception, asyncio.CancelledError) as exception:
+                if isinstance(
+                    exception, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
+                ):
                     attempted = False
                 logger.warning(
-                    "LLM proxy call ended before response headers for run %s (%s)",
+                    "LLM proxy call ended before response headers for run %s (%s) "
+                    "after %.3f s with %s: %s",
                     run.job_id,
                     run.kind,
+                    time.monotonic() - sent,
+                    type(exception).__name__,
+                    exception,
                 )
-                raise
+                cancelled = isinstance(exception, asyncio.CancelledError)
+                if clock is not None:
+                    clock.end("client_disconnected" if cancelled else "upstream_ended_early")
+                    failed_timing = clock.timing([], "no response")
+                if cancelled:
+                    raise
+                # A 5xx as an unhandled error would get, without its traceback.
+                return Response("upstream request failed", status_code=502)
+            if clock is not None:
+                clock.headers(upstream_resp)
             resp_headers = {
                 k: v
                 for k, v in upstream_resp.headers.items()
@@ -549,6 +692,7 @@ def create_llm_proxy_app(
                 provider_id=provider(),
                 status_code=upstream_resp.status_code,
                 reservation=admission.reservation,
+                clock=clock,
             )
             response = _MeteredStreamResponse(
                 upstream=upstream_resp,
@@ -557,6 +701,7 @@ def create_llm_proxy_app(
                 admission=admission,
                 status_code=upstream_resp.status_code,
                 headers=resp_headers,
+                clock=clock,
             )
             transferred = True
             return response
@@ -566,9 +711,11 @@ def create_llm_proxy_app(
                     admission.release()
                 else:
                     settlement = (
-                        admission.reservation.settle([], complete=False)
+                        admission.reservation.settle([], complete=False, timing=failed_timing)
                         if attempted
-                        else admission.reservation.cancel()
+                        else _cancel_reservation(
+                            admission.reservation, run.job_id, run.kind, failed_timing
+                        )
                     )
                     await admissions.settle(admission, settlement)
 

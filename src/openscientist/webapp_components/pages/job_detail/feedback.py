@@ -14,6 +14,7 @@ from openscientist.knowledge_state import KnowledgeState
 from openscientist.orchestrator.iteration import update_job_status
 from openscientist.webapp_components.utils import (
     guard_client,
+    in_page_client,
 )
 from openscientist.webapp_components.utils.permissions import current_job_access
 
@@ -138,6 +139,7 @@ def _render_feedback_panel(
                 placeholder="e.g., Focus on metabolic pathways, or investigate the correlation with gene X...",
             ).classes("w-full")
 
+            @in_page_client
             async def submit_feedback(
                 fi: ui.textarea = feedback_input, ci: int = completed_iter
             ) -> None:
