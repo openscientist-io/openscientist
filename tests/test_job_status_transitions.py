@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import threading
+import time
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 from openscientist import web_app
 from openscientist.database.models import Job, User
 from openscientist.job.repository import set_job_status
+from openscientist.job_container.runner import ContainerGone
 from openscientist.job_manager import (
     JobInfo,
     JobManager,
@@ -192,6 +194,66 @@ async def test_a_launch_crash_fails_the_job_and_starts_the_next_one(
     assert "docker launch failed" in (error or "")
     assert str(crasher) not in manager._running_jobs
     assert str(next_up) in manager._running_jobs
+
+
+async def test_deleting_a_job_its_worker_polls_frees_the_slot_for_the_next(
+    make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path
+) -> None:
+    """A job cancelled and deleted between two polls leaves its worker no row to
+    read, and the worker ends at its next poll rather than at the agent timeout."""
+    real_sleep = time.sleep
+    polling = threading.Event()
+    deleted_between_polls = threading.Event()
+
+    def poll_sleep(_seconds: float) -> None:
+        polling.set()
+        deleted_between_polls.wait(timeout=10)
+        real_sleep(0.01)
+
+    runner = MagicMock()
+    runner.get_exit_code.return_value = None
+    manager = await _manager(tmp_path, test_engine)
+    deleted = await make_job(JobStatus.QUEUED)
+    next_up = await make_job(JobStatus.QUEUED)
+    with (
+        patch("openscientist.job_container.runner.JobContainerRunner", return_value=runner),
+        patch("openscientist.job_manager.time.sleep", side_effect=poll_sleep),
+        patch("openscientist.job_manager.get_container_manager"),
+    ):
+        await asyncio.to_thread(manager.start_job, str(deleted))
+        assert await asyncio.to_thread(polling.wait, 10)
+        await manager.cancel_job(str(deleted))
+        await manager.delete_job(str(deleted))
+        deleted_between_polls.set()
+
+        # The worker leaves the slot before it starts the next job.
+        deadline = time.monotonic() + 2
+        while str(next_up) not in manager._running_jobs and time.monotonic() < deadline:
+            await asyncio.sleep(0.02)
+        assert str(deleted) not in manager._running_jobs
+        assert str(next_up) in manager._running_jobs
+
+        next_worker = manager._running_jobs[str(next_up)]
+        await manager.cancel_job(str(next_up))
+        await asyncio.to_thread(next_worker.join, 10)
+        assert not next_worker.is_alive()
+
+
+async def test_a_vanished_agent_container_fails_its_running_job(
+    make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path, runner: MagicMock
+) -> None:
+    """A container removed before writing an ending would leave the job running
+    with no worker, so the worker fails it the way it fails a crashed one."""
+    manager = await _manager(tmp_path, test_engine)
+    job = await make_job(JobStatus.QUEUED)
+    runner.get_exit_code.return_value = ContainerGone.GONE
+    with patch.object(manager, "_start_next_queued_job"):
+        await asyncio.to_thread(manager._run_job_in_container, str(job))
+    assert await _ending(test_engine, job) == (
+        "failed",
+        "Agent container disappeared before writing terminal status",
+    )
+    assert str(job) not in manager._running_jobs
 
 
 async def test_cancelling_a_started_queued_job_keeps_its_slot_and_stops_it(
