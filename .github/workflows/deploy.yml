@@ -25,6 +25,7 @@ jobs:
           && github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       actions: read
     outputs:
       environment: ${{ steps.target.outputs.environment }}
@@ -102,7 +103,7 @@ jobs:
           [[ "$STACK_DIR" =~ ^/[A-Za-z0-9_./-]+$ ]] || { echo "::error::STACK_DIR must be an absolute path."; exit 1; }
           [[ "$STACK_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo "::error::STACK_USER must be a user name."; exit 1; }
           [[ "$REF" =~ ^([0-9a-f]{40}|refs/tags/[A-Za-z0-9_][A-Za-z0-9_.-]*)$ ]] || { echo "::error::$REF is neither a commit nor a tag."; exit 1; }
-          deploy="cd '$STACK_DIR' && git fetch --tags --force origin && git checkout --detach '$REF' && uv run --frozen openscientist deploy '$TAG'"
+          deploy="cd '$STACK_DIR' && git fetch --tags --force origin && git checkout --detach '$REF' && uv run --locked openscientist deploy '$TAG'"
           command="sudo -u '$STACK_USER' -H bash -lc \"$deploy\""
           parameters=$(jq -cn --arg command "$command" '{commands: [$command], executionTimeout: ["1800"]}')
           id=$(aws ssm send-command --instance-ids "$INSTANCE_ID" --document-name AWS-RunShellScript \
