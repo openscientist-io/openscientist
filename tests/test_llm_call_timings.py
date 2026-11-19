@@ -231,8 +231,11 @@ async def test_a_call_without_response_headers_is_recorded_without_a_status(
         raise error
 
     async with _job(test_engine) as job:
-        with pytest.raises(type(error)):
-            await _call(_proxy(failing), placeholder_for(str(job.id)))
+        if isinstance(error, asyncio.CancelledError):
+            with pytest.raises(asyncio.CancelledError):
+                await _call(_proxy(failing), placeholder_for(str(job.id)))
+        else:
+            assert (await _call(_proxy(failing), placeholder_for(str(job.id)))).status_code == 502
         timing = await _timing(test_engine, job)
     assert (timing.status_code, timing.headers_seconds, timing.ended) == (None, None, ended)
     assert (timing.cost_record_id is not None) is charged

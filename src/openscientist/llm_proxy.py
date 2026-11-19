@@ -655,20 +655,21 @@ def create_llm_proxy_app(
                     attempted = False
                 logger.warning(
                     "LLM proxy call ended before response headers for run %s (%s) "
-                    "after %.3f s with %s",
+                    "after %.3f s with %s: %s",
                     run.job_id,
                     run.kind,
                     time.monotonic() - sent,
                     type(exception).__name__,
+                    exception,
                 )
+                cancelled = isinstance(exception, asyncio.CancelledError)
                 if clock is not None:
-                    clock.end(
-                        "client_disconnected"
-                        if isinstance(exception, asyncio.CancelledError)
-                        else "upstream_ended_early"
-                    )
+                    clock.end("client_disconnected" if cancelled else "upstream_ended_early")
                     failed_timing = clock.timing([], "no response")
-                raise
+                if cancelled:
+                    raise
+                # A 5xx as an unhandled error would get, without its traceback.
+                return Response("upstream request failed", status_code=502)
             if clock is not None:
                 clock.headers(upstream_resp)
             resp_headers = {
