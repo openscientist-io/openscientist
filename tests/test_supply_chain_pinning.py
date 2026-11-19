@@ -144,5 +144,6 @@ def test_compose_image_references_are_pinned() -> None:
 
     for name, service in compose.get("services", {}).items():
         image = service.get("image")
-        if image:
+        # Compose builds a service with a build section and gives the result this name.
+        if image and "build" not in service:
             _assert_digest(_defaulted(image, {}), f"docker-compose.yml service {name}")
