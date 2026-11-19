@@ -1281,3 +1281,56 @@ def test_each_target_variant_has_at_least_one_real_fixture(variant: type[Any]) -
         if any(isinstance(e, variant) for e in entries):
             return
     pytest.fail(f"No real Claude fixture produces a {variant.__name__} entry.")
+
+
+def test_openadmodels_mcp_tool_call_and_multipart_result_translate() -> None:
+    """Calls to mcp__openadmodels__* and JSON+PNG results preserve name and content items."""
+    messages = [
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_oam_1",
+                        "name": "mcp__openadmodels__compare_simulations",
+                        "input": {"model_id": "ad_qsp_v1", "override_sources": ["rec_42"]},
+                    }
+                ]
+            },
+        },
+        {
+            "type": "user",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_oam_1",
+                        "content": [
+                            {"type": "text", "text": '{"delta_ab42": -0.18}'},
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/png",
+                                    "data": "iVBORw0KGgo=",
+                                },
+                            },
+                        ],
+                    }
+                ]
+            },
+        },
+    ]
+    entries = CLAUDE.deserialize(messages)
+    assert len(entries) == 2
+    call, result = entries
+    assert isinstance(call, ToolCall)
+    assert call.tool == "mcp__openadmodels__compare_simulations"
+    assert call.arguments == {"model_id": "ad_qsp_v1", "override_sources": ["rec_42"]}
+    assert isinstance(result, ToolResult)
+    assert result.call_id == "toolu_oam_1"
+    assert result.success is True
+    assert result.output == '{"delta_ab42": -0.18}'
+    assert result.content_items is not None
+    assert len(result.content_items) == 2

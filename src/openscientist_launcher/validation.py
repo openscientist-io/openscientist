@@ -52,6 +52,8 @@ AGENT_ENV_ALLOWLIST: frozenset[str] = frozenset(
         "LLAMACPP_API_KEY",
         "LLAMACPP_BASE_URL",
         "OLLAMA_BASE_URL",
+        "OPENADMODELS_MCP_KEY",
+        "OPENADMODELS_MCP_URL",
         "OPENAI_API_KEY",
         "OPENSCIENTIST_AIRGAPPED",
         "OPENSCIENTIST_CODEX_TURN_TIMEOUT",

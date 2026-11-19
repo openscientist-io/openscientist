@@ -975,6 +975,55 @@ class BerkeleyLabSettings(BaseSettings):
     )
 
 
+class OpenADModelsSettings(BaseSettings):
+    """Hosted OpenADModels MCP server configuration."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    mcp_url: str | None = Field(
+        default=None,
+        alias="OPENADMODELS_MCP_URL",
+        description="Streamable HTTP endpoint URL for the hosted OpenADModels MCP server.",
+    )
+    mcp_key: str | None = Field(
+        default=None,
+        alias="OPENADMODELS_MCP_KEY",
+        description="Bearer API key for authenticating to the OpenADModels MCP server.",
+    )
+
+    @field_validator("mcp_url")
+    @classmethod
+    def validate_mcp_url(cls, v: str | None) -> str | None:
+        """Normalize empty strings to None and validate HTTP(S) URL format when set."""
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            return None
+        parts = urlsplit(v)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            raise ValueError(f"OPENADMODELS_MCP_URL must be an http:// or https:// URL, got: {v!r}")
+        return v
+
+    @field_validator("mcp_key")
+    @classmethod
+    def validate_mcp_key(cls, v: str | None) -> str | None:
+        """Normalize empty strings to None."""
+        if v is None:
+            return None
+        v = v.strip()
+        return v or None
+
+    @property
+    def is_available(self) -> bool:
+        """Return True when an OpenADModels MCP endpoint URL is configured."""
+        return bool(self.mcp_url)
+
+
 class AgentSettings(BaseSettings):
     """Agent behavior configuration."""
 
@@ -1093,6 +1142,7 @@ class Settings(BaseSettings):
     public_report: PublicReportSettings = Field(default_factory=PublicReportSettings)
     container: ContainerSettings = Field(default_factory=ContainerSettings)
     phenix: PhenixSettings = Field(default_factory=PhenixSettings)
+    openadmodels: OpenADModelsSettings = Field(default_factory=OpenADModelsSettings)
     berkeley_lab: BerkeleyLabSettings = Field(default_factory=BerkeleyLabSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
     airgap: AirgapSettings = Field(default_factory=AirgapSettings)

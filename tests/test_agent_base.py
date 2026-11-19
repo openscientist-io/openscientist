@@ -47,7 +47,11 @@ class _StubAgent(AbstractAgent[ClaudeCompatible]):
 
     @classmethod
     def discovery_system_prompt(
-        cls, *, use_hypotheses: bool = False, phenix_available: bool = False
+        cls,
+        *,
+        use_hypotheses: bool = False,
+        phenix_available: bool = False,
+        openadmodels_available: bool = False,
     ) -> str:
         return "stub discovery prompt"
 

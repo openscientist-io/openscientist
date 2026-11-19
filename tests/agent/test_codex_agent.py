@@ -9,6 +9,7 @@ thread lifecycle, usage mapping, and failure handling.
 from __future__ import annotations
 
 import asyncio
+import logging
 import tomllib
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -291,6 +292,60 @@ async def test_air_gapped_runs_turn_off_codex_web_search(
 
     cfg = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text())
     assert cfg.get("web_search") == web_search
+
+
+async def test_openadmodels_http_mcp_server_wired_in_codex_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENADMODELS_MCP_URL", "https://openadmodels.example.org/mcp")
+    monkeypatch.setenv("OPENADMODELS_MCP_KEY", "oam-codex-secret")
+    monkeypatch.setenv("OPENSCIENTIST_AIRGAPPED", "false")
+    get_settings.cache_clear()
+    try:
+        agent = _agent(tmp_path)
+        mock_codex_cls, _ = _patch_codex(_turn(usage=None))
+        with patch("openscientist.agent.codex_agent.AsyncCodex", mock_codex_cls):
+            await agent.run_iteration("go")
+    finally:
+        get_settings.cache_clear()
+
+    raw_toml = (tmp_path / ".codex" / "config.toml").read_text()
+    assert "oam-codex-secret" not in raw_toml
+    cfg = tomllib.loads(raw_toml)
+    assert cfg["mcp_servers"]["openadmodels"] == {
+        "url": "https://openadmodels.example.org/mcp",
+        "bearer_token_env_var": "OPENADMODELS_MCP_KEY",
+    }
+    config_arg = mock_codex_cls.call_args.args[0]
+    assert config_arg.env["OPENADMODELS_MCP_KEY"] == "oam-codex-secret"
+
+
+async def test_openadmodels_http_mcp_server_skipped_when_airgapped_in_codex(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENADMODELS_MCP_URL", "https://openadmodels.example.org/mcp")
+    monkeypatch.setenv("OPENADMODELS_MCP_KEY", "oam-codex-secret")
+    monkeypatch.setenv("OPENSCIENTIST_AIRGAPPED", "true")
+    get_settings.cache_clear()
+    try:
+        agent = _agent(tmp_path)
+        mock_codex_cls, _ = _patch_codex(_turn(usage=None))
+        with (
+            patch("openscientist.agent.codex_agent.AsyncCodex", mock_codex_cls),
+            caplog.at_level(logging.INFO, logger="openscientist.agent.codex_agent"),
+        ):
+            await agent.run_iteration("go")
+    finally:
+        get_settings.cache_clear()
+
+    cfg = tomllib.loads((tmp_path / ".codex" / "config.toml").read_text())
+    assert "openadmodels" not in cfg["mcp_servers"]
+    config_arg = mock_codex_cls.call_args.args[0]
+    assert "OPENADMODELS_MCP_KEY" not in config_arg.env
+    oam_logs = [r for r in caplog.records if "OpenADModels" in r.getMessage()]
+    assert len(oam_logs) == 1
 
 
 async def test_the_run_home_env_names_the_launcher_mount(

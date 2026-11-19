@@ -74,6 +74,8 @@ def _fill_every_setting(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None
     monkeypatch.setenv("OPENSCIENTIST_CODEX_TURN_TIMEOUT", "1800")
     monkeypatch.setenv("OPENSCIENTIST_HOST_PROJECT_DIR", str(tmp_path / "project"))
     monkeypatch.setenv("PHENIX_HOST_PATH", str(tmp_path / "phenix"))
+    monkeypatch.setenv("OPENADMODELS_MCP_URL", "https://openadmodels.example.test/mcp")
+    monkeypatch.setenv("OPENADMODELS_MCP_KEY", "filled-openadmodels-key")
 
 
 def _launch_env(
@@ -390,3 +392,29 @@ def test_allowlist_keeps_only_keys_the_web_sends(
                 sent |= set(result)
     missing = sorted(AGENT_ENV_ALLOWLIST - sent)
     assert missing == [], f"allow-list keys the web never sends: {missing}"
+
+
+def test_openadmodels_env_forwarded_only_when_online(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """OPENADMODELS_MCP_URL/KEY reach the container when online and are withheld when air-gapped."""
+    online = _launch_env(
+        monkeypatch,
+        tmp_path,
+        provider_id="anthropic",
+        airgapped=False,
+    )
+    assert isinstance(online, dict)
+    assert online["OPENADMODELS_MCP_URL"] == "https://openadmodels.example.test/mcp"
+    assert online["OPENADMODELS_MCP_KEY"] == "filled-openadmodels-key"
+
+    airgapped = _launch_env(
+        monkeypatch,
+        tmp_path,
+        provider_id="anthropic",
+        airgapped=True,
+    )
+    assert isinstance(airgapped, dict)
+    assert "OPENADMODELS_MCP_URL" not in airgapped
+    assert "OPENADMODELS_MCP_KEY" not in airgapped
