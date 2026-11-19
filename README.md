@@ -4,7 +4,7 @@ An autonomous AI scientist that generates and tests hypotheses from scientific d
 
 - **Live site:** [www.openscientist.io](https://www.openscientist.io)
 - **Documentation:** [docs.openscientist.io](https://docs.openscientist.io)
-- **Paper:** [medRxiv preprint](https://www.medrxiv.org/content/10.64898/2026.03.15.26348338v1)
+- **Paper:** [Nature Medicine](https://www.nature.com/articles/s41591-026-04808-6)
 
 ## Quick start
 
