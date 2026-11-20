@@ -46,6 +46,11 @@ class BudgetExceededError(OpenScientistError, ValueError):
     create-job refusal."""
 
 
+class IterationLimitError(OpenScientistError, ValueError):
+    """Raised when a job asks for more iterations than the admin cap allows. A
+    ValueError, so the API returns it like any other create-job refusal."""
+
+
 # ── Provider errors ───────────────────────────────────────────────────
 
 

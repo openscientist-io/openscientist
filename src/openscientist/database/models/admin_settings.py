@@ -44,6 +44,7 @@ class AdminSettings(Base):
                 "agent_timeout_seconds",
                 "executor_timeout_seconds",
                 "max_file_size_mb",
+                "max_iterations",
                 "scheduler_window_hours",
             )
         ],
@@ -69,6 +70,7 @@ class AdminSettings(Base):
     executor_timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
     max_file_size_mb: Mapped[int] = mapped_column(Integer, nullable=False)
     max_concurrent_jobs: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_iterations: Mapped[int] = mapped_column(Integer, nullable=False)
     scheduler_window_hours: Mapped[float] = mapped_column(Float, nullable=False)
     airgapped: Mapped[bool] = mapped_column(Boolean, nullable=False)
     session_duration_days: Mapped[int] = mapped_column(Integer, nullable=False)

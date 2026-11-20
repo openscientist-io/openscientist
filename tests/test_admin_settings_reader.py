@@ -36,6 +36,7 @@ _ROW = {
     "executor_timeout_seconds": 120,
     "max_file_size_mb": 1000,
     "max_concurrent_jobs": 0,
+    "max_iterations": 7,
     "scheduler_window_hours": 24.0,
     "session_duration_days": 30,
 }
@@ -45,13 +46,13 @@ _INSERT = """
         max_job_cost_usd, max_project_spend_month_usd, max_project_spend_24h_usd,
         warn_project_spend_24h_usd, agent_cpu, executor_cpu, agent_memory_mib,
         executor_memory_mib, agent_timeout_seconds, executor_timeout_seconds,
-        max_file_size_mb, max_concurrent_jobs, scheduler_window_hours,
+        max_file_size_mb, max_concurrent_jobs, max_iterations, scheduler_window_hours,
         airgapped, session_duration_days, updated_at, updated_by
     ) VALUES (
         :max_job_cost_usd, :max_project_spend_month_usd, :max_project_spend_24h_usd,
         :warn_project_spend_24h_usd, :agent_cpu, :executor_cpu, :agent_memory_mib,
         :executor_memory_mib, :agent_timeout_seconds, :executor_timeout_seconds,
-        :max_file_size_mb, :max_concurrent_jobs, :scheduler_window_hours,
+        :max_file_size_mb, :max_concurrent_jobs, :max_iterations, :scheduler_window_hours,
         :airgapped, :session_duration_days, :updated_at, :updated_by
     )
 """
@@ -111,6 +112,7 @@ async def test_the_reader_returns_the_row(
             executor_timeout_seconds=120,
             max_file_size_mb=1000,
             max_concurrent_jobs=0,
+            max_iterations=7,
             scheduler_window_hours=24.0,
             airgapped=False,
             airgap_locked=False,

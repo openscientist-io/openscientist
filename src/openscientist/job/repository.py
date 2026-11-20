@@ -246,6 +246,22 @@ async def delete_job(job_id: str, user_id: UUID | None = None) -> None:
             await session.commit()
 
 
+async def cap_job_iterations(job_id: str, cap: int) -> int | None:
+    """Lower the job's iterations to ``cap`` when it asks for more.
+
+    Returns the count the job asked for when it was lowered, else None."""
+    async with _job_session(None) as session:
+        job = await session.get(JobModel, UUID(job_id))
+        if job is None or job.max_iterations <= cap:
+            return None
+        asked = job.max_iterations
+        await session.execute(
+            update(JobModel).where(JobModel.id == job.id).values(max_iterations=cap)
+        )
+        await session.commit()
+    return asked
+
+
 async def set_queue_reason(job_id: str, reason: str | None) -> str | None:
     """Write ``reason`` as the reason a queued job waits on, None clearing it.
 

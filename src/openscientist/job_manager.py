@@ -34,11 +34,12 @@ from openscientist.database.retry import (
     retry_sync,
 )
 from openscientist.database.session import thread_safe_admin_session
-from openscientist.exceptions import BudgetExceededError, ProviderError
+from openscientist.exceptions import BudgetExceededError, IterationLimitError, ProviderError
 from openscientist.job.agent_error import take_agent_error
 from openscientist.job.repository import (
     any_queued_job_held,
     backfill_job_end_time,
+    cap_job_iterations,
     create_job_row,
     delete_job,
     get_job,
@@ -294,6 +295,11 @@ class JobManager:
         """
         if await self.get_job(job_id) is not None:
             raise ValueError(f"Job {job_id} already exists")
+        cap = (await current_admin_settings()).max_iterations
+        if max_iterations > cap:
+            raise IterationLimitError(
+                f"A job may run at most {cap} iterations, and this one asks for {max_iterations}."
+            )
 
         settings = get_settings()
         llm_provider = settings.provider.provider_id.lower()
@@ -437,6 +443,14 @@ class JobManager:
                 logger.info("Job %s stopped waiting to start, so it is not launched", job_id)
                 return
             launched = True
+            if run_mode == "discovery":
+                # The container reads the job's iterations once, so a lowered cap applies here.
+                cap = current_admin_settings_sync().max_iterations
+                asked = run_sync(cap_job_iterations(job_id, cap))
+                if asked is not None:
+                    logger.info(
+                        "Job %s asked for %d iterations and runs the cap of %d", job_id, asked, cap
+                    )
             take_agent_error(job_dir)  # an earlier run's, which this run must not report
             runner.launch(job_id, job_dir, run_mode=run_mode)
             logger.info("Agent container launched for job %s (mode=%s)", job_id, run_mode)

@@ -1421,6 +1421,80 @@ class TestJobEndpoints:
         assert job_manager.create_job.called is allowed
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("cap", "asked", "status_code", "stored"),
+        [(3, None, 201, 3), (30, 25, 201, 25), (3, 3, 201, 3), (3, 4, 400, None)],
+    )
+    async def test_create_job_honours_the_rows_iteration_cap(
+        self,
+        test_engine: AsyncEngine,
+        tmp_path: Path,
+        cap: int,
+        asked: int | None,
+        status_code: int,
+        stored: int | None,
+    ):
+        """The admin row's cap bounds the iterations a request may ask for, and
+        a request that names none asks for the lesser of 5 and the cap."""
+        from fastapi import FastAPI
+
+        from openscientist.api.auth import get_current_user_from_api_key
+        from openscientist.api.router import api_router as router
+        from openscientist.database.session import get_session
+        from openscientist.job_manager import JobManager
+
+        await set_admin_settings_row(test_engine, max_iterations=cap)
+        async with AsyncSession(test_engine, expire_on_commit=False) as setup:
+            user = User(email=f"capped-{uuid.uuid4().hex}@example.com", name="Capped")
+            user.is_approved = True
+            setup.add(user)
+            await setup.commit()
+
+        async def app_session():
+            async with AsyncSession(test_engine, expire_on_commit=False) as session:
+                await use_app_role(session)
+                yield session
+
+        async def current_user():
+            return user
+
+        app = FastAPI()
+        app.dependency_overrides[get_session] = app_session
+        app.dependency_overrides[get_current_user_from_api_key] = current_user
+        app.include_router(router)
+        manager = JobManager(jobs_dir=tmp_path)
+        body: dict[str, object] = {"research_question": "How many iterations?"}
+        if asked is not None:
+            body["max_iterations"] = asked
+        try:
+            with (
+                patch("openscientist.api.endpoints.jobs._get_job_manager", return_value=manager),
+                patch.object(manager, "_run_job"),
+            ):
+                async with AsyncClient(
+                    transport=ASGITransport(app=app), base_url="http://test"
+                ) as client:
+                    response = await client.post("/api/v1/jobs", json=body)
+            async with AsyncSession(test_engine) as check:
+                rows = (
+                    await check.scalars(select(Job.max_iterations).where(Job.owner_id == user.id))
+                ).all()
+        finally:
+            async with AsyncSession(test_engine) as cleanup:
+                await cleanup.execute(delete(Job).where(Job.owner_id == user.id))
+                await cleanup.execute(delete(User).where(User.id == user.id))
+                await cleanup.commit()
+            await reset_admin_settings_row(test_engine)
+
+        assert response.status_code == status_code, response.text
+        if stored is None:
+            assert rows == []
+            assert f"at most {cap} iterations" in response.json()["detail"]
+        else:
+            assert rows == [stored]
+            assert response.json()["max_iterations"] == stored
+
+    @pytest.mark.asyncio
     async def test_filter_jobs_by_status(
         self,
         db_session: AsyncSession,

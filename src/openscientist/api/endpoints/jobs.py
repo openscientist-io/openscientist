@@ -73,11 +73,13 @@ class JobCreate(BaseModel):
         description="Research question for the analysis",
         examples=["What are the key binding sites in this protein structure?"],
     )
-    max_iterations: int = Field(
-        5,
+    max_iterations: int | None = Field(
+        None,
         ge=1,
-        le=20,
-        description="Maximum number of analysis iterations",
+        description=(
+            "Maximum number of analysis iterations, at most the admin cap. "
+            "Omitted, the lesser of 5 and the cap."
+        ),
     )
     use_hypotheses: bool = Field(
         False,
@@ -466,19 +468,19 @@ async def create_job(
     job_manager = _get_job_manager()
     try:
         with tempfile.TemporaryDirectory(prefix="openscientist_api_upload_") as upload_tmp:
-            max_file_size_bytes = (
-                (await current_admin_settings()).max_file_size_mb * 1024 * 1024
-                if upload_files
-                else 0
-            )
+            admin = await current_admin_settings()
             data_files = await _persist_uploaded_files(
-                upload_files, Path(upload_tmp), max_file_size_bytes
+                upload_files, Path(upload_tmp), admin.max_file_size_mb * 1024 * 1024
             )
             await job_manager.create_job(
                 job_id=str(job_uuid),
                 research_question=job_data.research_question,
                 data_files=data_files,
-                max_iterations=job_data.max_iterations,
+                max_iterations=(
+                    min(5, admin.max_iterations)
+                    if job_data.max_iterations is None
+                    else job_data.max_iterations
+                ),
                 use_hypotheses=job_data.use_hypotheses,
                 auto_start=True,
                 investigation_mode=job_data.investigation_mode,

@@ -16,13 +16,15 @@ from tests.db_logins import ADMIN_PASSWORD, WEB_PASSWORD, login_url
 
 _ROLE_PASSWORD = "admin-settings-role-test-password"
 
-_SETTINGS_VALUES = "0.5, 0.5, 1024, 1024, 60, 60, 100, 1, 24.0, false, 30, NULL, NULL, NULL, NULL"
+_SETTINGS_VALUES = (
+    "0.5, 0.5, 1024, 1024, 60, 60, 100, 1, 20, 24.0, false, 30, NULL, NULL, NULL, NULL"
+)
 
 _FULL_SETTINGS_INSERT = (
     "INSERT INTO admin_settings (agent_cpu, executor_cpu, agent_memory_mib, "
     "executor_memory_mib, agent_timeout_seconds, executor_timeout_seconds, "
-    "max_file_size_mb, max_concurrent_jobs, scheduler_window_hours, airgapped, "
-    "session_duration_days, max_job_cost_usd, max_project_spend_month_usd, "
+    "max_file_size_mb, max_concurrent_jobs, max_iterations, scheduler_window_hours, "
+    "airgapped, session_duration_days, max_job_cost_usd, max_project_spend_month_usd, "
     "max_project_spend_24h_usd, warn_project_spend_24h_usd) VALUES (" + _SETTINGS_VALUES + ")"
 )
 

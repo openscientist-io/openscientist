@@ -280,3 +280,54 @@ async def test_the_page_shows_the_rows_file_size_limit(
         assert sum(isinstance(element, ui.textarea) for element in client.elements.values()) == 1
     finally:
         await reset_admin_settings_row(test_engine)
+
+
+async def test_the_form_refuses_more_iterations_than_the_rows_cap(
+    test_engine: AsyncEngine,
+    database: Forwarder,
+    signed_in_job_user: tuple[User, str],
+    signed_in_page: OpenPage,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    script_page_between_requests: None,
+) -> None:
+    """The iterations box stops at the admin row's cap, and a value over it is
+    refused with the cap named instead of creating a job."""
+    from openscientist import web_app
+    from openscientist.job_manager import JobManager
+    from openscientist.webapp_components.pages import new_job
+
+    user, token = signed_in_job_user
+    manager = JobManager(jobs_dir=tmp_path)
+    monkeypatch.setattr(manager, "_run_job", lambda job_id, run_mode="discovery": None)
+    monkeypatch.setattr(web_app, "get_job_manager", lambda: manager)
+    monkeypatch.setattr(new_job, "check_provider_config", lambda: (True, "Mock", None))
+    await set_admin_settings_row(test_engine, max_iterations=4)
+    try:
+        client = await signed_in_page(token, new_job.new_job_page)
+        iterations = next(e for e in client.elements.values() if isinstance(e, ui.number))
+        assert iterations.props["max"] == 4
+        assert iterations.value == 4
+
+        question = next(e for e in client.elements.values() if isinstance(e, ui.textarea))
+        question.value = "Why do corals bleach when the water warms?"
+        iterations.value = 9
+        switches = [e for e in client.elements.values() if isinstance(e, ui.switch)]
+        with client, patch.object(ui, "notify") as notify:
+            await _submit_job(
+                job_manager=manager,
+                session_id=f"{user.id}:cap-test",
+                research_question=question,
+                max_iterations=iterations,
+                use_hypotheses=switches[0],
+                coinvestigate_mode=switches[1],
+            )
+    finally:
+        await reset_admin_settings_row(test_engine)
+
+    assert (
+        notify.call_args.args[0] == "A job may run at most 4 iterations, and this one asks for 9."
+    )
+    assert notify.call_args.kwargs["type"] == "negative"
+    async with AsyncSession(test_engine) as db:
+        assert (await db.execute(select(Job).where(Job.owner_id == user.id))).first() is None

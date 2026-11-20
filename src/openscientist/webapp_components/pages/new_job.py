@@ -11,7 +11,7 @@ from nicegui.events import GenericEventArguments, UploadEventArguments
 
 from openscientist.admin_settings import current_admin_settings
 from openscientist.auth import can_current_user_start_jobs, get_current_user_id, require_auth
-from openscientist.exceptions import BudgetExceededError
+from openscientist.exceptions import BudgetExceededError, IterationLimitError
 from openscientist.providers import check_provider_config
 from openscientist.upload_limits import MAX_UPLOAD_FILES_PER_REQUEST
 from openscientist.webapp_components.components.banners import (
@@ -108,8 +108,8 @@ async def _submit_job(
         ui.notify(f"Job {job_id} created and started!", type="positive")
         clear_uploaded_files(session_id)
         ui.navigate.to(f"/job/{job_id}")
-    except BudgetExceededError as exc:
-        logger.warning("Job creation refused by a budget limit: %s", exc)
+    except (BudgetExceededError, IterationLimitError) as exc:
+        logger.warning("Job creation refused by an admin limit: %s", exc)
         ui.notify(str(exc), type="negative")
     except Exception as exc:
         logger.error("Error creating job: %s", exc, exc_info=True)
@@ -212,7 +212,9 @@ async def new_job_page() -> None:
     client.on_disconnect(lambda: clear_uploaded_files(session_id))
 
     is_configured, provider_name, config_errors = check_provider_config()
-    max_file_size_mb = (await current_admin_settings()).max_file_size_mb
+    admin = await current_admin_settings()
+    max_file_size_mb = admin.max_file_size_mb
+    iteration_cap = admin.max_iterations
     render_navigator(active_page="new", show_new_job=is_configured)
 
     if not user_can_start_jobs:
@@ -253,10 +255,15 @@ async def new_job_page() -> None:
             max_iterations = (
                 ui.number(
                     label="Max Iterations",
-                    value=10,
-                    min=2,
-                    max=100,
+                    value=min(10, iteration_cap),
+                    min=min(2, iteration_cap),
+                    max=iteration_cap,
                     step=1,
+                    validation={
+                        f"At most {iteration_cap}": lambda value: (
+                            value is None or value <= iteration_cap
+                        )
+                    },
                 )
                 .classes("w-28")
                 .props("outlined dense")

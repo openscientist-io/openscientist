@@ -11,7 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from openscientist.auth.routes import create_session
 from openscientist.container_manager import ContainerManager
 from openscientist.database.models import Job, User
-from openscientist.exceptions import FileTooBigError
+from openscientist.exceptions import FileTooBigError, IterationLimitError
 from openscientist.file_loader import validate_uploaded_file
 from openscientist.job_container.db_login import AgentLogin
 from openscientist.job_container.runner import JobContainerRunner
@@ -375,3 +375,35 @@ async def test_a_budget_check_honours_the_rows_limits(
         verdict = await check_budget(provider_id="stub")
         assert verdict.ok is True
         assert verdict.limit is None
+
+
+@pytest.mark.asyncio
+async def test_a_job_over_the_rows_iteration_cap_is_refused(
+    test_engine: AsyncEngine, admin_row: None, tmp_path: Path
+) -> None:
+    """A lowered cap refuses the next job asking for more, with the cap named,
+    and leaves no job behind."""
+    manager = JobManager(jobs_dir=tmp_path)
+    job_id = str(uuid4())
+    await set_admin_settings_row(test_engine, max_iterations=3)
+    try:
+        with pytest.raises(IterationLimitError, match="at most 3 iterations"):
+            await manager.create_job(
+                job_id=job_id,
+                research_question="How far can it go?",
+                data_files=[],
+                max_iterations=4,
+                auto_start=False,
+            )
+        assert await manager.get_job(job_id) is None
+        created = await manager.create_job(
+            job_id=job_id,
+            research_question="How far can it go?",
+            data_files=[],
+            max_iterations=3,
+            auto_start=False,
+        )
+        assert created.max_iterations == 3
+    finally:
+        async with test_engine.begin() as conn:
+            await conn.execute(delete(Job).where(Job.id == UUID(job_id)))

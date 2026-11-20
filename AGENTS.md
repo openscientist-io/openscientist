@@ -187,6 +187,7 @@ When you need a new UI pattern used in multiple places:
 | `OPENSCIENTIST_MODEL`  | No       | Model id for the selected provider. |
 | `ANTHROPIC_API_KEY`    | Depends  | Required if using Anthropic         |
 | `OPENSCIENTIST_MAX_CONCURRENT_JOBS` | No | Max concurrent jobs (default: 1)    |
+| `OPENSCIENTIST_MAX_ITERATIONS` | No | Most iterations a job may ask for, seeding the admin setting on first start (default: 20) |
 | `OPENSCIENTIST_DEV_MODE`      | No       | Enable dev mode (mock OAuth, etc.)  |
 
 ## Related Documentation

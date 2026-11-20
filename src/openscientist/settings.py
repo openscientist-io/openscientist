@@ -1058,6 +1058,14 @@ class Settings(BaseSettings):
         alias="OPENSCIENTIST_MAX_CONCURRENT_JOBS",
         description="Max jobs running at the same time.",
     )
+    max_iterations: int = Field(
+        default=20,
+        ge=1,
+        alias="OPENSCIENTIST_MAX_ITERATIONS",
+        description=(
+            "Most iterations a job may ask for. A waiting job that asks for more runs this many."
+        ),
+    )
     max_concurrent_chats: int = Field(
         default=4,
         ge=1,

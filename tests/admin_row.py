@@ -31,6 +31,7 @@ _DEFAULTS: dict[str, object] = {
     "executor_timeout_seconds": 120,
     "max_file_size_mb": 1000,
     "max_concurrent_jobs": 1,
+    "max_iterations": 20,
     "scheduler_window_hours": 24.0,
     "airgapped": False,
     "session_duration_days": 30,
@@ -41,13 +42,13 @@ _INSERT = """
         max_job_cost_usd, max_project_spend_month_usd, max_project_spend_24h_usd,
         warn_project_spend_24h_usd, agent_cpu, executor_cpu, agent_memory_mib,
         executor_memory_mib, agent_timeout_seconds, executor_timeout_seconds,
-        max_file_size_mb, max_concurrent_jobs, scheduler_window_hours,
+        max_file_size_mb, max_concurrent_jobs, max_iterations, scheduler_window_hours,
         airgapped, session_duration_days, updated_at, updated_by
     ) VALUES (
         :max_job_cost_usd, :max_project_spend_month_usd, :max_project_spend_24h_usd,
         :warn_project_spend_24h_usd, :agent_cpu, :executor_cpu, :agent_memory_mib,
         :executor_memory_mib, :agent_timeout_seconds, :executor_timeout_seconds,
-        :max_file_size_mb, :max_concurrent_jobs, :scheduler_window_hours,
+        :max_file_size_mb, :max_concurrent_jobs, :max_iterations, :scheduler_window_hours,
         :airgapped, :session_duration_days, :updated_at, :updated_by
     )
 """
@@ -84,6 +85,7 @@ _BASE_VALUES = AdminSettingsValues(
     executor_timeout_seconds=120,
     max_file_size_mb=1000,
     max_concurrent_jobs=1,
+    max_iterations=20,
     scheduler_window_hours=24.0,
     airgapped=False,
     airgap_locked=False,
