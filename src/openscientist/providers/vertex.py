@@ -96,6 +96,8 @@ def adc_signing_for(credentials_path: str) -> "GoogleAdcSigning":
 class VertexProvider(ClaudeCompatible):
     """Google Cloud Vertex AI provider."""
 
+    streams_tool_input = True
+
     @property
     def id(self) -> str:
         return "vertex"

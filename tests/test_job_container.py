@@ -38,6 +38,7 @@ from openscientist.job_container.run_home import create_run_home
 from openscientist.job_container.runner import (
     _STOP_GRACE_SECONDS,
     AGENT_APP_DIR,
+    ContainerGone,
     JobContainerRunner,
 )
 from openscientist.job_container.secrets import (
@@ -694,15 +695,20 @@ class TestJobContainerRunner:
         finally:
             launcher._http.close()
 
-    def test_get_exit_code_returns_none_when_container_disappears(self):
-        """Exit-code polling treats a vanished container as a benign miss."""
+    def test_get_exit_code_reports_a_container_removed_before_its_inspect(self):
         runner, client = _runner_with_client()
         client.list_containers.return_value = [_listed_entry({})]
         client.inspect.side_effect = LauncherNotFoundError("not_found", "gone")
         with patch("openscientist.job_container.runner.logger.warning") as mock_warning:
             exit_code = runner.get_exit_code("job-123")
-        assert exit_code is None
+        assert exit_code is ContainerGone.GONE
         mock_warning.assert_not_called()
+
+    def test_get_exit_code_reports_a_container_the_launcher_does_not_list(self):
+        runner, client = _runner_with_client()
+        client.list_containers.return_value = []
+        assert runner.get_exit_code("job-123") is ContainerGone.GONE
+        client.inspect.assert_not_called()
 
 
 class TestPhenixMount:

@@ -257,6 +257,14 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
             env=self._build_subprocess_env(),
             cwd=str(job_dir),
         )
+        cli_env: dict[str, str] = {}
+        if self._config.chat:
+            cli_env["CLAUDE_CODE_DISABLE_ATTACHMENTS"] = "1"
+        # A buffered tool argument arrives only once the model has finished
+        # it, so one long Write sends nothing for minutes and the CLI's idle
+        # watchdog aborts the call.
+        if self._provider.streams_tool_input:
+            cli_env["CLAUDE_CODE_ENABLE_FINE_GRAINED_TOOL_STREAMING"] = "1"
 
         return ClaudeAgentOptions(
             system_prompt=self._config.system_prompt,
@@ -264,7 +272,7 @@ class ClaudeCodeAgent(AbstractAgent[ClaudeCompatible]):
             disallowed_tools=["WebSearch", "WebFetch"] if get_settings().airgap.enabled else [],
             setting_sources=[] if self._config.chat else None,
             skills=[] if self._config.chat else None,
-            env={"CLAUDE_CODE_DISABLE_ATTACHMENTS": "1"} if self._config.chat else {},
+            env=cli_env,
             mcp_servers={
                 "openscientist-tools": cast(McpStdioServerConfig, spec.to_sdk_config()),
             },

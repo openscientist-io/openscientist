@@ -19,9 +19,7 @@ logger = logging.getLogger(__name__)
 OPENSCIENTIST_GITHUB_URL = "https://github.com/openscientist-io/openscientist"
 OPENSCIENTIST_DOCS_URL = "https://docs.openscientist.io"
 OPENSCIENTIST_RELEASE_URL = "https://github.com/openscientist-io/openscientist/releases/latest"
-OPENSCIENTIST_PAPER_URL: str | None = (
-    "https://www.medrxiv.org/content/10.64898/2026.03.15.26348338v1"
-)
+OPENSCIENTIST_PAPER_URL: str | None = "https://www.nature.com/articles/s41591-026-04808-6"
 
 
 def get_project_resource_links() -> list[tuple[str, str]]:
