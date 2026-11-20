@@ -29,6 +29,7 @@ import logging
 import os
 import time
 from collections.abc import Mapping
+from enum import Enum
 from pathlib import Path
 
 from openscientist.admin_settings import AdminSettingsValues, current_admin_settings_sync
@@ -87,6 +88,13 @@ _LOOKUP_RETRY_DELAYS = (1.0, 2.0)
 _AGENT_RUN_KINDS: tuple[RunKind, ...] = ("discovery", "report")
 
 AGENT_APP_DIR = "/agent"
+
+
+class ContainerGone(Enum):
+    """The answer of :meth:`JobContainerRunner.get_exit_code` when the launcher
+    has no agent container for the job."""
+
+    GONE = "gone"
 
 
 class JobContainerRunner:
@@ -514,11 +522,12 @@ class JobContainerRunner:
             if entry["labels"].get(AGENT_LOGIN_LABEL) not in held:
                 self._tear_down(entry)
 
-    def get_exit_code(self, job_id: str) -> int | None:
+    def get_exit_code(self, job_id: str) -> int | ContainerGone | None:
         """
-        Return the exit code of the agent container if it has stopped, else None.
+        Return the exit code of the agent container if it has stopped,
+        :attr:`ContainerGone.GONE` if the launcher has none for the job, else None.
 
-        Returns None if the container is still running or cannot be found.
+        Returns None if the container is still running or the launcher cannot be asked.
         """
         try:
             entry = self._find_container(job_id)
@@ -526,11 +535,11 @@ class JobContainerRunner:
             logger.warning("Failed to find container for job %s: %s", job_id, error)
             return None
         if entry is None:
-            return None
+            return ContainerGone.GONE
         try:
             result = self.client.inspect(entry["id"])
         except LauncherNotFoundError:
-            return None
+            return ContainerGone.GONE
         except LauncherStorageError:
             raise
         except LauncherError as error:

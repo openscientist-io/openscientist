@@ -420,7 +420,7 @@ class JobManager:
         ``run_mode`` is "discovery" for the full loop or "report_only" to
         re-run just the report-generation phase against the persisted findings.
         """
-        from openscientist.job_container.runner import JobContainerRunner
+        from openscientist.job_container.runner import ContainerGone, JobContainerRunner
 
         poll_interval = 5
         terminal_statuses = {"completed", "failed", "cancelled"}
@@ -451,10 +451,13 @@ class JobManager:
                 elapsed += poll_interval
                 try:
                     job_info = self._load_job_info(job_id)
-                    if job_info and job_info.status != last_status:
+                    if job_info is None:
+                        logger.info("Job %s was deleted, so its worker ends", job_id)
+                        return
+                    if job_info.status != last_status:
                         last_status = job_info.status
                         self._notify_container_transition(job_info)
-                    if job_info and job_info.status.value in terminal_statuses:
+                    if job_info.status.value in terminal_statuses:
                         # The container's ending write carries no time, so this
                         # first observation stamps it before the job leaves the slot.
                         run_sync(backfill_job_end_time(job_id))
@@ -469,28 +472,25 @@ class JobManager:
                         raise
                     logger.warning("DB poll failed for job %s: %s", job_id, poll_err)
 
-                # If the container has exited but the DB still shows running,
-                # the agent crashed before writing a terminal status — fail fast.
+                # If the container has exited or vanished but the DB still shows
+                # running, the agent crashed before writing a terminal status, so fail fast.
                 exit_code = runner.get_exit_code(job_id)
-                if exit_code is not None and exit_code != 0:
-                    logger.error(
-                        (
-                            "Agent container for job %s exited with code %d before "
-                            "writing terminal status"
-                        ),
-                        job_id,
-                        exit_code,
-                    )
-                    exited = f"Agent container exited with code {exit_code}"
-                    agent_error = take_agent_error(job_dir)
-                    self._update_job_status(
-                        job_id,
-                        JobStatus.FAILED,
-                        allowed_from=self.STARTED_STATUSES,
-                        error_message=f"{exited}: {agent_error}" if agent_error else exited,
-                        retry=True,
-                    )
-                    return
+                if exit_code is ContainerGone.GONE:
+                    ended = "Agent container disappeared before writing terminal status"
+                elif exit_code is not None and exit_code != 0:
+                    ended = f"Agent container exited with code {exit_code}"
+                else:
+                    continue
+                logger.error("Job %s failed: %s", job_id, ended)
+                agent_error = take_agent_error(job_dir)
+                self._update_job_status(
+                    job_id,
+                    JobStatus.FAILED,
+                    allowed_from=self.STARTED_STATUSES,
+                    error_message=f"{ended}: {agent_error}" if agent_error else ended,
+                    retry=True,
+                )
+                return
 
             logger.error("Container job %s timed out after %.1f hours", job_id, timeout_hours)
             self._update_job_status(
