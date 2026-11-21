@@ -5,7 +5,7 @@ seeds. From then on the startup seed supplies the value, as for every other
 column of the row.
 
 Revision ID: max_iterations_cap
-Revises: llm_call_timings
+Revises: user_feedback
 Create Date: 2026-11-20 12:00:00
 """
 
@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "max_iterations_cap"
-down_revision: str | None = "llm_call_timings"
+down_revision: str | None = "user_feedback"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
