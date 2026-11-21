@@ -6,7 +6,7 @@ the report step fails with. Both writers of a job's status set the phase, so
 both roles may update it.
 
 Revision ID: job_failed_phase
-Revises: monthly_project_spend
+Revises: llm_call_timings
 Create Date: 2026-11-18 12:00:00
 """
 
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "job_failed_phase"
-down_revision: str | None = "monthly_project_spend"
+down_revision: str | None = "llm_call_timings"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
