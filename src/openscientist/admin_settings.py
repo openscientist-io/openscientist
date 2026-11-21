@@ -34,6 +34,7 @@ class AdminSettingsValues:
     executor_timeout_seconds: int
     max_file_size_mb: int
     max_concurrent_jobs: int
+    max_iterations: int
     scheduler_window_hours: float
     airgapped: bool
     airgap_locked: bool
@@ -71,6 +72,7 @@ async def seed_admin_settings() -> None:
         "executor_timeout_seconds": settings.container.executor_timeout,
         "max_file_size_mb": settings.file.max_file_size_mb,
         "max_concurrent_jobs": settings.max_concurrent_jobs,
+        "max_iterations": settings.max_iterations,
         "scheduler_window_hours": settings.scheduler_window_hours,
         "airgapped": settings.airgap.enabled,
         "session_duration_days": settings.auth.session_duration_days,
@@ -84,15 +86,15 @@ async def seed_admin_settings() -> None:
                     max_project_spend_24h_usd, warn_project_spend_24h_usd,
                     agent_cpu, executor_cpu, agent_memory_mib, executor_memory_mib,
                     agent_timeout_seconds, executor_timeout_seconds,
-                    max_file_size_mb, max_concurrent_jobs, scheduler_window_hours,
-                    airgapped, session_duration_days
+                    max_file_size_mb, max_concurrent_jobs, max_iterations,
+                    scheduler_window_hours, airgapped, session_duration_days
                 ) VALUES (
                     :max_job_cost_usd, :max_project_spend_month_usd,
                     :max_project_spend_24h_usd, :warn_project_spend_24h_usd,
                     :agent_cpu, :executor_cpu, :agent_memory_mib, :executor_memory_mib,
                     :agent_timeout_seconds, :executor_timeout_seconds,
-                    :max_file_size_mb, :max_concurrent_jobs, :scheduler_window_hours,
-                    :airgapped, :session_duration_days
+                    :max_file_size_mb, :max_concurrent_jobs, :max_iterations,
+                    :scheduler_window_hours, :airgapped, :session_duration_days
                 )
                 ON CONFLICT DO NOTHING
                 """
@@ -132,6 +134,7 @@ async def current_admin_settings() -> AdminSettingsValues:
             executor_timeout_seconds=row.executor_timeout_seconds,
             max_file_size_mb=row.max_file_size_mb,
             max_concurrent_jobs=row.max_concurrent_jobs,
+            max_iterations=row.max_iterations,
             scheduler_window_hours=row.scheduler_window_hours,
             airgapped=row.airgapped or floor,
             airgap_locked=floor,

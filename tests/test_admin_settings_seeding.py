@@ -23,6 +23,7 @@ def seeded_env(monkeypatch: pytest.MonkeyPatch) -> Generator[None, None, None]:
     monkeypatch.setenv("OPENSCIENTIST_AGENT_MEMORY", "8g")
     monkeypatch.setenv("OPENSCIENTIST_EXECUTOR_MEMORY", "512m")
     monkeypatch.setenv("OPENSCIENTIST_AIRGAPPED", "true")
+    monkeypatch.setenv("OPENSCIENTIST_MAX_ITERATIONS", "12")
     clear_settings_cache()
     yield
     clear_settings_cache()
@@ -56,6 +57,7 @@ async def test_seeding_writes_null_budgets_and_mib(
         assert row["agent_memory_mib"] == 8192
         assert row["executor_memory_mib"] == 512
         assert row["airgapped"] is True
+        assert row["max_iterations"] == 12
     finally:
         await reset_admin_settings_row(test_engine)
 

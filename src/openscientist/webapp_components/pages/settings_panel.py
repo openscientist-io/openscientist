@@ -58,6 +58,7 @@ _FIELDS: tuple[tuple[str, str, str, str, str], ...] = (
     ("executor_timeout_seconds", "Executor timeout", "seconds", "above 0", "int"),
     ("max_file_size_mb", "Max file size, per file and per request", "MB", "above 0", "int"),
     ("max_concurrent_jobs", "Max concurrent jobs", "", "0 or more, 0 pauses new starts", "int"),
+    ("max_iterations", "Max iterations per job", "", "1 or more", "int"),
     ("scheduler_window_hours", "Scheduler window", "hours", "above 0", "float"),
     ("session_duration_days", "Session length", "days", "1 or more", "int"),
 )
@@ -78,6 +79,7 @@ _FIELD_ICONS: dict[str, str] = {
     "executor_timeout_seconds": "fa-solid fa-hourglass-half",
     "max_file_size_mb": "fa-solid fa-file-arrow-up",
     "max_concurrent_jobs": "fa-solid fa-layer-group",
+    "max_iterations": "fa-solid fa-repeat",
     "scheduler_window_hours": "fa-solid fa-clock",
     "session_duration_days": "fa-solid fa-user-clock",
     "airgapped": "fa-solid fa-plug-circle-xmark",
@@ -115,7 +117,7 @@ _GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "executor_timeout_seconds",
         ),
     ),
-    ("Scheduling", ("max_concurrent_jobs", "scheduler_window_hours")),
+    ("Scheduling", ("max_concurrent_jobs", "max_iterations", "scheduler_window_hours")),
     ("Files and session", ("max_file_size_mb", "session_duration_days")),
 )
 
@@ -134,6 +136,7 @@ _DESCRIPTION_SOURCES: dict[str, tuple[type[BaseSettings], str]] = {
     "executor_timeout_seconds": (ContainerSettings, "executor_timeout"),
     "max_file_size_mb": (FileSettings, "max_file_size_mb"),
     "max_concurrent_jobs": (Settings, "max_concurrent_jobs"),
+    "max_iterations": (Settings, "max_iterations"),
     "scheduler_window_hours": (Settings, "scheduler_window_hours"),
     "session_duration_days": (AuthSettings, "session_duration_days"),
     "airgapped": (AirgapSettings, "enabled"),

@@ -34,6 +34,7 @@ _ADMIN_SETTINGS_COLUMNS = {
     "executor_timeout_seconds",
     "max_file_size_mb",
     "max_concurrent_jobs",
+    "max_iterations",
     "scheduler_window_hours",
     "airgapped",
     "session_duration_days",
@@ -56,6 +57,7 @@ _VALID_ROW: dict[str, object] = {
     "executor_timeout_seconds": 1,
     "max_file_size_mb": 1,
     "max_concurrent_jobs": 0,
+    "max_iterations": 1,
     "scheduler_window_hours": 1e-9,
     "airgapped": False,
     "session_duration_days": 1,
@@ -66,13 +68,13 @@ _INSERT = """
         max_job_cost_usd, max_project_spend_month_usd, max_project_spend_24h_usd,
         warn_project_spend_24h_usd, agent_cpu, executor_cpu, agent_memory_mib,
         executor_memory_mib, agent_timeout_seconds, executor_timeout_seconds,
-        max_file_size_mb, max_concurrent_jobs, scheduler_window_hours,
+        max_file_size_mb, max_concurrent_jobs, max_iterations, scheduler_window_hours,
         airgapped, session_duration_days
     ) VALUES (
         :max_job_cost_usd, :max_project_spend_month_usd, :max_project_spend_24h_usd,
         :warn_project_spend_24h_usd, :agent_cpu, :executor_cpu, :agent_memory_mib,
         :executor_memory_mib, :agent_timeout_seconds, :executor_timeout_seconds,
-        :max_file_size_mb, :max_concurrent_jobs, :scheduler_window_hours,
+        :max_file_size_mb, :max_concurrent_jobs, :max_iterations, :scheduler_window_hours,
         :airgapped, :session_duration_days
     )
 """
@@ -113,18 +115,21 @@ async def test_downgrade_drops_both_tables_and_upgrade_creates_them(
 ) -> None:
     module = _migration()
     monthly = _migration(_MIGRATION.with_name("2026-11-16_1200_monthly_project_spend.py"))
+    cap = _migration(_MIGRATION.with_name("2026-11-20_1200_max_iterations_cap.py"))
 
     def run(connection: Connection) -> None:
         # DDL is transactional in Postgres, so rolling back keeps the shared schema.
         transaction = connection.begin()
         try:
             with Operations.context(MigrationContext.configure(connection)):
+                cap.downgrade()
                 monthly.downgrade()
                 module.downgrade()
                 assert _table_columns(connection, "admin_settings") is None
                 assert _table_columns(connection, "admin_setting_changes") is None
                 module.upgrade()
                 monthly.upgrade()
+                cap.upgrade()
                 assert _table_columns(connection, "admin_settings") == _ADMIN_SETTINGS_COLUMNS
                 assert _table_columns(connection, "admin_setting_changes") == _CHANGE_COLUMNS
         finally:
@@ -132,6 +137,33 @@ async def test_downgrade_drops_both_tables_and_upgrade_creates_them(
 
     async with test_engine.connect() as conn:
         await conn.run_sync(run)
+
+
+@pytest.mark.asyncio
+async def test_the_cap_migration_gives_an_existing_row_20_iterations(
+    test_engine: AsyncEngine,
+) -> None:
+    """A deployment's row predates the cap, so the migration fills it with the
+    default a fresh install seeds, and the check refuses a cap under 1."""
+    cap = _migration(_MIGRATION.with_name("2026-11-20_1200_max_iterations_cap.py"))
+
+    def run(connection: Connection) -> None:
+        transaction = connection.begin()
+        try:
+            _insert_row(connection)
+            with Operations.context(MigrationContext.configure(connection)):
+                cap.downgrade()
+                assert "max_iterations" not in (_table_columns(connection, "admin_settings") or ())
+                cap.upgrade()
+            assert connection.scalar(text("SELECT max_iterations FROM admin_settings")) == 20
+            with pytest.raises(IntegrityError, match="ck_admin_settings_max_iterations"):
+                with connection.begin_nested():
+                    connection.execute(text("UPDATE admin_settings SET max_iterations = 0"))
+        finally:
+            transaction.rollback()
+
+    async with test_engine.connect() as connection:
+        await connection.run_sync(run)
 
 
 @pytest.mark.asyncio
@@ -213,6 +245,7 @@ async def test_the_bounds_accept_their_edges(test_engine: AsyncEngine) -> None:
         ("executor_timeout_seconds", 0),
         ("max_file_size_mb", 0),
         ("max_concurrent_jobs", -1),
+        ("max_iterations", 0),
         ("scheduler_window_hours", 0.0),
         ("session_duration_days", 0),
     ],

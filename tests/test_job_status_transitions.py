@@ -256,6 +256,52 @@ async def test_a_vanished_agent_container_fails_its_running_job(
     assert str(job) not in manager._running_jobs
 
 
+@pytest.mark.parametrize(
+    ("status", "run_mode", "asked", "runs"),
+    [
+        (JobStatus.QUEUED, "discovery", 8, 3),
+        (JobStatus.PENDING, "discovery", 8, 3),
+        (JobStatus.QUEUED, "discovery", 2, 2),
+        (JobStatus.COMPLETED, "report_only", 8, 8),
+    ],
+)
+async def test_a_waiting_job_over_a_lowered_cap_starts_at_the_cap(
+    make_job: MakeJob,
+    test_engine: AsyncEngine,
+    tmp_path: Path,
+    runner: MagicMock,
+    status: JobStatus,
+    run_mode: str,
+    asked: int,
+    runs: int,
+) -> None:
+    """The container reads the job's iterations once, at launch, so the web
+    lowers a waiting job to the cap before it launches. A report regeneration
+    runs no iteration and keeps the count the job ran with."""
+    from openscientist.async_tasks import run_sync
+    from openscientist.job.repository import get_job
+
+    manager = await _manager(tmp_path, test_engine)
+    await set_admin_settings_row(test_engine, max_iterations=3)
+    job = await make_job(status)
+    async with test_engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE jobs SET max_iterations = :asked WHERE id = :id"),
+            {"asked": asked, "id": job},
+        )
+    launched_with: list[int] = []
+
+    def launch(job_id: str, job_dir: Path, **_: object) -> None:
+        row = run_sync(get_job(job_id))
+        assert row is not None
+        launched_with.append(row.max_iterations)
+
+    runner.launch.side_effect = launch
+    with patch.object(manager, "_start_next_queued_job"):
+        await asyncio.to_thread(manager._run_job_in_container, str(job), run_mode=run_mode)
+    assert launched_with == [runs]
+
+
 async def test_cancelling_a_started_queued_job_keeps_its_slot_and_stops_it(
     make_job: MakeJob, test_engine: AsyncEngine, tmp_path: Path, runner: MagicMock
 ) -> None:

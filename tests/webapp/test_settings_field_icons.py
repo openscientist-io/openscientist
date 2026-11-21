@@ -41,6 +41,7 @@ _EXPECTED_ICONS: dict[str, str] = {
     "executor_timeout_seconds": "fa-solid fa-hourglass-half",
     "max_file_size_mb": "fa-solid fa-file-arrow-up",
     "max_concurrent_jobs": "fa-solid fa-layer-group",
+    "max_iterations": "fa-solid fa-repeat",
     "scheduler_window_hours": "fa-solid fa-clock",
     "session_duration_days": "fa-solid fa-user-clock",
     "airgapped": "fa-solid fa-plug-circle-xmark",
