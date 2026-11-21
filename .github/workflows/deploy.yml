@@ -1,0 +1,138 @@
+name: Deploy
+
+# Staging runs each main commit once its images are pushed. Production runs a
+# release once its images carry the release tag, or an earlier release again
+# when started by hand. The deploy itself is `openscientist deploy` on the
+# instance, reached through SSM with a role GitHub OIDC assumes.
+on:
+  workflow_run:
+    workflows: [Images]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to run in production, such as v1.2.3
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  target:
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event.workflow_run.conclusion == 'success'
+          && github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      environment: ${{ steps.target.outputs.environment }}
+      tag: ${{ steps.target.outputs.tag }}
+      ref: ${{ steps.target.outputs.ref }}
+    steps:
+      # A main commit deploys only when its Images run built it, since CI
+      # failing still completes that run with its jobs skipped. That run's own
+      # commit is the tip of main when it started, so the commit it built comes
+      # from its name.
+      - id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_TITLE: ${{ github.event.workflow_run.display_title }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          tag_pattern='^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$'
+          if [ "$EVENT" = workflow_dispatch ]; then
+            environment=production tag="$INPUT_TAG" ref="refs/tags/$INPUT_TAG"
+          elif [ "$RUN_EVENT" = release ]; then
+            environment=production tag="$HEAD_BRANCH" ref="$HEAD_SHA"
+          elif [ "$RUN_EVENT" = workflow_run ] && [ "$HEAD_BRANCH" = main ]; then
+            built=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/jobs" --jq '.jobs[] | select(.name == "build") | .conclusion')
+            if [ "$built" != success ]; then
+              echo "Images run $RUN_ID built nothing, so there is nothing to deploy."
+              exit 0
+            fi
+            commit="${RUN_TITLE#Images }"
+            if ! [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::Images run $RUN_ID is named '$RUN_TITLE', which names no commit."
+              exit 1
+            fi
+            environment=staging tag="sha-$commit" ref="$commit"
+          else
+            echo "Images run $RUN_ID was not for main or a release."
+            exit 0
+          fi
+          if ! [[ "$tag" =~ $tag_pattern ]]; then
+            echo "::error::$tag is not a Docker image tag."
+            exit 1
+          fi
+          {
+            echo "environment=$environment"
+            echo "tag=$tag"
+            echo "ref=$ref"
+          } >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: target
+    if: needs.target.outputs.environment != ''
+    runs-on: ubuntu-latest
+    environment: ${{ needs.target.outputs.environment }}
+    # One deploy per stack at a time, and a running one always finishes.
+    concurrency:
+      group: deploy-${{ needs.target.outputs.environment }}
+      cancel-in-progress: false
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TAG: ${{ needs.target.outputs.tag }}
+      REF: ${{ needs.target.outputs.ref }}
+      INSTANCE_ID: ${{ vars.INSTANCE_ID }}
+      STACK_DIR: ${{ vars.STACK_DIR }}
+      STACK_USER: ${{ vars.STACK_USER }}
+    steps:
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd  # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # The instance runs the script with sh as root, so every value in it is
+      # checked to need no quoting, then the stack user checks out the commit
+      # the images were built from and deploys them.
+      - name: Deploy ${{ needs.target.outputs.tag }}
+        run: |
+          [[ "$STACK_DIR" =~ ^/[A-Za-z0-9_./-]+$ ]] || { echo "::error::STACK_DIR must be an absolute path."; exit 1; }
+          [[ "$STACK_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo "::error::STACK_USER must be a user name."; exit 1; }
+          [[ "$REF" =~ ^([0-9a-f]{40}|refs/tags/[A-Za-z0-9_][A-Za-z0-9_.-]*)$ ]] || { echo "::error::$REF is neither a commit nor a tag."; exit 1; }
+          deploy="cd '$STACK_DIR' && git fetch --tags --force origin && git checkout --detach '$REF' && uv run --locked openscientist deploy '$TAG'"
+          command="sudo -u '$STACK_USER' -H bash -lc \"$deploy\""
+          parameters=$(jq -cn --arg command "$command" '{commands: [$command], executionTimeout: ["1800"]}')
+          # A command not started within 60 seconds never runs, so none can
+          # start after this job has given up and freed the concurrency group.
+          id=$(aws ssm send-command --instance-ids "$INSTANCE_ID" --document-name AWS-RunShellScript \
+            --timeout-seconds 60 --comment "openscientist deploy $TAG" --parameters "$parameters" \
+            --query Command.CommandId --output text)
+          echo "SSM command $id"
+          # 380 polls of at least 5 seconds outlast its 60 seconds to start and 1800 to run.
+          for _ in $(seq 380); do
+            sleep 5
+            status=$(aws ssm get-command-invocation --command-id "$id" --instance-id "$INSTANCE_ID" \
+              --query Status --output text 2> /dev/null || echo Pending)
+            case "$status" in
+              Pending | InProgress | Delayed | Cancelling) ;;
+              *) break ;;
+            esac
+          done
+          aws ssm get-command-invocation --command-id "$id" --instance-id "$INSTANCE_ID" \
+            --query '[StandardOutputContent, StandardErrorContent]' --output text || true
+          if [ "$status" != Success ]; then
+            echo "::error::The deploy of $TAG ended as $status."
+            exit 1
+          fi
