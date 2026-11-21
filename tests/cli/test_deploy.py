@@ -192,6 +192,60 @@ def test_a_failed_deploy_starts_the_previous_images_again(
     assert ups == 2
 
 
+def test_a_rollback_after_the_new_images_migrated_still_starts_the_previous_images(
+    configured: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The previous web image does not know a revision the new one applied, so
+    its `migrate` fails and compose then never starts the web service."""
+    healthy = iter([False, True])
+    monkeypatch.setattr(
+        stack, "wait_for_health", lambda url, timeout=300.0, interval=3.0: next(healthy)
+    )
+    migrated = False
+    previous_started = False
+
+    def docker(argv: tuple[str, ...], env: Mapping[str, str]) -> int:
+        nonlocal migrated, previous_started
+        if argv[4:5] != ("up",) or stack.WEB_SERVICE not in argv:
+            return 0
+        new_images = bool(_env(configured).get("OPENSCIENTIST_WEB_IMAGE"))
+        if "--no-deps" not in argv:
+            if new_images:
+                migrated = True
+            elif migrated:
+                return 1
+        previous_started = not new_images
+        return 0
+
+    assert stack.deploy(configured, TAG, docker) == 1
+
+    assert migrated
+    assert previous_started
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_deploy_keeps_its_dumps_readable_only_by_the_stack_user(
+    configured: Path, monkeypatch: pytest.MonkeyPatch, existing: bool
+) -> None:
+    monkeypatch.setattr(stack, "wait_for_health", lambda url, timeout=300.0, interval=3.0: True)
+    backups = configured / "backups"
+    if existing:
+        backups.mkdir(mode=0o755)
+    dumps: list[Path] = []
+
+    def docker(argv: tuple[str, ...], env: Mapping[str, str]) -> int:
+        if argv[4:5] == ("cp",):
+            dumps.append(Path(argv[-1]))
+            dumps[-1].write_bytes(b"dump")
+            dumps[-1].chmod(0o644)
+        return 0
+
+    assert stack.deploy(configured, TAG, docker) == 0
+
+    assert backups.stat().st_mode & 0o777 == 0o700
+    assert [dump.stat().st_mode & 0o777 for dump in dumps] == [0o600]
+
+
 @pytest.mark.parametrize("tag", ["", "latest\nPORT=1", "a b", "-flag", "x" * 129])
 def test_deploy_refuses_a_tag_docker_would_not_accept(configured: Path, tag: str) -> None:
     docker = Docker()

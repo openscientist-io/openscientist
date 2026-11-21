@@ -17,6 +17,7 @@ from openscientist.cli import envfiles
 
 COMPOSE_FILE = "docker-compose.yml"
 WEB_SERVICE = "openscientist"
+LAUNCHER_SERVICE = "launcher"
 BUILD_PLATFORM = "linux/amd64"
 HEALTH_TIMEOUT = 300.0
 
@@ -231,8 +232,10 @@ def deploy(
     .env names the pulled images and their digests before the database dump,
     because compose reads no file without the digests, and gets its previous
     values back when the dump fails. A stack that does not start or turn
-    healthy is started again on the images it ran before, and the deploy still
-    fails. A migration that already ran stays, and the dump is what restores it."""
+    healthy is started again on the images it ran before, without `migrate`,
+    which on the previous web image fails on a revision the new one applied.
+    The deploy still fails. A migration that already ran stays, and the dump
+    is what restores it."""
     if not _DOCKER_TAG.fullmatch(tag):
         console.print(f"[red]{tag!r} is not a Docker image tag.[/red]")
         return 2
@@ -261,7 +264,7 @@ def deploy(
         return 0
     console.print("[red]The deploy failed. Starting the previous images again.[/red]")
     _restore(root, previous)
-    if _start_pulled(root, run, health_timeout):
+    if _start_pulled(root, run, health_timeout, rollback=True):
         console.print("[red]The previous images did not come back either.[/red]")
     return 1
 
@@ -281,56 +284,58 @@ def dump_database(root: Path, run: CommandRunner, tag: str) -> int:
     user = values.get("POSTGRES_USER") or "openscientist"
     database = values.get("POSTGRES_DB") or "openscientist"
     backups = root / BACKUPS_DIR
-    backups.mkdir(exist_ok=True)
+    backups.mkdir(mode=0o700, exist_ok=True)
+    backups.chmod(0o700)
     target = backups / f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{tag}.dump"
     compose = ("docker", "compose", "-f", COMPOSE_FILE)
     env = envfiles.docker_env(root)
-    for argv in (
-        (*compose, "up", "-d", "--wait", "postgres"),
-        (
-            *compose,
-            "exec",
-            "-T",
-            "postgres",
-            "pg_dump",
-            "-U",
-            user,
-            "-d",
-            database,
-            "-Fc",
-            "-f",
-            _DUMP_IN_CONTAINER,
-        ),
-        (*compose, "cp", f"postgres:{_DUMP_IN_CONTAINER}", str(target)),
-        (*compose, "exec", "-T", "postgres", "rm", "-f", _DUMP_IN_CONTAINER),
-    ):
-        code = run(argv, env)
-        if code:
-            return code
+    try:
+        for argv in (
+            (*compose, "up", "-d", "--wait", "postgres"),
+            (
+                *compose,
+                "exec",
+                "-T",
+                "postgres",
+                "pg_dump",
+                "-U",
+                user,
+                "-d",
+                database,
+                "-Fc",
+                "-f",
+                _DUMP_IN_CONTAINER,
+            ),
+            (*compose, "cp", f"postgres:{_DUMP_IN_CONTAINER}", str(target)),
+            (*compose, "exec", "-T", "postgres", "rm", "-f", _DUMP_IN_CONTAINER),
+        ):
+            code = run(argv, env)
+            if code:
+                return code
+    finally:
+        # docker cp keeps the container's mode, and a dump holds every user's data.
+        if target.exists():
+            target.chmod(0o600)
     for old in sorted(backups.glob("*.dump"), reverse=True)[BACKUPS_KEPT:]:
         old.unlink()
     return 0
 
 
-def _start_pulled(root: Path, run: CommandRunner, health_timeout: float) -> int:
-    """Start the stack on the images and digests .env names, without building; 0 once healthy."""
+def _start_pulled(
+    root: Path, run: CommandRunner, health_timeout: float, *, rollback: bool = False
+) -> int:
+    """Start the stack on the images and digests .env names, without building; 0 once healthy.
+
+    A rollback starts the launcher and web service alone, leaving the schema as it is."""
     values = envfiles.file_values(root, "env")
     code = prepare_jobs_dir(root, run, image_tag(values, "OPENSCIENTIST_BASE_IMAGE"))
     if code:
         console.print(f"[red]Preparing the jobs directory failed (exit {code}).[/red]")
         return code
+    services = ("--no-deps", LAUNCHER_SERVICE, WEB_SERVICE) if rollback else (WEB_SERVICE,)
     code = run(
-        (
-            "docker",
-            "compose",
-            "-f",
-            COMPOSE_FILE,
-            "up",
-            "-d",
-            "--remove-orphans",
-            "--no-build",
-            WEB_SERVICE,
-        ),
+        ("docker", "compose", "-f", COMPOSE_FILE, "up", "-d", "--remove-orphans", "--no-build")
+        + services,
         envfiles.docker_env(root),
     )
     if code:
