@@ -112,6 +112,15 @@ def _render_mobile_drawer(
         ).props("flat color=white align=left").classes("w-full justify-start")
 
 
+_C_BRAIN_CREDIT = (
+    '<span class="c-brain-credit" style="color:#ffffff;font-size:10px;font-weight:700;'
+    'letter-spacing:0.05em;line-height:16px;white-space:nowrap;">'
+    '<span style="font-weight:400;opacity:0.85">by</span> '
+    '<span style="background:#ffffff;color:#000000;border-radius:3px;padding:0 4px">'
+    'C-BR<span style="color:#aa0010">AI</span>N</span></span>'
+)
+
+
 def _render_navigation_brand() -> None:
     """Render OpenScientist brand/link in header left section."""
     with (
@@ -124,7 +133,9 @@ def _render_navigation_brand() -> None:
             ui.image("/assets/logo.svg").classes("w-8 h-8").style(
                 "width:32px;height:32px;min-width:32px;min-height:32px;"
             )
-        ui.label("OpenScientist").classes("text-white text-h5 font-bold")
+        with ui.column().classes("gap-0 items-start"):
+            ui.label("OpenScientist").classes("text-white text-h5 font-bold leading-tight")
+            ui.html(_C_BRAIN_CREDIT)
 
 
 def _render_desktop_navigation(
