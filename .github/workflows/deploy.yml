@@ -33,7 +33,9 @@ jobs:
       ref: ${{ steps.target.outputs.ref }}
     steps:
       # A main commit deploys only when its Images run built it, since CI
-      # failing still completes that run with its jobs skipped.
+      # failing still completes that run with its jobs skipped. That run's own
+      # commit is the tip of main when it started, so the commit it built comes
+      # from its name.
       - id: target
         env:
           GH_TOKEN: ${{ github.token }}
@@ -42,6 +44,7 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
           HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_TITLE: ${{ github.event.workflow_run.display_title }}
           INPUT_TAG: ${{ inputs.tag }}
         run: |
           tag_pattern='^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$'
@@ -55,7 +58,12 @@ jobs:
               echo "Images run $RUN_ID built nothing, so there is nothing to deploy."
               exit 0
             fi
-            environment=staging tag="sha-$HEAD_SHA" ref="$HEAD_SHA"
+            commit="${RUN_TITLE#Images }"
+            if ! [[ "$commit" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::Images run $RUN_ID is named '$RUN_TITLE', which names no commit."
+              exit 1
+            fi
+            environment=staging tag="sha-$commit" ref="$commit"
           else
             echo "Images run $RUN_ID was not for main or a release."
             exit 0
@@ -106,11 +114,13 @@ jobs:
           deploy="cd '$STACK_DIR' && git fetch --tags --force origin && git checkout --detach '$REF' && uv run --locked openscientist deploy '$TAG'"
           command="sudo -u '$STACK_USER' -H bash -lc \"$deploy\""
           parameters=$(jq -cn --arg command "$command" '{commands: [$command], executionTimeout: ["1800"]}')
+          # A command not started within 60 seconds never runs, so none can
+          # start after this job has given up and freed the concurrency group.
           id=$(aws ssm send-command --instance-ids "$INSTANCE_ID" --document-name AWS-RunShellScript \
-            --comment "openscientist deploy $TAG" --parameters "$parameters" \
+            --timeout-seconds 60 --comment "openscientist deploy $TAG" --parameters "$parameters" \
             --query Command.CommandId --output text)
           echo "SSM command $id"
-          # 380 polls of at least 5 seconds outlast the command's 1800-second limit.
+          # 380 polls of at least 5 seconds outlast its 60 seconds to start and 1800 to run.
           for _ in $(seq 380); do
             sleep 5
             status=$(aws ssm get-command-invocation --command-id "$id" --instance-id "$INSTANCE_ID" \
