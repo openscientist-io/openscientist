@@ -9,7 +9,6 @@ app role, so they do not depend on the page calling the right helper.
 from __future__ import annotations
 
 import asyncio
-import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from uuid import UUID, uuid4
@@ -24,6 +23,7 @@ from openscientist.admin.administrators import grant_admin, revoke_admin
 from openscientist.database.models import Administrator, User
 from openscientist.database.session import thread_safe_user_session
 from tests.db_outage import Forwarder
+from tests.helpers import advisory_lock_waiter
 
 
 @dataclass(frozen=True)
@@ -152,20 +152,6 @@ async def test_postgres_refuses_a_removal_from_a_user_who_is_not_an_admin(
     assert set(await _admins(test_engine, cast)) == {cast.alice, cast.bob}
 
 
-async def _wait_for_blocked_backend(test_engine: AsyncEngine, deadline_seconds: float) -> None:
-    """Return once some backend waits on an advisory lock, or fail at the deadline."""
-    deadline = time.monotonic() + deadline_seconds
-    while time.monotonic() < deadline:
-        async with AsyncSession(test_engine) as db:
-            waiting = await db.scalar(
-                text("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted")
-            )
-        if waiting:
-            return
-        await asyncio.sleep(0.05)
-    pytest.fail("the second removal never waited for the first")
-
-
 @pytest.mark.asyncio
 async def test_two_admins_removing_each_other_at_once_leave_one_admin(
     cast: _Cast, test_engine: AsyncEngine
@@ -175,8 +161,30 @@ async def test_two_admins_removing_each_other_at_once_leave_one_admin(
             text("DELETE FROM administrators WHERE user_id = :user_id"), {"user_id": cast.bob}
         )
         bob_removes_alice = asyncio.create_task(_delete(cast.bob, cast.alice))
-        await _wait_for_blocked_backend(test_engine, deadline_seconds=10)
+        await advisory_lock_waiter(test_engine, deadline_seconds=10)
         await alice_session.commit()
     with pytest.raises(DBAPIError, match="only admins can change admin rights"):
         await asyncio.wait_for(bob_removes_alice, timeout=10)
     assert set(await _admins(test_engine, cast)) == {cast.alice}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("grant", [True, False], ids=["grant", "revoke"])
+async def test_an_admin_removed_while_changing_admin_rights_changes_nothing(
+    cast: _Cast, test_engine: AsyncEngine, grant: bool
+) -> None:
+    async with thread_safe_user_session(cast.bob) as bob_session:
+        await bob_session.execute(
+            text("DELETE FROM administrators WHERE user_id = :user_id"), {"user_id": cast.alice}
+        )
+        change = (
+            grant_admin(cast.alice, cast.carol) if grant else revoke_admin(cast.alice, cast.bob)
+        )
+        alice_changes = asyncio.create_task(change)
+        await advisory_lock_waiter(test_engine, deadline_seconds=10)
+        await bob_session.commit()
+    assert await asyncio.wait_for(alice_changes, timeout=10) == (
+        False,
+        "Only admins can change admin rights",
+    )
+    assert set(await _admins(test_engine, cast)) == {cast.bob}

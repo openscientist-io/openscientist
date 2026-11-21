@@ -14,10 +14,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.database.models import Administrator
-from openscientist.database.models.administrator import (
-    NOT_AN_ADMIN_SQLSTATE,
-    SELF_REMOVAL_SQLSTATE,
-)
+from openscientist.database.models.administrator import NOT_AN_ADMIN_SQLSTATE
 from openscientist.database.session import thread_safe_user_session
 
 _NOT_AN_ADMIN = "Only admins can change admin rights"
@@ -81,8 +78,6 @@ async def revoke_admin(actor_id: UUID, user_id: UUID) -> tuple[bool, str]:
         except DBAPIError as error:
             if _sqlstate(error) == NOT_AN_ADMIN_SQLSTATE:
                 return False, _NOT_AN_ADMIN
-            if _sqlstate(error) == SELF_REMOVAL_SQLSTATE:
-                return False, _SELF_REMOVAL
             raise
         await session.commit()
     if revoked is None:

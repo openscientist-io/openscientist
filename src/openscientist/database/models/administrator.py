@@ -16,8 +16,6 @@ if TYPE_CHECKING:
 
 #: The SQLSTATE a write to ``administrators`` raises when its session's user is not an admin.
 NOT_AN_ADMIN_SQLSTATE = "OSA01"
-#: The SQLSTATE a session raises when it deletes its own user's ``administrators`` row.
-SELF_REMOVAL_SQLSTATE = "OSA02"
 
 
 class Administrator(Base):

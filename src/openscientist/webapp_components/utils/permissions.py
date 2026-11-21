@@ -42,9 +42,23 @@ async def admin_access() -> AdminAccess | None:
     gets None."""
     if await revalidate_admin_session():
         return AdminAccess()
+    _refuse_stale_admin()
+    return None
+
+
+async def admin_user_id() -> UUID | None:
+    """The caller's user id while their session still exists and still belongs
+    to an admin. Otherwise the caller is told to refresh the page and gets None."""
+    user_info = await revalidate_session()
+    if user_info is not None and user_info["is_admin"]:
+        return UUID(user_info["user_id"])
+    _refuse_stale_admin()
+    return None
+
+
+def _refuse_stale_admin() -> None:
     logger.warning("Admin action refused for a session without current admin rights")
     ui.notify("Your admin session is no longer valid. Please refresh the page.", type="warning")
-    return None
 
 
 @dataclass(frozen=True)

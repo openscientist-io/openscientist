@@ -5,7 +5,9 @@ These are separated from conftest.py so they can be imported without
 mypy resolution issues.
 """
 
+import asyncio
 import os
+import time
 import tracemalloc
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
@@ -13,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.providers.base import ClaudeCompatible, CodexCompatible, CostInfo
 
@@ -95,6 +97,24 @@ async def enable_rls(session: AsyncSession) -> None:
     that created fixture data. Switches from openscientist_admin to openscientist_app.
     """
     await session.execute(text("SET ROLE openscientist_app"))
+
+
+async def advisory_lock_waiter(engine: AsyncEngine, deadline_seconds: float) -> int:
+    """The pid of a backend waiting on an advisory lock, polled until one waits.
+
+    Raises:
+        AssertionError: No backend waited within ``deadline_seconds``.
+    """
+    deadline = time.monotonic() + deadline_seconds
+    while time.monotonic() < deadline:
+        async with AsyncSession(engine) as db:
+            pid = await db.scalar(
+                text("SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND NOT granted LIMIT 1")
+            )
+        if pid is not None:
+            return int(pid)
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"no backend waited on an advisory lock within {deadline_seconds} s")
 
 
 def fake_admin_session(session_obj: Any) -> Any:

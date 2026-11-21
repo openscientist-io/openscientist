@@ -41,7 +41,7 @@ from openscientist.webapp_components.pages.billing import render_billing_panel
 from openscientist.webapp_components.pages.feedback_panel import render_feedback_panel
 from openscientist.webapp_components.pages.settings_panel import render_settings_panel
 from openscientist.webapp_components.utils import in_page_client, session_checked_timer
-from openscientist.webapp_components.utils.permissions import admin_access, revalidate_session
+from openscientist.webapp_components.utils.permissions import admin_access, admin_user_id
 
 if TYPE_CHECKING:
     from openscientist.webapp_components.utils.container_dashboard import (
@@ -732,8 +732,9 @@ def _render_admin_users_table(
             )
 
         def open_admin_rights_dialog(e: Any, grant: bool) -> None:
-            user_id = e.args.get("id")
-            if not user_id:
+            try:
+                user_id = UUID(e.args.get("id"))
+            except (TypeError, ValueError):
                 ui.notify("Invalid user selection", color="negative")
                 return
             _open_admin_rights_dialog(
@@ -754,7 +755,7 @@ def _render_admin_users_table(
 
 def _open_admin_rights_dialog(
     *,
-    user_id: str,
+    user_id: UUID,
     user_name: str,
     grant: bool,
     on_changed: Callable[[], Awaitable[None]],
@@ -785,25 +786,19 @@ def _open_admin_rights_dialog(
 
 @in_page_client
 async def _confirm_admin_rights(
-    user_id: str,
+    user_id: UUID,
     *,
     grant: bool,
     dialog: ui.dialog,
     on_changed: Callable[[], Awaitable[None]],
 ) -> None:
     """Grant or remove admin rights on the caller's own session, which Postgres checks."""
-    if await admin_access() is None:
-        return
-    actor = await revalidate_session()
-    if actor is None:
+    actor_id = await admin_user_id()
+    if actor_id is None:
         return
     try:
-        target = UUID(user_id)
         change = grant_admin if grant else revoke_admin
-        success, message = await change(UUID(actor["user_id"]), target)
-    except ValueError:
-        ui.notify("Invalid user selection", color="negative")
-        return
+        success, message = await change(actor_id, user_id)
     except Exception as ex:
         logger.error("Error changing admin rights of user %s: %s", user_id, ex, exc_info=True)
         ui.notify("Failed to change admin rights. Check server logs.", color="negative")

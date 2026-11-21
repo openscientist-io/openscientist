@@ -13,12 +13,13 @@ import pytest_asyncio
 from nicegui import ui
 from nicegui.testing import User as SimulatedBrowser
 from nicegui.testing import user_simulation
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.database.models import Administrator, Session, User
 from openscientist.webapp_components.pages.admin import render_users_panel
 from tests.db_outage import Forwarder
+from tests.helpers import advisory_lock_waiter
 
 
 @dataclass(frozen=True)
@@ -110,3 +111,60 @@ async def test_an_admin_removes_another_admins_rights_after_confirming(
         await browser.should_see(kind=ui.table, retries=50)
         assert _row(browser, staff.bob)["is_admin"] is False
     assert await _granter(test_engine, staff.bob) == []
+
+
+@pytest.mark.asyncio
+async def test_an_admin_who_lost_admin_rights_before_confirming_changes_nothing(
+    staff: _Staff, test_engine: AsyncEngine
+) -> None:
+    async with user_simulation(root=render_users_panel) as browser:
+        browser.http_client.cookies.set("session_token", staff.token)
+        await browser.open("/")
+        await browser.should_see(kind=ui.table, retries=50)
+        browser.find(ui.table).trigger("grant-admin", {"id": str(staff.carol), "name": "Carol"})
+        await browser.should_see('Make "Carol" an admin?')
+        async with AsyncSession(test_engine) as db:
+            await db.execute(delete(Administrator).where(Administrator.user_id == staff.admin))
+            await db.commit()
+        browser.find(kind=ui.button, content="Make admin").click()
+        await browser.should_see(
+            "Your admin session is no longer valid. Please refresh the page.", retries=50
+        )
+    assert await _granter(test_engine, staff.carol) == []
+
+
+@pytest.mark.asyncio
+async def test_an_event_naming_no_valid_user_opens_no_dialog(staff: _Staff) -> None:
+    async with user_simulation(root=render_users_panel) as browser:
+        browser.http_client.cookies.set("session_token", staff.token)
+        await browser.open("/")
+        await browser.should_see(kind=ui.table, retries=50)
+        browser.find(ui.table).trigger("grant-admin", {"id": "not-a-user", "name": "Nobody"})
+        await browser.should_see("Invalid user selection")
+        await browser.should_not_see('Make "Nobody" an admin?')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event", "subject", "confirm"),
+    [("grant-admin", "carol", "Make admin"), ("revoke-admin", "bob", "Remove admin")],
+    ids=["grant", "revoke"],
+)
+async def test_a_connection_lost_during_the_change_is_reported_and_changes_nothing(
+    staff: _Staff, test_engine: AsyncEngine, event: str, subject: str, confirm: str
+) -> None:
+    user_id: UUID = getattr(staff, subject)
+    before = await _granter(test_engine, user_id)
+    async with user_simulation(root=render_users_panel) as browser:
+        browser.http_client.cookies.set("session_token", staff.token)
+        await browser.open("/")
+        await browser.should_see(kind=ui.table, retries=50)
+        browser.find(ui.table).trigger(event, {"id": str(user_id), "name": subject})
+        await browser.should_see(kind=ui.button, content=confirm)
+        async with AsyncSession(test_engine) as holder, holder.begin():
+            await holder.execute(text("SELECT pg_advisory_xact_lock(hashtext('administrators'))"))
+            browser.find(kind=ui.button, content=confirm).click()
+            waiter = await advisory_lock_waiter(test_engine, deadline_seconds=10)
+            await holder.execute(text("SELECT pg_terminate_backend(:pid)"), {"pid": waiter})
+        await browser.should_see("Failed to change admin rights. Check server logs.", retries=50)
+    assert await _granter(test_engine, user_id) == before
