@@ -71,6 +71,8 @@ services:
     build:
       context: .
       args: *base-image-args
+    # The web image, which `openscientist deploy` names in .env as a registry image.
+    image: ${OPENSCIENTIST_WEB_IMAGE:-${COMPOSE_PROJECT_NAME}-openscientist}
     # The one-shot migration stages the PubMed baseline into /app, which the web user cannot write.
     user: root
     restart: "no"
@@ -151,6 +153,7 @@ services:
     build:
       context: .
       args: *base-image-args
+    image: ${OPENSCIENTIST_WEB_IMAGE:-${COMPOSE_PROJECT_NAME}-openscientist}
     depends_on:
       migrate:
         condition: service_completed_successfully
