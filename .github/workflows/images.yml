@@ -1,0 +1,96 @@
+name: Images
+# A run started by workflow_run records the tip of main as its commit, so the
+# name carries the commit it builds, which the Deploy workflow reads back.
+run-name: Images ${{ github.event.workflow_run.head_sha || github.event.release.tag_name }}
+
+# Every main commit CI passed gets its five images in GHCR, tagged sha-<commit>.
+# Publishing a release adds its version tag to the digests of the release
+# commit, so a release runs the bytes its commit ran.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io/openscientist-io
+
+jobs:
+  build:
+    if: >-
+      github.event_name == 'workflow_run'
+      && github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: images-${{ github.event.workflow_run.head_sha }}
+    env:
+      COMMIT: ${{ github.event.workflow_run.head_sha }}
+      SOURCE: ${{ github.server_url }}/${{ github.repository }}
+      DOCKER_DEFAULT_PLATFORM: linux/amd64
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      # The same builds as `uv run openscientist`: every image after the base
+      # built FROM it, with one commit and build time for all of them.
+      - name: Build
+        run: |
+          tag="sha-$COMMIT"
+          base="$REGISTRY/openscientist-base:$tag"
+          labels=(--label "org.opencontainers.image.source=$SOURCE" --label "org.opencontainers.image.revision=$COMMIT")
+          docker build -f Dockerfile.base -t "$base" "${labels[@]}" .
+          args=(--build-arg "BASE_IMAGE=$base" --build-arg "OPENSCIENTIST_COMMIT=$COMMIT" --build-arg "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${labels[@]}")
+          docker build -f Dockerfile.executor -t "$REGISTRY/openscientist-executor:$tag" "${args[@]}" .
+          docker build -f Dockerfile.agent -t "$REGISTRY/openscientist-agent:$tag" "${args[@]}" .
+          docker build -f Dockerfile.launcher -t "$REGISTRY/openscientist-launcher:$tag" "${args[@]}" .
+          docker build -f Dockerfile -t "$REGISTRY/openscientist-web:$tag" "${args[@]}" .
+
+      - name: Push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for name in base executor agent launcher web; do
+            docker push "$REGISTRY/openscientist-$name:sha-$COMMIT"
+          done
+
+  release:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ github.event.release.tag_name }}
+    steps:
+      - name: Tag the release commit's images
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! [[ "$VERSION" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error::Release tag $VERSION is not a Docker image tag."
+            exit 1
+          fi
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for name in base executor agent launcher web; do
+            source="$REGISTRY/openscientist-$name:sha-$GITHUB_SHA"
+            if ! docker buildx imagetools inspect "$source" > /dev/null; then
+              echo "::error::$source does not exist. Rerun this job once the Images run for $GITHUB_SHA has pushed it."
+              exit 1
+            fi
+          done
+          for name in base executor agent launcher web; do
+            docker buildx imagetools create --tag "$REGISTRY/openscientist-$name:$VERSION" "$REGISTRY/openscientist-$name:sha-$GITHUB_SHA"
+          done
