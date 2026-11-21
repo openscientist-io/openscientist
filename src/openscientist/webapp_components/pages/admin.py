@@ -37,6 +37,7 @@ from openscientist.webapp_components.components.common import (
 from openscientist.webapp_components.components.job_table import render_job_id_slot
 from openscientist.webapp_components.components.navigation import render_navigator
 from openscientist.webapp_components.pages.billing import render_billing_panel
+from openscientist.webapp_components.pages.feedback_panel import render_feedback_panel
 from openscientist.webapp_components.pages.settings_panel import render_settings_panel
 from openscientist.webapp_components.utils import in_page_client, session_checked_timer
 from openscientist.webapp_components.utils.permissions import admin_access
@@ -145,6 +146,10 @@ async def admin_page() -> None:
         with ui.tabs().classes("w-full") as tabs:
             orphaned_tab = ui.tab("Orphaned Jobs", icon="work_off")
             users_tab = ui.tab("Users", icon="people")
+            feedback_tab = ui.tab("Feedback", icon="feedback")
+            with feedback_tab:
+                unread_badge = ui.badge(color="red").props("floating")
+                unread_badge.set_visibility(False)
             review_tokens_tab = ui.tab("Review Tokens", icon="rate_review")
             containers_tab = ui.tab("Containers", icon="dns")
             billing_tab = ui.tab("Billing", icon="payments")
@@ -162,6 +167,14 @@ async def admin_page() -> None:
 
             with orphaned_panel:
                 ui.timer(0.1, render_orphaned_jobs_panel, once=True)
+
+            # Feedback Panel (deferred), whose loads keep the tab's unread count
+            def show_unread(count: int) -> None:
+                unread_badge.set_text(str(count))
+                unread_badge.set_visibility(count > 0)
+
+            with ui.tab_panel(feedback_tab):
+                ui.timer(0.1, partial(render_feedback_panel, page_user_id, show_unread), once=True)
 
             # Review Tokens Panel (deferred)
             with ui.tab_panel(review_tokens_tab):
