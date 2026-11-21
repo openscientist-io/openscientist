@@ -50,6 +50,7 @@ from openscientist.job.repository import (
     set_queue_reason,
 )
 from openscientist.job.types import (
+    FailedPhase,
     JobInfo,
     JobStatus,
     JobStatusUpdateResult,
@@ -378,7 +379,8 @@ class JobManager:
             thread.start()
 
     async def regenerate_report(self, job_id: str) -> None:
-        """Re-run only the report-generation phase for a completed job.
+        """Re-run only the report-generation phase for a job whose findings are
+        complete, one that completed or failed writing its report.
 
         Launches the agent container in report-only mode, reusing the findings
         in the persisted KnowledgeState. Unlike ``start_job`` this does not
@@ -388,8 +390,10 @@ class JobManager:
         with self._lock:
             if job_info is None:
                 raise ValueError(f"Job {job_id} not found")
-            if job_info.status != JobStatus.COMPLETED:
-                raise ValueError(f"Job {job_id} is not completed (status: {job_info.status.value})")
+            if not job_info.report_regenerable:
+                raise ValueError(
+                    f"Job {job_id} has no report to regenerate (status: {job_info.status.value})"
+                )
             if job_id in self._running_jobs:
                 raise ValueError(f"Job {job_id} is already running")
             if self._get_active_job_count() >= (await current_admin_settings()).max_concurrent_jobs:
@@ -433,7 +437,17 @@ class JobManager:
 
         job_dir = self.jobs_dir / job_id
         runner = JobContainerRunner()
-        running_from = {JobStatus.COMPLETED} if run_mode == "report_only" else self.WAITING_STATUSES
+        report_only = run_mode == "report_only"
+        failure_phase = FailedPhase.REPORT if report_only else None
+        # A completed job keeps its report when regenerating it fails, so it
+        # returns to completed and its owner is not told about the failure.
+        keeps_report = False
+        if report_only:
+            before = self._load_job_info(job_id)
+            keeps_report = before is not None and before.status is JobStatus.COMPLETED
+        running_from = (
+            {JobStatus.COMPLETED, JobStatus.FAILED} if report_only else self.WAITING_STATUSES
+        )
         launched = False
 
         try:
@@ -470,7 +484,8 @@ class JobManager:
                         return
                     if job_info.status != last_status:
                         last_status = job_info.status
-                        self._notify_container_transition(job_info)
+                        if not (keeps_report and job_info.status is JobStatus.FAILED):
+                            self._notify_container_transition(job_info)
                     if job_info.status.value in terminal_statuses:
                         # The container's ending write carries no time, so this
                         # first observation stamps it before the job leaves the slot.
@@ -502,6 +517,8 @@ class JobManager:
                     JobStatus.FAILED,
                     allowed_from=self.STARTED_STATUSES,
                     error_message=f"{ended}: {agent_error}" if agent_error else ended,
+                    failed_phase=failure_phase,
+                    notify=not keeps_report,
                     retry=True,
                 )
                 return
@@ -512,6 +529,8 @@ class JobManager:
                 JobStatus.FAILED,
                 allowed_from=self.STARTED_STATUSES,
                 error_message=f"Job timed out after {timeout_hours:.1f} hours",
+                failed_phase=failure_phase,
+                notify=not keeps_report,
                 retry=True,
             )
 
@@ -524,12 +543,23 @@ class JobManager:
                 JobStatus.FAILED,
                 allowed_from=self.ACTIVE_STATUSES,
                 error_message=str(e),
+                failed_phase=failure_phase,
+                notify=not keeps_report,
                 retry=True,
             )
 
         finally:
             if launched:
                 runner.cleanup(job_id, log_dir=job_dir)
+            if launched and keeps_report:
+                # The error stays on the job for the admin who asked.
+                self._update_job_status(
+                    job_id,
+                    JobStatus.COMPLETED,
+                    allowed_from={JobStatus.FAILED},
+                    notify=False,
+                    retry=True,
+                )
             with self._lock:
                 self._running_jobs.pop(job_id, None)
             self._start_next_queued_job()
@@ -833,6 +863,7 @@ class JobManager:
         *,
         allowed_from: Collection[JobStatus],
         error_message: str | None = None,
+        failed_phase: FailedPhase | None = None,
         cancellation_reason: str | None = None,
         notify: bool = True,
         retry: bool,
@@ -850,6 +881,7 @@ class JobManager:
                     status,
                     allowed_from=allowed_from,
                     error_message=error_message,
+                    failed_phase=failed_phase,
                     cancellation_reason=cancellation_reason,
                 )
             )

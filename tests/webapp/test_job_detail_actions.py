@@ -9,15 +9,23 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from starlette.responses import StreamingResponse
 
-from openscientist.job.types import JobStatus
+from openscientist.job.types import FailedPhase, JobInfo, JobStatus
 from openscientist.report.download import report_download_response
 from openscientist.webapp_components.pages.job_detail import iterations, report
 from openscientist.webapp_components.utils.permissions import AdminAccess
 
 
-def _context(status: JobStatus) -> SimpleNamespace:
+def _context(status: JobStatus, failed_phase: FailedPhase | None = None) -> SimpleNamespace:
     """Minimal stand-in carrying only what _can_regenerate_report reads."""
-    return SimpleNamespace(job_info=SimpleNamespace(status=status))
+    return SimpleNamespace(
+        job_info=JobInfo(
+            job_id="job-1",
+            research_question="Q?",
+            status=status,
+            created_at="2026-11-18T00:00:00",
+            failed_phase=failed_phase,
+        )
+    )
 
 
 def _action_context() -> SimpleNamespace:
@@ -29,18 +37,23 @@ def _action_context() -> SimpleNamespace:
 
 
 @pytest.mark.parametrize(
-    "is_admin,status,expected",
+    "is_admin,status,failed_phase,expected",
     [
-        (True, JobStatus.COMPLETED, True),  # admin + completed -> shown
-        (False, JobStatus.COMPLETED, False),  # non-admin -> hidden
-        (True, JobStatus.RUNNING, False),  # not completed -> hidden
-        (True, JobStatus.FAILED, False),  # not completed -> hidden
-        (False, JobStatus.RUNNING, False),  # neither -> hidden
+        (True, JobStatus.COMPLETED, None, True),
+        (False, JobStatus.COMPLETED, None, False),
+        (True, JobStatus.RUNNING, None, False),
+        (True, JobStatus.FAILED, FailedPhase.REPORT, True),
+        (False, JobStatus.FAILED, FailedPhase.REPORT, False),
+        (True, JobStatus.FAILED, FailedPhase.ITERATIONS, False),
+        (True, JobStatus.FAILED, None, False),
+        (False, JobStatus.RUNNING, None, False),
     ],
 )
-def test_can_regenerate_report_gating(is_admin: bool, status: JobStatus, expected: bool) -> None:
+def test_can_regenerate_report_gating(
+    is_admin: bool, status: JobStatus, failed_phase: FailedPhase | None, expected: bool
+) -> None:
     with patch.object(report, "is_current_user_admin", return_value=is_admin):
-        assert report._can_regenerate_report(_context(status)) is expected  # type: ignore[arg-type]
+        assert report._can_regenerate_report(_context(status, failed_phase)) is expected  # type: ignore[arg-type]
 
 
 async def test_regenerate_action_blocks_non_admin_server_side() -> None:

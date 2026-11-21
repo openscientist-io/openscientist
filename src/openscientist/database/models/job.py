@@ -154,6 +154,12 @@ class Job(UUIDv7Mixin, Base):
         comment="Error message if job failed",
     )
 
+    failed_phase: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+        comment="The phase a failed job failed in (iterations/report), so a report failure can be regenerated",
+    )
+
     cancellation_reason: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,

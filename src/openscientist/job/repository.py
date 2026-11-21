@@ -16,7 +16,7 @@ from openscientist.database.models.job import Job as JobModel
 from openscientist.database.models.job_share import JobShare
 from openscientist.database.session import thread_safe_admin_session, thread_safe_user_session
 from openscientist.job.status import status_update_statement
-from openscientist.job.types import JobStatus, JobStatusUpdateResult
+from openscientist.job.types import FailedPhase, JobStatus, JobStatusUpdateResult
 
 
 @asynccontextmanager
@@ -104,6 +104,7 @@ async def set_job_status(
     *,
     allowed_from: Collection[JobStatus],
     error_message: str | None = None,
+    failed_phase: FailedPhase | None = None,
     user_id: UUID | None = None,
     cancellation_reason: str | None = None,
 ) -> JobStatusUpdateResult:
@@ -115,6 +116,7 @@ async def set_job_status(
         status,
         allowed_from=allowed_from,
         error_message=error_message,
+        failed_phase=failed_phase,
         cancellation_reason=cancellation_reason,
         takes_slot=status == JobStatus.RUNNING,
         stamps_end=status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED),

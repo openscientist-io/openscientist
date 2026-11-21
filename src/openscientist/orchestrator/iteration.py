@@ -20,6 +20,7 @@ from openscientist.database.models.job import Job as JobModel
 from openscientist.database.retry import CONTAINER_DB_RETRY_SECONDS, retry_async
 from openscientist.database.session import SessionOpener, async_session_local
 from openscientist.job.status import status_update_statement
+from openscientist.job.types import FailedPhase
 from openscientist.knowledge_state import KnowledgeState
 from openscientist.prompts.common import WRITING_STYLE, namespace_tool_mentions
 
@@ -435,6 +436,7 @@ async def _persist_job_status(
     status: str,
     error_message: str | None,
     stop_note: str | None,
+    failed_phase: FailedPhase | None,
     allowed_from: Collection[str],
     open_session: SessionOpener,
     retry_for: float,
@@ -445,6 +447,7 @@ async def _persist_job_status(
         allowed_from=allowed_from,
         error_message=error_message,
         stop_note=stop_note,
+        failed_phase=failed_phase,
     ).returning(JobModel.id)
 
     async def write() -> bool:
@@ -466,6 +469,7 @@ async def update_job_status(
     error_message: str | None = None,
     stop_note: str | None = None,
     *,
+    failed_phase: FailedPhase | None = None,
     allowed_from: Collection[str],
     open_session: SessionOpener | None = None,
     retry_for: float = CONTAINER_DB_RETRY_SECONDS,
@@ -474,8 +478,9 @@ async def update_job_status(
     ``open_session``, else the process's own login. Returns whether it applied.
 
     ``error_message`` is written for failures, and ``stop_note`` for a job that
-    completed early at a budget limit. A lost connection is retried for
-    ``retry_for`` seconds and then raised, as is any other database error."""
+    completed early at a budget limit. ``failed_phase`` overrides the phase a
+    failure records. A lost connection is retried for ``retry_for`` seconds
+    and then raised, as is any other database error."""
     job_id = job_dir.name
 
     job_uuid = _parse_job_uuid(job_id)
@@ -488,6 +493,7 @@ async def update_job_status(
         status,
         error_message,
         stop_note,
+        failed_phase,
         allowed_from,
         open_session or async_session_local,
         retry_for,
