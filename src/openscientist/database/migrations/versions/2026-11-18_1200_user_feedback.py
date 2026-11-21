@@ -6,7 +6,7 @@ eleventh message within 24 hours. The admin login reads the messages and keeps
 the read state. A deleted sender leaves the message with a NULL sender.
 
 Revision ID: user_feedback
-Revises: llm_call_timings
+Revises: job_failed_phase
 Create Date: 2026-11-18 12:00:00
 """
 
@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from alembic import op
 
 revision: str = "user_feedback"
-down_revision: str | None = "llm_call_timings"
+down_revision: str | None = "job_failed_phase"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
