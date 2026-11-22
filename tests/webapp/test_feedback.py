@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 from nicegui import ui
+from nicegui.testing import User as SimulatedBrowser
 from nicegui.testing import user_simulation
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
@@ -341,3 +342,110 @@ async def test_a_demoted_admin_cannot_mark_feedback_read(
 
     [stored] = await _stored(test_engine)
     assert stored.read_at is None
+
+
+async def _add_feedback(test_engine: AsyncEngine, sender: UUID, *messages: str) -> list[UUID]:
+    rows = [UserFeedback(user_id=sender, message=message) for message in messages]
+    async with AsyncSession(test_engine, expire_on_commit=False) as db:
+        db.add_all(rows)
+        await db.commit()
+    return [row.id for row in rows]
+
+
+async def _open_delete_dialog(browser: SimulatedBrowser, feedback_id: UUID, message: str) -> None:
+    await browser.open("/")
+    await browser.should_see(message, retries=50)
+    browser.find(marker=f"delete-feedback-{feedback_id}").click()
+    await browser.should_see("Delete this message?")
+
+
+@pytest.mark.asyncio
+async def test_an_admin_deletes_a_message_after_confirming(
+    people: _People, test_engine: AsyncEngine
+) -> None:
+    doomed, _kept = await _add_feedback(test_engine, people.sender, "Delete me", "Keep me")
+    counts: list[int] = []
+
+    panel = partial(render_feedback_panel, str(people.admin), counts.append)
+    async with user_simulation(root=panel) as browser:
+        browser.http_client.cookies.set("session_token", people.admin_token)
+        await _open_delete_dialog(browser, doomed, "Delete me")
+        assert len(await _stored(test_engine)) == 2
+        browser.find(kind=ui.button, content="Delete message").click()
+        await browser.should_see("Message deleted", retries=50)
+        await browser.should_see("1 unread of 1", retries=50)
+        await browser.should_not_see("Delete me")
+
+    assert [stored.message for stored in await _stored(test_engine)] == ["Keep me"]
+    assert counts == [2, 1]
+
+
+@pytest.mark.asyncio
+async def test_cancelling_the_delete_keeps_the_message(
+    people: _People, test_engine: AsyncEngine
+) -> None:
+    [kept] = await _add_feedback(test_engine, people.sender, "Second thoughts")
+
+    async with user_simulation(root=partial(render_feedback_panel, str(people.admin))) as browser:
+        browser.http_client.cookies.set("session_token", people.admin_token)
+        await _open_delete_dialog(browser, kept, "Second thoughts")
+        browser.find(kind=ui.button, content="Cancel").click()
+        [dialog] = browser.find(kind=ui.dialog).elements
+        assert dialog.value is False
+
+    assert [stored.message for stored in await _stored(test_engine)] == ["Second thoughts"]
+
+
+@pytest.mark.asyncio
+async def test_a_demoted_admin_cannot_delete_feedback(
+    people: _People, test_engine: AsyncEngine
+) -> None:
+    [kept] = await _add_feedback(test_engine, people.sender, "Not yours to delete")
+
+    async with user_simulation(root=partial(render_feedback_panel, str(people.admin))) as browser:
+        browser.http_client.cookies.set("session_token", people.admin_token)
+        await _open_delete_dialog(browser, kept, "Not yours to delete")
+        async with AsyncSession(test_engine) as db:
+            await db.execute(delete(Administrator).where(Administrator.user_id == people.admin))
+            await db.commit()
+        browser.find(kind=ui.button, content="Delete message").click()
+        await browser.should_see("Your admin session is no longer valid", retries=50)
+
+    assert [stored.message for stored in await _stored(test_engine)] == ["Not yours to delete"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_delete_keeps_the_message_and_says_so(
+    people: _People,
+    test_engine: AsyncEngine,
+    database: Forwarder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    [kept] = await _add_feedback(test_engine, people.sender, "Survives the outage")
+    armed = _outage_after_admin_check(database, monkeypatch)
+
+    async with user_simulation(root=partial(render_feedback_panel, str(people.admin))) as browser:
+        browser.http_client.cookies.set("session_token", people.admin_token)
+        await _open_delete_dialog(browser, kept, "Survives the outage")
+        armed[0] = True
+        browser.find(kind=ui.button, content="Delete message").click()
+        await browser.should_see("Failed to delete the message", retries=50)
+
+    assert [stored.message for stored in await _stored(test_engine)] == ["Survives the outage"]
+
+
+@pytest.mark.asyncio
+async def test_deleting_a_message_deleted_meanwhile_says_it_no_longer_exists(
+    people: _People, test_engine: AsyncEngine
+) -> None:
+    [gone] = await _add_feedback(test_engine, people.sender, "Deleted twice")
+
+    async with user_simulation(root=partial(render_feedback_panel, str(people.admin))) as browser:
+        browser.http_client.cookies.set("session_token", people.admin_token)
+        await _open_delete_dialog(browser, gone, "Deleted twice")
+        async with AsyncSession(test_engine) as db:
+            await db.execute(delete(UserFeedback))
+            await db.commit()
+        browser.find(kind=ui.button, content="Delete message").click()
+        await browser.should_see("This message no longer exists", retries=50)
+        await browser.should_see("No feedback yet.")

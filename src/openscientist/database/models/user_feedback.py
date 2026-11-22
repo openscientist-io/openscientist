@@ -21,8 +21,8 @@ class UserFeedback(UUIDv7Mixin, Base):
     """One message a user sent, and whether an admin has read it.
 
     A user's session may only insert its own message, and at most
-    ``FEEDBACK_DAILY_LIMIT`` in any 24 hours. Reading and marking go through
-    the admin login.
+    ``FEEDBACK_DAILY_LIMIT`` in any 24 hours. Reading, marking and deleting go
+    through the admin login.
     """
 
     __tablename__ = "user_feedback"
