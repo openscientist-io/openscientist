@@ -14,6 +14,9 @@ from ..base import Base
 if TYPE_CHECKING:
     from .user import User
 
+#: The SQLSTATE a write to ``administrators`` raises when its session's user is not an admin.
+NOT_AN_ADMIN_SQLSTATE = "OSA01"
+
 
 class Administrator(Base):
     """Administrator record linking a user to admin privileges.

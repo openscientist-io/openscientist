@@ -14,11 +14,12 @@ from nicegui import app, ui
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from openscientist.admin.administrators import grant_admin, revoke_admin
 from openscientist.admin.orphan_jobs import assign_orphaned_job, list_orphaned_jobs
 from openscientist.auth.fastapi_routes import _hash_token, generate_review_token
 from openscientist.auth.middleware import get_current_user_id, require_admin, require_auth
 from openscientist.budget import format_spend
-from openscientist.database.models import Job, ReviewToken, Session, User
+from openscientist.database.models import Administrator, Job, ReviewToken, Session, User
 from openscientist.job.types import JobStatus
 from openscientist.settings import get_settings
 from openscientist.webapp_components.components.badges import render_job_id_badge
@@ -40,7 +41,7 @@ from openscientist.webapp_components.pages.billing import render_billing_panel
 from openscientist.webapp_components.pages.feedback_panel import render_feedback_panel
 from openscientist.webapp_components.pages.settings_panel import render_settings_panel
 from openscientist.webapp_components.utils import in_page_client, session_checked_timer
-from openscientist.webapp_components.utils.permissions import admin_access
+from openscientist.webapp_components.utils.permissions import admin_access, admin_user_id
 
 if TYPE_CHECKING:
     from openscientist.webapp_components.utils.container_dashboard import (
@@ -470,6 +471,7 @@ def _admin_users_columns() -> list[dict[str, str]]:
             "field": "priority_status",
             "align": "center",
         },
+        {"name": "admin_status", "label": "Admin", "field": "admin_status", "align": "center"},
         {"name": "actions", "label": "Actions", "field": "actions", "align": "center"},
     ]
 
@@ -484,6 +486,13 @@ async def _build_admin_user_rows(session: Any, users: list[User]) -> list[dict[s
     )
     result = await session.execute(stmt)
     job_counts: dict[Any, int] = dict(result.all())
+    admins = set(
+        (
+            await session.execute(
+                select(Administrator.user_id).where(Administrator.user_id.in_(user_ids))
+            )
+        ).scalars()
+    )
 
     return [
         {
@@ -496,6 +505,8 @@ async def _build_admin_user_rows(session: Any, users: list[User]) -> list[dict[s
             "is_approved": bool(user.is_approved),
             "priority_status": "Priority" if user.is_priority else "Normal",
             "is_priority": bool(user.is_priority),
+            "admin_status": "Admin" if user.id in admins else "User",
+            "is_admin": user.id in admins,
         }
         for user in users
     ]
@@ -600,6 +611,17 @@ def _render_admin_users_table(
             """,
         )
         users_table.add_slot(
+            "body-cell-admin_status",
+            """
+            <q-td :props="props">
+                <q-badge
+                    :color="props.row.is_admin ? 'primary' : 'grey'"
+                    :label="props.row.admin_status"
+                />
+            </q-td>
+            """,
+        )
+        users_table.add_slot(
             "body-cell-actions",
             """
             <q-td :props="props">
@@ -649,6 +671,28 @@ def _render_admin_users_table(
                         <q-tooltip>Remove priority</q-tooltip>
                     </q-btn>
                     <q-btn
+                        v-if="!props.row.is_admin"
+                        flat
+                        dense
+                        size="sm"
+                        color="primary"
+                        icon="admin_panel_settings"
+                        @click="$parent.$emit('grant-admin', props.row)"
+                    >
+                        <q-tooltip>Make admin</q-tooltip>
+                    </q-btn>
+                    <q-btn
+                        v-else
+                        flat
+                        dense
+                        size="sm"
+                        color="grey"
+                        icon="remove_moderator"
+                        @click="$parent.$emit('revoke-admin', props.row)"
+                    >
+                        <q-tooltip>Remove admin</q-tooltip>
+                    </q-btn>
+                    <q-btn
                         flat
                         dense
                         size="sm"
@@ -687,11 +731,82 @@ def _render_admin_users_table(
                 on_deleted=reload_users,
             )
 
+        def open_admin_rights_dialog(e: Any, grant: bool) -> None:
+            try:
+                user_id = UUID(e.args.get("id"))
+            except (TypeError, ValueError):
+                ui.notify("Invalid user selection", color="negative")
+                return
+            _open_admin_rights_dialog(
+                user_id=user_id,
+                user_name=e.args.get("name", "this user"),
+                grant=grant,
+                on_changed=reload_users,
+            )
+
         users_table.on("approve-user", approve_user)
         users_table.on("unapprove-user", unapprove_user)
         users_table.on("prioritise-user", prioritise_user)
         users_table.on("deprioritise-user", deprioritise_user)
         users_table.on("delete-user", handle_delete_user)
+        users_table.on("grant-admin", partial(open_admin_rights_dialog, grant=True))
+        users_table.on("revoke-admin", partial(open_admin_rights_dialog, grant=False))
+
+
+def _open_admin_rights_dialog(
+    *,
+    user_id: UUID,
+    user_name: str,
+    grant: bool,
+    on_changed: Callable[[], Awaitable[None]],
+) -> None:
+    """Open the confirmation dialog for granting or removing a user's admin rights."""
+
+    async def do_change() -> None:
+        await _confirm_admin_rights(user_id, grant=grant, dialog=dialog, on_changed=on_changed)
+
+    with ui.dialog() as dialog, ui.card().classes("w-96"):
+        if grant:
+            ui.label("Make Admin").classes("text-lg font-bold mb-2")
+            ui.label(f'Make "{user_name}" an admin?').classes("mb-2")
+            ui.label(
+                "Admins get this whole Admin page, including users, settings and other admins."
+            ).classes("text-sm text-gray-600 mb-4")
+        else:
+            ui.label("Remove Admin").classes("text-lg font-bold mb-2")
+            ui.label(f'Remove the admin rights of "{user_name}"?').classes("mb-4")
+        render_dialog_actions(
+            on_confirm=do_change,
+            on_cancel=dialog.close,
+            confirm_label="Make admin" if grant else "Remove admin",
+            confirm_props="color=primary" if grant else "color=negative",
+        )
+    dialog.open()
+
+
+@in_page_client
+async def _confirm_admin_rights(
+    user_id: UUID,
+    *,
+    grant: bool,
+    dialog: ui.dialog,
+    on_changed: Callable[[], Awaitable[None]],
+) -> None:
+    """Grant or remove admin rights on the caller's own session, which Postgres checks."""
+    actor_id = await admin_user_id()
+    if actor_id is None:
+        return
+    try:
+        change = grant_admin if grant else revoke_admin
+        success, message = await change(actor_id, user_id)
+    except Exception as ex:
+        logger.error("Error changing admin rights of user %s: %s", user_id, ex, exc_info=True)
+        ui.notify("Failed to change admin rights. Check server logs.", color="negative")
+        return
+    ui.notify(message, color="positive" if success else "negative")
+    dialog.close()
+    if success:
+        await on_changed()
 
 
 def _open_delete_user_dialog(
