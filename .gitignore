@@ -54,6 +54,7 @@ logs/*.log
 # Job data (keep directory structure, ignore contents)
 jobs/*/
 jobs_backup*/
+backups/
 
 # NiceGUI
 .nicegui/
