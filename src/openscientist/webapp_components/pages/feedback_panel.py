@@ -7,12 +7,15 @@ from functools import partial
 from uuid import UUID
 
 from nicegui import ui
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openscientist.database.models import User, UserFeedback
 from openscientist.webapp_components.components.banners import render_alert_banner
-from openscientist.webapp_components.components.common import render_empty_state
+from openscientist.webapp_components.components.common import (
+    render_dialog_actions,
+    render_empty_state,
+)
 from openscientist.webapp_components.utils import in_page_client
 from openscientist.webapp_components.utils.permissions import admin_access
 
@@ -52,6 +55,15 @@ async def set_feedback_read(
     return result.scalar_one_or_none() is not None
 
 
+async def delete_feedback(session: AsyncSession, feedback_id: UUID) -> bool:
+    """Delete one message. False when no message has ``feedback_id``."""
+    result = await session.execute(
+        delete(UserFeedback).where(UserFeedback.id == feedback_id).returning(UserFeedback.id)
+    )
+    await session.commit()
+    return result.scalar_one_or_none() is not None
+
+
 def _sender_label(sender: User | None) -> str:
     if sender is None:
         return "Deleted user"
@@ -59,7 +71,9 @@ def _sender_label(sender: User | None) -> str:
 
 
 def _render_feedback_card(
-    entry: FeedbackEntry, on_toggle: Callable[[UUID, bool], Awaitable[None]]
+    entry: FeedbackEntry,
+    on_toggle: Callable[[UUID, bool], Awaitable[None]],
+    on_delete: Callable[[UUID], Awaitable[None]],
 ) -> None:
     feedback = entry.feedback
     unread = feedback.read_at is None
@@ -77,7 +91,27 @@ def _render_feedback_card(
                 icon="mark_email_read" if unread else "mark_email_unread",
                 on_click=partial(on_toggle, feedback.id, unread),
             ).props("flat dense no-caps")
+            ui.button(
+                "Delete", icon="delete", on_click=partial(_confirm_delete, feedback.id, on_delete)
+            ).props("flat dense no-caps color=negative").mark(f"delete-feedback-{feedback.id}")
         ui.label(feedback.message).classes("w-full whitespace-pre-wrap break-words")
+
+
+def _confirm_delete(feedback_id: UUID, on_delete: Callable[[UUID], Awaitable[None]]) -> None:
+    async def confirmed() -> None:
+        dialog.close()
+        await on_delete(feedback_id)
+
+    with ui.dialog() as dialog, ui.card().classes("w-96"):
+        ui.label("Delete this message?").classes("text-lg font-bold")
+        ui.label("It cannot be restored.").classes("text-sm text-gray-600")
+        render_dialog_actions(
+            on_confirm=confirmed,
+            on_cancel=dialog.close,
+            confirm_label="Delete message",
+            confirm_props="color=negative",
+        )
+    dialog.open()
 
 
 async def render_feedback_panel(
@@ -116,7 +150,7 @@ async def render_feedback_panel(
             if not entries:
                 render_empty_state("No feedback yet.")
             for entry in entries:
-                _render_feedback_card(entry, toggle)
+                _render_feedback_card(entry, toggle, remove)
 
     @in_page_client
     async def toggle(feedback_id: UUID, read: bool) -> None:
@@ -133,6 +167,24 @@ async def render_feedback_panel(
             ui.notify("Failed to update the message. Please try again.", type="negative")
             return
         if not found:
+            ui.notify("This message no longer exists", type="warning")
+        await load()
+
+    @in_page_client
+    async def remove(feedback_id: UUID) -> None:
+        access = await admin_access()
+        if access is None:
+            return
+        try:
+            async with access.session() as session:
+                found = await delete_feedback(session, feedback_id)
+        except Exception:
+            logger.exception("Failed to delete feedback %s", feedback_id)
+            ui.notify("Failed to delete the message. Please try again.", type="negative")
+            return
+        if found:
+            ui.notify("Message deleted", type="positive")
+        else:
             ui.notify("This message no longer exists", type="warning")
         await load()
 
