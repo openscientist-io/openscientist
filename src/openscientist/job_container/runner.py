@@ -157,6 +157,12 @@ class JobContainerRunner:
             env["OPENSCIENTIST_AIRGAPPED"] = "1"
         if settings.phenix.phenix_host_path:
             env["PHENIX_PATH"] = "/opt/phenix"
+        openadmodels = getattr(settings, "openadmodels", None)
+        if openadmodels is not None and openadmodels.is_available and not airgapped:
+            assert openadmodels.mcp_url is not None
+            env["OPENADMODELS_MCP_URL"] = openadmodels.mcp_url
+            if openadmodels.mcp_key:
+                env["OPENADMODELS_MCP_KEY"] = openadmodels.mcp_key
         return env
 
     @staticmethod
@@ -305,6 +311,12 @@ class JobContainerRunner:
         container from its template. The name, mounts, network and firewall
         overrides are the launcher's to choose."""
         cs = settings.container
+        openadmodels = getattr(settings, "openadmodels", None)
+        if admin.airgapped and openadmodels is not None and openadmodels.is_available:
+            logger.info(
+                "Skipping OpenADModels MCP server for job %s: air-gapped mode is enabled",
+                job_id,
+            )
         env = self._build_container_environment(
             settings,
             job_id=job_id,

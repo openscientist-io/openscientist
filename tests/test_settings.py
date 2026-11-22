@@ -12,6 +12,7 @@ from openscientist.settings import (
     ContainerSettings,
     DatabaseSettings,
     FileSettings,
+    OpenADModelsSettings,
     PhenixSettings,
     ProviderSettings,
     clear_settings_cache,
@@ -768,6 +769,62 @@ class TestPhenixSettings:
         assert phenix_installation_ok(str(tmp_path / "nofile")) is False
         (tmp_path / "nobin").mkdir()
         assert phenix_installation_ok(str(tmp_path / "nobin")) is False
+
+
+class TestOpenADModelsSettings:
+    """Tests for hosted OpenADModels MCP server configuration."""
+
+    def test_defaults_when_unset(self, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("OPENADMODELS_MCP_URL", raising=False)
+        monkeypatch.delenv("OPENADMODELS_MCP_KEY", raising=False)
+
+        settings = OpenADModelsSettings()
+        assert settings.mcp_url is None
+        assert settings.mcp_key is None
+        assert settings.is_available is False
+
+    def test_available_when_url_is_set_without_key(self, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("OPENADMODELS_MCP_URL", "https://openadmodels.example.org/mcp")
+        monkeypatch.delenv("OPENADMODELS_MCP_KEY", raising=False)
+
+        settings = OpenADModelsSettings()
+        assert settings.mcp_url == "https://openadmodels.example.org/mcp"
+        assert settings.mcp_key is None
+        assert settings.is_available is True
+
+    def test_env_overrides_for_url_and_key(self, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("OPENADMODELS_MCP_URL", "  https://openadmodels.example.org/mcp  ")
+        monkeypatch.setenv("OPENADMODELS_MCP_KEY", "  secret-token  ")
+
+        settings = OpenADModelsSettings()
+        assert settings.mcp_url == "https://openadmodels.example.org/mcp"
+        assert settings.mcp_key == "secret-token"
+        assert settings.is_available is True
+
+    def test_not_available_when_only_key_is_set(self, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("OPENADMODELS_MCP_URL", raising=False)
+        monkeypatch.setenv("OPENADMODELS_MCP_KEY", "secret-token")
+
+        settings = OpenADModelsSettings()
+        assert settings.mcp_url is None
+        assert settings.mcp_key == "secret-token"
+        assert settings.is_available is False
+
+    def test_blank_values_normalize_to_none(self):
+        settings = OpenADModelsSettings(OPENADMODELS_MCP_URL="   ", OPENADMODELS_MCP_KEY="")
+        assert settings.mcp_url is None
+        assert settings.mcp_key is None
+        assert settings.is_available is False
+
+    def test_rejects_non_http_url(self):
+        with pytest.raises(ValidationError, match="OPENADMODELS_MCP_URL"):
+            OpenADModelsSettings(OPENADMODELS_MCP_URL="ftp://openadmodels.example.org/mcp")
+        with pytest.raises(ValidationError, match="OPENADMODELS_MCP_URL"):
+            OpenADModelsSettings(OPENADMODELS_MCP_URL="not-a-url")
 
 
 class TestFileSettings:
