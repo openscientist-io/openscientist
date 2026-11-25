@@ -29,6 +29,7 @@ from starlette.routing import Route, WebSocketRoute
 from websockets.asyncio.client import connect as ws_connect
 from websockets.exceptions import ConnectionClosed
 
+from openscientist.admin_settings import costs_visible, hide_cost_amounts
 from openscientist.agent.base import TokenUsage
 from openscientist.budget import check_budget, unpriced_model_violation
 from openscientist.job_container.secrets import RunKind, proxy_run
@@ -204,7 +205,9 @@ _LOCAL_ONLY_CLOSE_CODES = {1005, 1006, 1015}
 _BUDGET_REFUSAL_STATUS = 400
 
 
-def _budget_refusal_body(message: str | None) -> bytes:
+async def _budget_refusal_body(message: str | None) -> bytes:
+    if not await costs_visible(False):
+        message = hide_cost_amounts(message)
     return json.dumps(
         {
             "type": "error",
@@ -606,7 +609,7 @@ def create_llm_proxy_app(
                         result.message,
                     )
                     return Response(
-                        _budget_refusal_body(result.message),
+                        await _budget_refusal_body(result.message),
                         status_code=_BUDGET_REFUSAL_STATUS,
                         media_type="application/json",
                     )
@@ -738,7 +741,7 @@ async def _refuse_websocket(send, status_code: int, detail: str, *, budget: bool
     """End a websocket handshake with an HTTP status, so a dead run is
     refused the way the REST path refuses it, before any upstream is
     touched. A budget refusal carries the provider-shaped error body."""
-    body = _budget_refusal_body(detail) if budget else detail.encode()
+    body = await _budget_refusal_body(detail) if budget else detail.encode()
     content_type = b"application/json" if budget else b"text/plain; charset=utf-8"
     await send(
         {
@@ -1029,7 +1032,10 @@ class _ResponsesWebsocketTerminator:
                 buckets=buckets,
             )
             if isinstance(result, ModelCallRefused):
-                return _BUDGET_REFUSAL_STATUS, result.message or "Budget exhausted"
+                message = result.message
+                if not await costs_visible(False):
+                    message = hide_cost_amounts(message)
+                return _BUDGET_REFUSAL_STATUS, message or "Budget exhausted"
             admission.reservation = result
             if stream in active:
                 return 429, "Response stream already active"

@@ -20,6 +20,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openscientist.database.models import Job, Session, User
+from openscientist.exceptions import BudgetExceededError
 from openscientist.job.types import JobStatus
 from openscientist.webapp_components.pages.new_job import _build_upload_session_id, _submit_job
 from openscientist.webapp_components.utils.session import (
@@ -160,6 +161,52 @@ async def test_submit_job_creates_the_job_and_opens_its_page(
     assert call["owner_id"] == str(user.id)
     opened = [data for _target, kind, data in client.outbox.messages if kind == "open"]
     assert opened == [{"path": f"/job/{call['job_id']}", "new_tab": False}]
+
+
+class _RefusingJobManager:
+    """A job manager whose project has reached its monthly spend limit."""
+
+    async def create_job(self, **kwargs: object) -> None:
+        raise BudgetExceededError(
+            "Project monthly spend limit of $50.00 reached: the project has spent $51.20."
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("visible", [False, True])
+async def test_a_refused_job_names_its_limit_amount_only_where_costs_are_shown(
+    database: Forwarder,
+    test_engine: AsyncEngine,
+    signed_in_job_user: tuple[User, str],
+    signed_in_page: OpenPage,
+    visible: bool,
+) -> None:
+    user, token = signed_in_job_user
+    await set_admin_settings_row(test_engine, show_job_costs=visible)
+    try:
+        fields: dict[str, ui.element] = {}
+
+        async def build() -> None:
+            fields["question"] = ui.textarea(value="Why do corals bleach?")
+            fields["max_iterations"] = ui.number(value=5)
+            fields["use_hypotheses"] = ui.switch(value=False)
+            fields["coinvestigate_mode"] = ui.switch(value=False)
+
+        client = await signed_in_page(token, build)
+        with client:
+            await _submit_job(
+                job_manager=_RefusingJobManager(),
+                session_id=f"{user.id}:refused-test",
+                research_question=fields["question"],  # type: ignore[arg-type]
+                max_iterations=fields["max_iterations"],  # type: ignore[arg-type]
+                use_hypotheses=fields["use_hypotheses"],  # type: ignore[arg-type]
+                coinvestigate_mode=fields["coinvestigate_mode"],  # type: ignore[arg-type]
+            )
+    finally:
+        await reset_admin_settings_row(test_engine)
+    notices = [str(data) for _target, kind, data in client.outbox.messages if kind == "notify"]
+    assert any("monthly" in notice for notice in notices)
+    assert any("$50.00" in notice for notice in notices) is visible
 
 
 @pytest.mark.asyncio

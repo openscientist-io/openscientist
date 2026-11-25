@@ -363,3 +363,68 @@ async def test_a_public_reader_sees_no_spend_badge(
     ]
     assert questions, "the public reader never saw the job page"
     assert _spend_badge(client) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["running", "completed"])
+async def test_runtime_cost_visibility_refreshes_unchanged_jobs(
+    database: Forwarder,
+    spend_job: dict[str, str],
+    served_page: ServedPage,
+    test_engine: AsyncEngine,
+    wire_recorder: list[WireMessage],
+    status: str,
+) -> None:
+    from sqlalchemy import update
+
+    from openscientist.database.models.admin_settings import AdminSettings
+
+    async with AsyncSession(test_engine) as session:
+        await session.execute(
+            update(Job).where(Job.id == UUID(spend_job["job_id"])).values(status=status)
+        )
+        await session.commit()
+    client = await _build(served_page, spend_job["owner_token"], spend_job["job_id"])
+    assert _spend_badge(client) == "$1.23"
+    try:
+        for show_costs in (False, True):
+            async with AsyncSession(test_engine) as session:
+                await session.execute(update(AdminSettings).values(show_job_costs=show_costs))
+                await session.commit()
+            await _tick(client, _timer(client), wire_recorder)
+            assert _spend_badge(client) == ("$1.23" if show_costs else None)
+    finally:
+        async with AsyncSession(test_engine) as session:
+            await session.execute(update(AdminSettings).values(show_job_costs=True))
+            await session.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("is_admin", [False, True])
+async def test_initial_spend_visibility_respects_admin_override(
+    database: Forwarder,
+    spend_job: dict[str, str],
+    served_page: ServedPage,
+    test_engine: AsyncEngine,
+    is_admin: bool,
+) -> None:
+    from sqlalchemy import select, update
+
+    from openscientist.database.models import Administrator
+    from openscientist.database.models.admin_settings import AdminSettings
+
+    try:
+        async with AsyncSession(test_engine) as session:
+            owner_id = await session.scalar(
+                select(Job.owner_id).where(Job.id == UUID(spend_job["job_id"]))
+            )
+            if is_admin:
+                session.add(Administrator(user_id=owner_id))
+            await session.execute(update(AdminSettings).values(show_job_costs=False))
+            await session.commit()
+        client = await _build(served_page, spend_job["owner_token"], spend_job["job_id"])
+        assert _spend_badge(client) == ("$1.23" if is_admin else None)
+    finally:
+        async with AsyncSession(test_engine) as session:
+            await session.execute(update(AdminSettings).values(show_job_costs=True))
+            await session.commit()

@@ -1,11 +1,14 @@
 """Research Log tab: stats badges, timeline content and polling."""
 
+from collections.abc import Callable
 from typing import Any
 
 from nicegui import ui
 from nicegui.functions.refreshable import refreshable
 
+from openscientist.admin_settings import costs_visible, hide_cost_amounts
 from openscientist.agent.factory import agent_class_for_provider_id
+from openscientist.auth import is_current_user_admin
 from openscientist.budget import format_spend
 from openscientist.job.types import JobInfo, JobStatus
 from openscientist.run_environment import run_environment_text
@@ -69,16 +72,24 @@ def _format_model_name(llm_model: str | None) -> str | None:
 
 
 def _stats_badges(
-    latest_job: JobInfo, lit_count: int, hyp_count: int = 0, spend: float | None = None
+    latest_job: JobInfo,
+    lit_count: int,
+    hyp_count: int = 0,
+    spend: float | None = None,
+    show_costs: bool = True,
 ) -> list[tuple[str, str | int, str]]:
     status_color = STATUS_COLORS.get(latest_job.status, "gray")
     badges: list[tuple[str, str | int, str]] = [
         ("Status", latest_job.status.value.replace("_", " "), status_color)
     ]
     queue_reason = getattr(latest_job, "queue_reason", None)
+    if not show_costs:
+        queue_reason = hide_cost_amounts(queue_reason)
     if latest_job.status == JobStatus.QUEUED and queue_reason:
         badges.append(("Waiting on", queue_reason, "orange"))
     stop_note = getattr(latest_job, "stop_note", None)
+    if not show_costs:
+        stop_note = hide_cost_amounts(stop_note)
     if latest_job.status == JobStatus.COMPLETED and stop_note:
         badges.append(("Stopped early", stop_note, "orange"))
     if getattr(latest_job, "is_public", False):
@@ -108,7 +119,7 @@ def _stats_badges(
     model_name = _format_model_name(getattr(latest_job, "llm_model", None))
     if model_name:
         badges.append(("Model", model_name, "cyan"))
-    if spend is not None:
+    if show_costs and spend is not None:
         badges.append(("Spend", format_spend(spend), "green"))
     return badges
 
@@ -136,7 +147,11 @@ def _render_job_stats_content(context: _JobDetailContext) -> None:
     hyp_count = len(latest_ks.get("hypotheses", [])) if latest_ks else 0
     badges_row = render_stat_badges(
         _stats_badges(
-            latest_job, lit_count, hyp_count, context.spend if context.direct_access else None
+            latest_job,
+            lit_count,
+            hyp_count,
+            context.spend if context.direct_access else None,
+            context.show_costs,
         )
     )
     run_environment = run_environment_text(latest_job.version_info)
@@ -192,14 +207,15 @@ def _stats_model(
     latest_job: JobInfo,
     latest_ks: dict[str, Any] | None,
     spend: float | None,
+    show_costs: bool = True,
 ) -> _StatsModel:
     """The stats card's rendered values, compared across ticks so the card
     refreshes when a badge or the status line would actually change."""
     lit_count = len(latest_ks.get("literature", [])) if latest_ks else 0
     hyp_count = len(latest_ks.get("hypotheses", [])) if latest_ks else 0
-    return tuple(_stats_badges(latest_job, lit_count, hyp_count, spend)), _status_line_for(
-        latest_job, latest_ks
-    )
+    return tuple(
+        _stats_badges(latest_job, lit_count, hyp_count, spend, show_costs)
+    ), _status_line_for(latest_job, latest_ks)
 
 
 def _reload_required_statuses() -> list[JobStatus]:
@@ -239,6 +255,23 @@ def _handle_access_lost_during_poll(
     _render_access_lost()
 
 
+async def _refresh_cost_visibility(
+    context: _JobDetailContext, render_job_stats: refreshable[[], None]
+) -> None:
+    show_costs = await costs_visible(is_current_user_admin())
+    if show_costs != context.show_costs:
+        context.show_costs = show_costs
+        context.state["stats_model"] = _stats_model(
+            context.job_info,
+            context.ks_data,
+            context.spend if context.direct_access else None,
+            show_costs,
+        )
+        render_job_stats.refresh()
+        if refresh_notices := context.state.get("refresh_notices"):
+            refresh_notices()
+
+
 async def _check_and_refresh(
     context: _JobDetailContext,
     render_job_stats: refreshable[[], None],
@@ -250,6 +283,7 @@ async def _check_and_refresh(
         _handle_access_lost_during_poll(context, stats_timer_holder)
         return
     db_job, snapshot = probe
+    await _refresh_cost_visibility(context, render_job_stats)
 
     old_snapshot: _PageSnapshot | None = context.state["snapshot"]
     if snapshot == old_snapshot:
@@ -283,6 +317,7 @@ async def _check_and_refresh(
         latest_job,
         latest_ks,
         context.spend if context.direct_access else None,
+        context.show_costs,
     )
     if stats_model != context.state["stats_model"]:
         context.state["stats_model"] = stats_model
@@ -292,13 +327,16 @@ async def _check_and_refresh(
     context.state["snapshot"] = snapshot
 
 
-async def _render_timeline_tab(context: _JobDetailContext) -> None:
+async def _render_timeline_tab(context: _JobDetailContext) -> Callable[[], None]:
     ui.add_head_html(ITERATION_STYLES)
     ui.add_head_html(ACTION_STYLES)
 
     @ui.refreshable
     def render_job_stats() -> None:
         _render_job_stats_content(context)
+
+    async def refresh_cost_visibility() -> None:
+        await _refresh_cost_visibility(context, render_job_stats)
 
     render_job_stats()
     _render_research_question_card(context)
@@ -322,5 +360,11 @@ async def _render_timeline_tab(context: _JobDetailContext) -> None:
     async def check_and_refresh() -> None:
         await _check_and_refresh(context, render_job_stats, timeline, stats_timer_holder)
 
-    if context.job_info.status in _polling_statuses():
-        stats_timer_holder["timer"] = session_checked_timer(2.0, check_and_refresh, context.user_id)
+    def start_polling() -> None:
+        if context.job_info.status in _polling_statuses():
+            callback = check_and_refresh
+        else:
+            callback = refresh_cost_visibility
+        stats_timer_holder["timer"] = session_checked_timer(2.0, callback, context.user_id)
+
+    return start_polling

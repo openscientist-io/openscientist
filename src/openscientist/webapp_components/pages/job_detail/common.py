@@ -148,3 +148,4 @@ class _JobDetailContext:
     #: The attached files the viewer may open, none for a reader who sees the
     #: job only because it is public.
     attachments: list[Attachment]
+    show_costs: bool = True

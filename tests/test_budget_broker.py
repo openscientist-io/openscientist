@@ -86,12 +86,13 @@ def _billing(total: float, recent: float) -> SimpleNamespace:
 class TestBudgetRoute:
     """The route answers check_budget for the job the run's token maps to."""
 
+    @pytest.mark.parametrize("visible", [False, True])
     async def test_it_answers_a_job_cap_against_the_real_ledger(
-        self, test_engine: AsyncEngine, token_for, client
+        self, test_engine: AsyncEngine, token_for, client, visible: bool
     ) -> None:
         async with job_with_costs(test_engine, [(10.0, None)]) as job:
             job_id = str(job.id)
-            await set_admin_settings_row(test_engine, max_job_cost_usd=5.0)
+            await set_admin_settings_row(test_engine, max_job_cost_usd=5.0, show_job_costs=visible)
             resp = client.post(
                 "/budget",
                 json={"job_id": job_id, "request_id": "req-1"},
@@ -103,6 +104,8 @@ class TestBudgetRoute:
             assert body["ok"] is False
             assert body["limit"] == "job_cap"
             assert body["message"]
+            assert ("$5.00" in body["message"]) is visible
+            assert "reached" in body["message"]
 
     async def test_it_allows_below_the_limits(
         self, test_engine: AsyncEngine, token_for, client

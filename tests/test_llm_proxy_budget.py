@@ -40,14 +40,15 @@ async def _no_billing():
     "limit", ["max_job_cost_usd", "max_project_spend_month_usd", "max_project_spend_24h_usd"]
 )
 @pytest.mark.parametrize("spent", [0.5, 1.0])
-async def test_http_budget_gate(limit, spent, test_engine, placeholder_for):
+@pytest.mark.parametrize("visible", [False, True])
+async def test_http_budget_gate(limit, spent, test_engine, placeholder_for, visible):
     _, total, recent = await budget._ledger_totals()
     baseline = {
         "max_job_cost_usd": 0.0,
         "max_project_spend_month_usd": total,
         "max_project_spend_24h_usd": recent,
     }[limit]
-    await set_admin_settings_row(test_engine, **{limit: baseline + 1.0})
+    await set_admin_settings_row(test_engine, show_job_costs=visible, **{limit: baseline + 1.0})
     async with job_with_costs(test_engine, [(spent, None)]) as job:
         recorded = []
         app = create_llm_proxy_app(
@@ -73,16 +74,18 @@ async def test_http_budget_gate(limit, spent, test_engine, placeholder_for):
             assert body["error"]["type"] == "invalid_request_error"
             assert body["error"]["code"] == "budget_exceeded"
             assert "limit" in body["error"]["message"]
+            assert ("$" in body["error"]["message"]) is visible
 
 
 class TestWebsocketBudget:
     stub_upstream = WebsocketFixtures.stub_upstream
     live_proxy = WebsocketFixtures.live_proxy
 
+    @pytest.mark.parametrize("visible", [False, True])
     async def test_exhausted_handshake_never_reaches_upstream(
-        self, test_engine, placeholder_for, live_proxy, stub_upstream
+        self, test_engine, placeholder_for, live_proxy, stub_upstream, visible
     ):
-        await set_admin_settings_row(test_engine, max_job_cost_usd=1.0)
+        await set_admin_settings_row(test_engine, max_job_cost_usd=1.0, show_job_costs=visible)
         async with job_with_costs(test_engine, [(1.0, None)]) as job:
             with pytest.raises(InvalidStatus) as raised:
                 async with asyncio.timeout(5):
@@ -94,15 +97,20 @@ class TestWebsocketBudget:
                         proxy=None,
                     )
             assert raised.value.response.status_code == 400
-            assert "Job cost limit" in json.loads(raised.value.response.body)["error"]["message"]
+            message = json.loads(raised.value.response.body)["error"]["message"]
+            assert "cost limit" in message
+            if not visible:
+                assert message == "The job reached its cost limit."
+            assert (b"$" in raised.value.response.body) is visible
             assert stub_upstream.handshakes == []
 
     @pytest.mark.parametrize("binary", [False, True])
     @pytest.mark.parametrize("model", ["gpt-5.2", None])
+    @pytest.mark.parametrize("visible", [False, True])
     async def test_open_connection_rechecks_each_model_call(
-        self, binary, model, test_engine, placeholder_for, live_proxy, stub_upstream
+        self, binary, model, test_engine, placeholder_for, live_proxy, stub_upstream, visible
     ):
-        await set_admin_settings_row(test_engine, max_job_cost_usd=1.0)
+        await set_admin_settings_row(test_engine, max_job_cost_usd=1.0, show_job_costs=visible)
         async with job_with_costs(test_engine, []) as job:
             async with (
                 asyncio.timeout(5),
@@ -125,7 +133,10 @@ class TestWebsocketBudget:
                 error = json.loads(await connection.recv())
                 assert error["type"] == "error"
                 assert error["status"] == 400
-                assert "Job cost limit" in error["error"]["message"]
+                assert "cost limit" in error["error"]["message"]
+                if not visible:
+                    assert error["error"]["message"] == "The job reached its cost limit."
+                assert ("$" in error["error"]["message"]) is visible
             assert stub_upstream.frames == [create]
 
     @pytest.mark.parametrize(

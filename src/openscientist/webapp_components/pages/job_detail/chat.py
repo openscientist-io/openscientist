@@ -5,6 +5,8 @@ from uuid import UUID
 
 from nicegui import ui
 
+from openscientist.admin_settings import costs_visible, hide_cost_amounts
+from openscientist.auth import is_current_user_admin
 from openscientist.database.models import JobChatMessage
 from openscientist.database.rls import set_current_user
 from openscientist.database.session import get_session_ctx
@@ -498,7 +500,12 @@ class _ChatTabController:
             if guard.is_connected:
                 self._toggle_typing_indicator(False)
                 self._play_sound("sound-error")
-                ui.notify(str(exc), type="negative")
+                refusal_message = str(exc)
+                if isinstance(exc, BudgetExceededError) and not await costs_visible(
+                    is_current_user_admin()
+                ):
+                    refusal_message = hide_cost_amounts(refusal_message) or "Budget limit reached."
+                ui.notify(refusal_message, type="negative")
         except Exception as exc:
             logger.error("Chat error: %s", exc, exc_info=True)
             if guard.is_connected:

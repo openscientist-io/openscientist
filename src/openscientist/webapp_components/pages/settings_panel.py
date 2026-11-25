@@ -63,6 +63,7 @@ _FIELDS: tuple[tuple[str, str, str, str, str], ...] = (
     ("session_duration_days", "Session length", "days", "1 or more", "int"),
 )
 _AIRGAP = ("airgapped", "Air-gap")
+_COST_VISIBILITY = ("show_job_costs", "Show job costs to users")
 
 # The Font Awesome Free solid class for each field's icon, shown left of the
 # input. Every _FIELDS column and the air-gap switch must have an entry.
@@ -91,7 +92,7 @@ def _setting_icon(column: str) -> ui.icon:
     return ui.icon(_FIELD_ICONS[column], size="16px").style("color: rgba(0, 0, 0, 0.87)")
 
 
-_LABELS = {column: label for column, label, *_ in (*_FIELDS, _AIRGAP)}
+_LABELS = {column: label for column, label, *_ in (*_FIELDS, _AIRGAP, _COST_VISIBILITY)}
 _INT_COLUMNS = {column for column, *_, kind in _FIELDS if kind == "int"}
 _CHECK = re.compile(r"ck_admin_settings_([a-z0-9_]+)")
 
@@ -233,7 +234,11 @@ async def save_admin_settings(access: AdminAccess, values: dict[str, object]) ->
             return False, "The admin settings row is missing. The web seeds it at startup."
 
         # The floor owns the switch, so a locked form never edits the row's value.
-        fields = [field for field in (*_FIELDS, _AIRGAP) if not (floor and field[0] == "airgapped")]
+        fields = [
+            field
+            for field in (*_FIELDS, _AIRGAP, _COST_VISIBILITY)
+            if not (floor and field[0] == "airgapped")
+        ]
         changes: list[AdminSettingChange] = []
         for column, label, *_ in fields:
             old = getattr(row, column)
@@ -360,9 +365,12 @@ async def _render_settings(container: ui.column) -> None:
                             "Locked on because OPENSCIENTIST_AIRGAPPED is set in the environment."
                         ).classes("text-xs text-gray-500")
 
+            cost_visibility = ui.switch(_COST_VISIBILITY[1], value=current.show_job_costs)
+
             async def save() -> None:
                 try:
                     values = _collect(numbers, no_limit, switch)
+                    values["show_job_costs"] = bool(cost_visibility.value)
                 except ValueError as exc:
                     ui.notify(str(exc), type="negative")
                     return
