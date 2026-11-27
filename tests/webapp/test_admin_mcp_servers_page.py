@@ -241,6 +241,39 @@ async def test_registering_after_losing_admin_rights_stores_nothing_and_hides_th
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("revocation", REVOCATIONS)
+@pytest.mark.parametrize(
+    ("slug", "display_name", "url"),
+    [("", "", ""), ("Pub Chem", "PubChem", "ftp://late.example.org/")],
+    ids=["empty", "invalid"],
+)
+async def test_a_bad_submission_after_losing_admin_rights_is_refused_before_validation(
+    people: _People,
+    test_engine: AsyncEngine,
+    revocation: str,
+    slug: str,
+    display_name: str,
+    url: str,
+) -> None:
+    await _add(test_engine, "existing", "Existing server")
+    async with user_simulation(
+        root=partial(render_mcp_servers_panel, str(people.admin))
+    ) as browser:
+        await _open(browser, people.admin_token)
+        await browser.should_see("Existing server", retries=50)
+        await _revoke(test_engine, people.admin, revocation)
+        for label, value in (("Slug", slug), ("Display name", display_name), ("URL", url)):
+            if value:
+                browser.find(kind=ui.input, content=label).type(value)
+        browser.find(kind=ui.button, content="Register").click()
+        await browser.should_see(_STALE, retries=50)
+        await browser.should_not_see("Not registered")
+        await browser.should_not_see("Existing server")
+
+    assert [server.slug for server in await _stored(test_engine)] == ["existing"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("revocation", REVOCATIONS)
 async def test_reloading_after_losing_admin_rights_reads_nothing(
     people: _People, test_engine: AsyncEngine, revocation: str
 ) -> None:
@@ -262,7 +295,8 @@ async def test_reloading_after_losing_admin_rights_reads_nothing(
 async def test_every_read_and_write_checks_admin_rights_again(
     people: _People, test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The first load, the registration and the reload after it each check."""
+    """The first load, the submission before its form is read, the
+    registration and the reload after it each check."""
     checks: list[bool] = []
     check = mcp_servers_panel.admin_access
 
@@ -281,7 +315,7 @@ async def test_every_read_and_write_checks_admin_rights_again(
         _fill(browser, "pubchem", "PubChem", "https://mcp.example.org/")
         browser.find(kind=ui.button, content="Register").click()
         await browser.should_see(kind=ui.table, retries=50)
-        assert checks == [True, True, True]
+        assert checks == [True, True, True, True]
 
     assert [server.slug for server in await _stored(test_engine)] == ["pubchem"]
 

@@ -132,6 +132,9 @@ async def render_mcp_servers_panel(page_user_id: str) -> None:
         register_button.disable()
         try:
             form_errors.clear()
+            if await admin_access() is None:
+                servers_container.clear()
+                return
             registration = parse_registration(slug_input.value, name_input.value, url_input.value)
             if isinstance(registration, list):
                 show_form_error("Not registered", ". ".join(registration) + ".")
