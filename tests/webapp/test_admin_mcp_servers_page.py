@@ -229,7 +229,8 @@ async def test_registering_after_losing_admin_rights_stores_nothing_and_hides_th
         root=partial(render_mcp_servers_panel, str(people.admin))
     ) as browser:
         await _open(browser, people.admin_token)
-        await browser.should_see("Existing server", retries=50)
+        await browser.should_see(kind=ui.table, retries=50)
+        assert [row["display_name"] for row in _rows(browser)] == ["Existing server"]
         await _revoke(test_engine, people.admin, revocation)
         _fill(browser, "late", "Late", "https://late.example.org/")
         browser.find(kind=ui.button, content="Register").click()
@@ -259,7 +260,8 @@ async def test_a_bad_submission_after_losing_admin_rights_is_refused_before_vali
         root=partial(render_mcp_servers_panel, str(people.admin))
     ) as browser:
         await _open(browser, people.admin_token)
-        await browser.should_see("Existing server", retries=50)
+        await browser.should_see(kind=ui.table, retries=50)
+        assert [row["display_name"] for row in _rows(browser)] == ["Existing server"]
         await _revoke(test_engine, people.admin, revocation)
         for label, value in (("Slug", slug), ("Display name", display_name), ("URL", url)):
             if value:
@@ -282,7 +284,8 @@ async def test_reloading_after_losing_admin_rights_reads_nothing(
         root=partial(render_mcp_servers_panel, str(people.admin))
     ) as browser:
         await _open(browser, people.admin_token)
-        await browser.should_see("Existing server", retries=50)
+        await browser.should_see(kind=ui.table, retries=50)
+        assert [row["display_name"] for row in _rows(browser)] == ["Existing server"]
         await _revoke(test_engine, people.admin, revocation)
         await _add(test_engine, "fresh", "Fresh secret server")
         await browser.open("/")
