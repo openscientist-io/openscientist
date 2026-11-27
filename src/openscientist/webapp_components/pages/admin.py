@@ -39,6 +39,7 @@ from openscientist.webapp_components.components.job_table import render_job_id_s
 from openscientist.webapp_components.components.navigation import render_navigator
 from openscientist.webapp_components.pages.billing import render_billing_panel
 from openscientist.webapp_components.pages.feedback_panel import render_feedback_panel
+from openscientist.webapp_components.pages.mcp_servers_panel import render_mcp_servers_panel
 from openscientist.webapp_components.pages.settings_panel import render_settings_panel
 from openscientist.webapp_components.utils import in_page_client, session_checked_timer
 from openscientist.webapp_components.utils.permissions import admin_access, admin_user_id
@@ -155,6 +156,7 @@ async def admin_page() -> None:
             containers_tab = ui.tab("Containers", icon="dns")
             billing_tab = ui.tab("Billing", icon="payments")
             settings_tab = ui.tab("Settings", icon="tune")
+            mcp_servers_tab = ui.tab("MCP Servers", icon="hub")
 
         with ui.tab_panels(tabs, value=users_tab).classes("w-full"):
             # Orphaned Jobs Panel (deferred, filled below)
@@ -192,6 +194,10 @@ async def admin_page() -> None:
             # Settings Panel (deferred)
             with ui.tab_panel(settings_tab):
                 ui.timer(0.1, render_settings_panel, once=True)
+
+            # MCP Servers Panel (deferred)
+            with ui.tab_panel(mcp_servers_tab):
+                ui.timer(0.1, partial(render_mcp_servers_panel, page_user_id), once=True)
 
 
 async def render_orphaned_jobs_panel() -> None:
