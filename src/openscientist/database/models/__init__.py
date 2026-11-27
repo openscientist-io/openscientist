@@ -26,6 +26,7 @@ from .job_data_file import JobDataFile
 from .job_share import JobShare
 from .literature import Literature
 from .llm_call_timing import LlmCallTiming
+from .mcp_server import McpServer
 from .oauth_account import OAuthAccount
 from .plot import Plot
 from .pubmed_article import PubMedArticle
@@ -59,6 +60,7 @@ __all__ = [
     "JobShare",
     "Literature",
     "LlmCallTiming",
+    "McpServer",
     "OAuthAccount",
     "Plot",
     "PubMedArticle",
